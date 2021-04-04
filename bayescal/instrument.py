@@ -6,6 +6,7 @@ import numpy as np
 from astropy import coordinates as coord
 from scipy import special
 import healpy
+import copy
 
 from . import utils
 
@@ -273,5 +274,50 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
     theta, phi = hp_map_moc.pix2ang(np.arange(hp_map_moc.npix))
 
     return hp_map_moc, theta, phi
+
+
+def multires_map(hp_map, grid, weights=None):
+    """
+    Given a multi-resolution grid, downsample
+    a singe-res healpix map to multi-res grid.
+
+    Parameters
+    ----------
+    hp_map : mhealpy.HealpixMap object
+        A single-res healpix map to downsample (NESTED)
+    grid : mhealpy.HealpixMap object
+        Multi-resolution object containing
+        grid to downsample to.
+    weights : mhealpy.HealpixMap object
+        Optional weights to use when averaging
+        child pixels of hp_map within a parent
+        pixel in grid.
+
+    Returns
+    -------
+    hp_map_mr
+        Multiresolution healpix object of hp_map
+    """
+    assert hp_map.is_nested, "hp_map must be NESTED"
+    if weights is not None:
+        assert weights.is_nested, "weights must be NESTED"
+    hp_map_mr = copy.deepcopy(grid)
+    nside = hp_map.nside
+
+    # iterate over each cell in hp_map_mr
+    for i in range(hp_map_mr.npix):
+        # get child pixel indices from hp_map
+        rs = hp_map_mr.pix2range(nside, i)
+        # get weights
+        w = 1
+        if weights is not None:
+            w = weights[rs[0]:rs[1]]
+        # take average of child pixels
+        hp_map_mr[i] = np.sum(hp_map[rs[0]:rs[1]] * w) / np.sum(w).clip(1e-40, np.inf)
+        
+    return hp_map_mr
+
+
+
 
 
