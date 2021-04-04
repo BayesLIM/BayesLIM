@@ -226,12 +226,7 @@ def _value_fun(start, stop, hp_map):
     return value
 
 
-def _split_fun(start, stop):
-    max_value = max(hp_map)
-    return _value_fun(start, stop, hp_map) > max_value
-
-
-def adaptive_healpix_mesh(hp_map, split_fun=_split_fun):
+def adaptive_healpix_mesh(hp_map, split_fun=None):
     """
     Convert a single resolution healpix map to a
     multi-order coverage (MOC) map.
@@ -252,6 +247,12 @@ def adaptive_healpix_mesh(hp_map, split_fun=_split_fun):
     theta, phi : array_like
         Co-latitude and longitude of downsampled map [rad]
     """
+    # set split_fun
+    if split_fun is None:
+        def _split_fun(start, stop):
+            max_value = max(hp_map)
+            return _value_fun(start, stop, hp_map) > max_value
+
     # convert to nested if ring
     if hp_map.is_ring:
         ring2nest = healpy.ring2nest(hp_map.nside,
