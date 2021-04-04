@@ -230,23 +230,32 @@ def _value_fun(start, stop, hp_map):
 def adaptive_healpix_mesh(hp_map, split_fun=None):
     """
     Convert a single resolution healpix map to a
-    multi-order coverage (MOC) map.
+    multi-order coverage (MOC) map based on
+    the pixel values (density = False)
 
     Parameters
     ----------
     hp_map : mhealpy.HealpixBase subclass
         single resolution map to convert to multi-resolution
         based on relative pixel values and split_fun.
+        Note that this should have density = False.
     split_fun : callable
         Function that determines if a healpix pixel is split into
         multiple pixels. See mhealpy.adaptive_moc_mesh().
+        Default is mhealpy default function.
 
     Returns
     -------
-    hp_map_moc : HealpixMap object
-        Downsampled healpix map
+    grid : HealpixMap object
+        Downsampled healpix grid. Note that, due to how
+        mhealpy.get_interp_val works, this will have density = True.
     theta, phi : array_like
         Co-latitude and longitude of downsampled map [rad]
+
+    Notes
+    -----
+    See multires_map for downsampling a sky map onto
+    output grid.
     """
     # set split_fun
     if split_fun is None:
@@ -262,18 +271,19 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
         hp_map._scheme = 'NESTED'
 
     # downsample healpix map grid
-    hp_map_moc = hp_map.adaptive_moc_mesh(hp_map.nside, split_fun,
+    grid = hp_map.adaptive_moc_mesh(hp_map.nside, split_fun,
                                           dtype=hp_map.dtype)
+    grid._density = True
 
     # fill data array
-    rangesets = hp_map_moc.pix_rangesets(hp_map_moc.nside)
+    rangesets = grid.pix_rangesets(grid.nside)
     for pix,(start, stop) in enumerate(rangesets):
-        hp_map_moc[pix] = _value_fun(start, stop, hp_map)
+        grid[pix] = _value_fun(start, stop, hp_map)
 
     # get theta, phi arrays
-    theta, phi = hp_map_moc.pix2ang(np.arange(hp_map_moc.npix))
+    theta, phi = grid.pix2ang(np.arange(grid.npix))
 
-    return hp_map_moc, theta, phi
+    return grid, theta, phi
 
 
 def multires_map(hp_map, grid, weights=None):
@@ -288,7 +298,7 @@ def multires_map(hp_map, grid, weights=None):
     grid : mhealpy.HealpixMap object
         Multi-resolution object containing
         grid to downsample to.
-    weights : mhealpy.HealpixMap object
+    weights : mhealpy.HealpixMap object, optional
         Optional weights to use when averaging
         child pixels of hp_map within a parent
         pixel in grid.
@@ -305,19 +315,13 @@ def multires_map(hp_map, grid, weights=None):
     nside = hp_map.nside
 
     # iterate over each cell in hp_map_mr
-    for i in range(hp_map_mr.npix):
-        # get child pixel indices from hp_map
-        rs = hp_map_mr.pix2range(nside, i)
+    for i, rs in enumerate(hp_map_mr.pix_rangesets(nside)):
         # get weights
-        w = 1
+        w = np.ones(rs[1] - rs[0])
         if weights is not None:
             w = weights[rs[0]:rs[1]]
         # take average of child pixels
         hp_map_mr[i] = np.sum(hp_map[rs[0]:rs[1]] * w) / np.sum(w).clip(1e-40, np.inf)
         
     return hp_map_mr
-
-
-
-
 
