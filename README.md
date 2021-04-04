@@ -1,2 +1,4 @@
-# `bayescal`: Bayesian Interferometric Calibration and Imaging
+# `bayescal`
+
+## Bayesian Interferometric Calibration and Imaging
 
