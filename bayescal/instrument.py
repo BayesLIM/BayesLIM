@@ -249,7 +249,7 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
     """
     # set split_fun
     if split_fun is None:
-        def _split_fun(start, stop):
+        def split_fun(start, stop):
             max_value = max(hp_map)
             return _value_fun(start, stop, hp_map) > max_value
 
