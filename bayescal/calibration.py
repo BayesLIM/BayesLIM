@@ -7,7 +7,7 @@ import numpy as np
 from . import utils
 
 
-class DIJonesModel(torch.nn.Module):
+class JonesModel(torch.nn.Module):
     """
     A generic, antenna-based, direction-independent
     Jones term, relating the model (m) visibility to the
@@ -16,16 +16,18 @@ class DIJonesModel(torch.nn.Module):
     The Jones matrix for antenna p is constructed
 
     .. math::
+
         J_p = \\left[\\begin{array}{cc}J_{ee} & J_{en}\\\\
                     J_{ne} & J_{nn}\\end{array}\\right]
 
     and its application to the model visibility is
 
     .. math::
+
         V^d_{pq} = J_p \\cdot V^m_{pq} \\cdot J_q^\\dagger
 
     For 1-pol mode, :math:`J_p` is of shape (1, 1),
-    for 2-pol mode it is diagonal of shape (2, 2),
+    For 2-pol mode it is diagonal of shape (2, 2),
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
 
@@ -138,7 +140,6 @@ class DIJonesModel(torch.nn.Module):
 
         return V_p
 
-
 class RedVisModel(torch.nn.Module):
     """
     Redundant visibility model (r) relating the starting
@@ -146,6 +147,7 @@ class RedVisModel(torch.nn.Module):
     for antennas j and k.
 
     .. math::
+
         V^{d}_{jk} = V^{r} + V^{m}_{jk}
 
     """
@@ -237,7 +239,9 @@ class VisModel(torch.nn.Module):
     for antennas j and k.
 
     .. math::
+
         V^{d}_{jk} = V^{v}_{jk} + V^{m}_{jk} 
+
     """
     def __init__(self, vis, R=None, parameter=True):
         """

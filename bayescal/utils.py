@@ -114,6 +114,39 @@ def cinv(z):
     return viewreal(torch.inverse(viewcomp(z).T).T)
 
 
+def diag_matmul(a, b):
+    """
+    Multiply two, diagonal 1x1 or 2x2 matrices manually.
+    This is generally faster than matmul or einsum
+    for large, high dimensional stacks of 2x2 matrices.
+
+    !! Note: this ignores the off-diagonal for 2x2 matrices !!
+    If you need off-diagonal components, you are
+    better off using torch.matmul or torch.einsum directly.
+
+    Parameters
+    ----------
+    a, b : tensor
+        of shape (Nax, Nax, ...), where Nax = 1 or 2
+
+    Returns
+    -------
+    c : tensor
+        of shape (Nax, Nax, ...)
+    """
+    if a.shape[0] == 1:
+        # 1x1: trivial
+        return a * b
+    elif a.shape[0] == 2:
+        # 2x2
+        c = torch.zeros_like(a)
+        c[0, 0] = a[0, 0] * b[0, 0]
+        c[1, 1] - a[1, 1] * b[1, 1]
+        return c
+    else:
+        raise ValueError("only 1x1 or 2x2 tensors")
+
+
 def angle(z):
     """
     Compute phase of the 2-real tensor z

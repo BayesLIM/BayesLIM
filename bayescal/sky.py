@@ -8,53 +8,61 @@ from scipy.special import sph_harm
 from . import utils
 
 
-class CompositeModel(torch.nn.Module):
+class SkyBase(torch.nn.Module):
     """
-    Composite sky model
+    Base class for various sky model representations
     """
-    def __init__(self, models):
+    def __init__(self, params, kind, freqs, R=None, parameter=True):
         """
-        Composite sky model
+        Base class for a torch sky model representation.
 
         Parameters
         ----------
-        models : list
-            List of instantiated sky model objects
-            to evaluate and sum
+        params : tensor or list of tensors
+            A sky model parameterization as a tensor or list
+            of tensors to be pushed through the response R().
+        kind : str
+            Kind of sky model. options = ['point', 'pixel', 'alm']
+            for point source model, pixelized model, and spherical
+            harmonic model.
+        freqs : tensor
+            Frequency array of sky model [Hz]
+        R : callable, optional
+            An arbitrary response function for the
+            point source model, mapping self.params
+            to a sky source tensor of shape
+            (Npol, Npol, Nfreqs, Nsources)
+        parameter : bool
+            If True, treat params as variables to be fitted,
+            otherwise hold them fixed as their input value
         """
-        self.models = models
-
-    def forward(self, params=None):
-        """
-        Forward model
-
-        Parameters
-        ----------
-        params : list of tensor tuples, optional
-            If provided, use these parameter vectors
-            corresponding to each model in self.models
-            intead of the parameters attached to the
-            models.
-
-        Returns
-        -------
-        tensor
-            Summed output of self.models
-        """
-        if params is None:
-            params = [None for m in self.models]
-
-        # iterate over models
-        output = []
-        for param, model in zip(params, self.models):
-            if param is None:
-                param = model.param
-            output.append(model(param))
-
-        return torch.sum(output, axis=0)
+        super().__init__()
+        self.params = params
+        oneparam = True
+        if isinstance(self.params, (list, tuple)):
+            oneparam = False
+            _params = []
+            for i, p in enumerate(self.params):
+                if parameter:
+                    p = torch.nn.Parameter(p)
+                name = "param{}".format(i)
+                setattr(self, name, p)
+                _params.append(p)
+            if parameter:
+                self.params = _params
+        else:
+            if parameter:
+                self.params = torch.nn.Parameter(self.params)
+        self.kind = kind
+        if R is None:
+            if oneparam: R = lambda x: x
+            else: R = lambda x: x[0]
+        self.R = R
+        self.freqs = freqs
+        self.Nfreqs = len(freqs)
 
 
-class PointSourceModel(torch.nn.Module):
+class PointSourceModel(SkyBase):
     """
     Point source sky model with fixed
     source locations but variable flux density.
@@ -65,48 +73,78 @@ class PointSourceModel(torch.nn.Module):
     Returns point source flux density and their sky
     locations in equatorial coordinates.
     """
-    def __init__(self, params, angs, Nfreqs, R=None, parameter=True):
+    def __init__(self, params, angs, freqs, R=None, parameter=True):
         """
         Fixed-location point source model with
         parameterized flux density.
 
         Parameters
         ----------
-        params : tensor
-            Point source flux density amplitudes of shape
-            (Npol, Npol, Nsource, ...). Npol is the number
-            of feed polarizations. The first two
-            axes are the coherency matrix B:
+        params : list of tensors
+            A list of point source parameters. Bare minimum, the
+            first element should be a tensor of shape
+            (Npol, Npol, Nfreqs, Nsources), also referred to as "sky",
+            containing the flux density of each source.
+            Npol is the number of feed polarizations.
+            The first two axes are the coherency matrix B:
+
             .. math::
+
                 B = \left(
-                    \begin{array}{cc}I + U & U + iV \\
-                    U - iV & I - U \end{array}
+                    \begin{array}{cc}I + Q & U + iV \\
+                    U - iV & I - Q \end{array}
                 \right)
+
+            See bayescal.sky.stokes2linear() for details.
+            Additionally, params may contain other tensor parameters
+            e.g. a frequency power law, which should be expected
+            by the R function.
         angs : tensor
             Point source unit vectors on the sky in equatorial
-            coordinates of shape (Nsource, 2), where the
-            last two axes are RA and Dec.
-        Nfreqs : int
-            Number of frequency bins in output tensor.
+            coordinates of shape (2, Nsources), where the
+            last two axes are RA and Dec [deg].
+        freqs : tensor
+            Frequency array of sky model [Hz].
         R : callable, optional
             An arbitrary response function for the
             point source model, mapping self.params
             to a sky source tensor of shape
-            (Npol, Npol, Nsources, Nfreqs)
+            (Npol, Npol, Nfreqs, Nsources)
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
+
+        Examples
+        --------
+        Here is an example for a simple point source model
+        with a frequency power law parameterization.
+        Note that the frequency array must be defined
+        in the global namespace.
+
+        .. code-block:: python
+
+            Nfreqs = 16
+            freqs = np.linspace(100e6, 120e6, Nfreqs)  # Hz
+            phi = np.random.rand(100) * 180            # dec
+            theta = np.random.rand(100) * 360          # ra
+            angs = torch.tensor([theta, phi])
+            amps = scipy.stats.norm.rvs(20, 1, 100)
+            amps = torch.tensor(amps.reshape(1, 100, 1))
+            alpha = torch.tensor([-2.2])
+            def R(params, freqs=freqs):
+                S = params[0][..., None]
+                spix = params[1]
+                return S * (freqs / freqs[0])**spix
+            P = bayescal.sky.PointSourceModel([amps, alpha],
+                                              angs, Nfreqs, R=R)
+
         """
-        super().__init__()
-        self.params = params
+        super().__init__(params, 'point', freqs, R=R, parameter=parameter)
         self.angs = angs
-        self.Npol = len(params)
-        self.Nfreqs = Nfreqs
-        if parameter:
-            self.params = torch.nn.Parameter(self.params)
+        self.Npol = len(self.param0)
         if R is None:
-            # dummy function eval
-            R = lambda x: x
+            # dummy params eval
+            R = lambda x: x[0]
         self.R = R
 
     def forward(self, params=None):
@@ -115,21 +153,119 @@ class PointSourceModel(torch.nn.Module):
 
         Parameters
         ----------
-        params : tensor, optional
-            Sky model parameter to use
-            instead of self.params
+        params : list of tensors, optional
+            Set of parameters to use instead of self.params.
 
         Returns
         -------
-        sky : tensor
-            Sky brightness at discrete locations
-        angs : tensor
-            Sky source locations
+        dictionary
+            kind : str
+                Kind of sky model ['point', 'pixel', 'alm']
+            sky : tensor
+                Source brightness at discrete locations
+                (Npol, Npol, Nsources, Nfreqs)
+            angs : tensor
+                Sky source locations (RA, Dec) [deg]
+                (2, Nsources)
         """
-        # setup predicted visibility
-        sky = torch.zeros(self.params.shape[:3] + (self.Nfreqs,),
-                          dtype=selef.params.dtype)
+        # fed params or attr params
+        if params is None:
+            _params = self.params
+        else:
+            _params = params
 
+        # pass through response
+        return dict(kind=self.kind, sky=self.R(_params), angs=self.angs)
+
+
+class PixelModel(SkyBase):
+    """
+    Pixelized model (e.g. Healpix) of the sky
+    specific intensity (aka brightness or temperature)
+    at fixed locations in Equatorial coordinates
+    but with variable amplitude.
+
+    While the input sky model (params) should be in units of
+    specific intensity (Kelvin or Jy / str), the output
+    of the forward model is in flux density [Jy]
+    (i.e. we multiply by each cell's solid angle).
+    """
+    def __init__(self, params, angs, freqs, areas, R=None, parameter=True):
+        """
+        Pixelized model of the sky brightness distribution.
+        This can be parameterized in any generic way via params,
+        but the output of R(params) must be
+        a representation of the sky brightness at fixed
+        cells, which are converted to flux density
+        by multiplying by each cell's solid angle.
+
+        Parameters
+        ----------
+        params : list of tensors
+            A list of source parameters. Bare minimum, the
+            first element should be a tensor of shape
+            (Npol, Npol, Nfreqs, Npix), where Npix is the number
+            of free parameters. This could be individual pixels, but
+            it could also be some sparse parameterization that is eventually
+            mapped to pixel space after passing through R().
+            Npol is the number of feed polarizations.
+            The first two axes are the coherency matrix B:
+
+            .. math::
+
+                B = \left(
+                    \begin{array}{cc}I + Q & U + iV \\
+                    U - iV & I - Q \end{array}
+                \right)
+
+            See bayescal.sky.stokes2linear() for details.
+            Additionally, params may contain other tensor parameters
+            e.g. a frequency power law, which should be expected
+            by the R function.
+        angs : tensor
+            Point source unit vectors on the sky in equatorial
+            coordinates of shape (2, Nsources), where the
+            last two axes are RA and Dec.
+        freqs : tensor
+            Frequency array of sky model [Hz].
+        areas : tensor
+            Contains the solid angle of each pixel. This is multiplied
+            into the final sky modle, and thus needs to be of shape
+            (1, 1, 1, Npix) to allow for broadcasting rules to apply.
+        R : callable, optional
+            An arbitrary response function for the sky model, mapping
+            self.params to a sky pixel tensor of shape
+            (Npol, Npol, Nfreqs, Npix)
+        parameter : bool, optional
+            If True, treat params as parameters to be fitted,
+            otherwise treat as fixed to its input value.
+        """
+        super().__init__(params, 'pixel', freqs, R=R, parameter=parameter)
+        self.angs = angs
+        self.areas = areas
+        self.Npol = len(self.param0)
+
+    def forward(self, params=None):
+        """
+        Forward pass the sky parameters.
+
+        Parameters
+        ----------
+        params : list of tensors, optional
+            Set of parameters to use instead of self.params.
+
+        Returns
+        -------
+        dictionary
+            kind : str
+                Kind of sky model ['point', 'pixel', 'alm']
+            amps : tensor
+                Pixel flux density at fixed locations on the sky
+                (Npol, Npol, Nfreqs, Npix)
+            angs : tensor
+                Sky source locations (RA, Dec) [deg]
+                (2, Npix)
+        """
         # apply fed params or attr params
         if params is None:
             _params = self.params
@@ -137,73 +273,58 @@ class PointSourceModel(torch.nn.Module):
             _params = params
 
         # pass through response
-        return self.R(_params), self.angs
+        sky = self.R(_params) * self.areas
+        return dict(kind=self.kind, sky=sky, angs=self.angs)
 
 
-class DiffuseModel(torch.nn.Module):
+class SphHarmModel(SkyBase):
     """
-    Diffuse sky model at fixed locations on the sky
-    but variable flux density. Can be parameterized as
-    a collection of point sources on the sky, or in a
-    sparse basis (e.g. spherical harmonics) that is then
-    mapped to sky coordinates.
+    Spherical harmonic expansion of a sky temperature field
+    at pointing direction s and frequency f
 
-    Returns flux density of discrete cells and their
-    locations on the sky.
+    .. math::
+
+        T(s, f) = \sum_{lm} = Y_{lm}(s) a_{lm}(f)
+
+    where Y is a spherical harmonic of order l and m
+    and a is the coefficient.
     """
-    def __init__(self, params, angs, Nfreqs, R=None, parameter=True):
+    def __init__(self, params, lms, freqs, R=None, parameter=True):
         """
-        Diffuse sky model with parameterzed flux density and
-        frequency dependence.
+        Spherical harmonic representation of the sky brightness.
+        Note that this model does not by default transform the
+        representation to the spatial domain on the sky.
+        By default, this model operates in harmonic space all the
+        way down to the visibility level, however, there are methods
+        to transform to the sky spatial domain if desired.
 
         Parameters
         ----------
-        params : tensor
-            Diffuse model parameterization of shape
-            (Npol, Npol, ...).
-            Example includes spherical harmonic for
-            single frequency channel models, or
-            spherical Fourier-bessel for multi-channel
-            bases, or simply the flux density of
-            individual sky cells across frequency.
-            For sparse parameterization, the output of 
-            R(params) should be a tensor of shape
-            (Npol, Npol, Ncells, Nfreqs), where Ncells are
-            a collection of 2D cells on the sky.
-            For a single feed polarization, Npol = 1, otherwise
-            Npol = 2, with the first two axes being
-            the coherency matrix B:
-            .. math::
-                B = \left(
-                    \begin{array}{cc}I + U & U + iV \\
-                    U - iV & I - U \end{array}
-                \right)
-        angs : tensor
-            Unit vectors on the sky in equatorial
-            coordinates of each sky cell of shape (Nsource, 2),
-            where the last two axes are RA and Dec.
-        Nfreqs : int
-            Number of frequency bins in output tensor.
+        params : list of tensors
+            Spherical harmonic parameterization of the sky.
+            The first element of params must be a tensor holding
+            the a_lm coefficients of shape (Npol, Npol, Ncoeff, ...).
+            Additional tensors may expand the parameterization.
+            Example includes spherical harmonic for a single or
+            multiple frequency channels, or a spherical
+            Fourier-bessel for multiple channels.
+        lms : array
+            Array holding spherical harmonic orders (l, m) of shape
+            (Ncoeff, 2).
+        freqs : tensor
+            Frequency array of sky model [Hz].
         R : callable, optional
             An arbitrary response function for the
-            diffuse source model, mapping self.params
-            to a collection of sky cells of shape
-            (Npol, Npol, Ncells, Nfreqs)
+            spherical harmonic model, mapping input self.params
+            to an output a_lm basis of shape
+            (Npol, Npol, Ncoeff, Nfreqs).
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
         """
-        super().__init__()
-        self.params = params
-        self.angs = angs
+        super().__init__(params, 'alm', freqs, R=R, parameter=parameter)
+        self.lms = lms
         self.Npol = len(params)
-        self.Nfreqs = Nfreqs
-        if parameter:
-            self.params = torch.nn.Parameter(self.params)
-        if R is None:
-            # dummy function eval
-            R = lambda x: x
-        self.R = R
 
     def forward(self, params=None):
         """
@@ -211,21 +332,16 @@ class DiffuseModel(torch.nn.Module):
 
         Parameters
         ----------
-        params : tensor, optional
-            Sky model parameter to use
-            instead of self.params
+        params : list of tensors, optional
+            Set of parameters to use instead of self.params.
 
         Returns
         -------
+        kind : str
+            Kind of sky model ['point', 'pixel', 'alm']
         sky : tensor
             Sky flux density at discrete locations
-        angs : tensor
-            Sky source locations
         """
-        # setup predicted visibility
-        sky = torch.zeros(self.params.shape[:3] + (self.Nfreqs,),
-                          dtype=selef.params.dtype)
-
         # apply fed params or attr params
         if params is None:
             _params = self.params
@@ -233,10 +349,93 @@ class DiffuseModel(torch.nn.Module):
             _params = params
 
         # pass through response
-        return self.R(_params), self.angs
+        return dict(kind=self.kind, sky=self.R(_params), lms=self.lms)
+
+    def alm2sky(self):
+        pass
 
 
-def gen_lm(lmax):
+
+
+class CompositeModel(torch.nn.Module):
+    """
+    Multiple sky models
+    """
+    def __init__(self, models):
+        """
+        Multiple sky models to be evaluated
+        and returned in a list
+
+        Parameters
+        ----------
+        models : list
+            List of sky model objects
+        """
+        self.models = models
+
+    def forward(self, models=None):
+        """
+        Forward pass sky models and append in a list
+
+        Parameters
+        ----------
+        models : list
+            List of sky models to use instead of self.models
+
+        Returns
+        -------
+        list
+            List of each sky model output
+        """
+        _models = self.models
+        if models is not None:
+            _models = models
+
+        return [mod.forward() for mod in _models]
+
+
+def stokes2linear(stokes, dtype=torch.cfloat):
+    """
+    Convert Stokes parameters to coherency matrix
+    for xyz cartesian (aka linear) feed basis.
+    This can be included at the beginning of
+    the response matrix (R) of any of the sky model
+    objects in order to properly account for Stokes
+    Q, U, V parameters in your sky model.
+
+    Parameters
+    ----------
+    stokes : tensor
+        Holds the Stokes parameter of your generalized
+        sky model parameterization, of shape (4, ...)
+        with the zeroth axis holding the Stokes parameters
+        in the order of [I, Q, U, V].
+    dtype : torch dtype object
+        dtype of output coherency matrix, default is cfloat
+
+    Returns
+    -------
+    B : tensor
+        Coherency matrix of electric field in xyz cartesian
+        basis of shape (2, 2, ...) with the form
+
+        .. math::
+
+            B = \left(
+                \begin{array}{cc}I + Q & U + iV \\
+                U - iV & I - Q \end{array}
+            \right)
+    """
+    B = torch.zeros(2, 2, stokes.shape[1:], dtype=dtype)
+    B[0, 0] = stokes[0] + stokes[1]
+    B[0, 1] = stokes[2] + 1j * stokes[3]
+    B[1, 0] = stokes[2] - 1j * stokes[3]
+    B[1, 1] = stokes[0] - stokes[1]
+
+    return B
+
+
+def gen_lm(lmax, real=True):
     """
     Generate array of l and m parameters
 
@@ -244,6 +443,9 @@ def gen_lm(lmax):
     ----------
     lmax : int
         Maximum l parameter
+    real : bool, optional
+        If True, treat sky as real-valued (default)
+        so truncate negative m values.
 
     Returns
     -------
@@ -289,13 +491,13 @@ def Ylm(angs, lmax, dtype=torch.cfloat):
     # get l and m params
     lms = gen_lm(lmax)
     Nalms = len(lms)
-    Nsources = len(angs)
+    Nsources = angs.shape[1]
 
     # iterate and generate Ylms
     Y = torch.zeros((Nsources, Nalms), dtype=dtype)
 
     for i, lm in enumerate(lms):
-        Y[:, i] = torch.tensor(sph_harm(lm[1], lm[0], angs[:, 0], angs[:, 1]), dtype=dtype)
+        Y[:, i] = torch.tensor(sph_harm(lm[1], lm[0], angs[0], angs[1]), dtype=dtype)
 
     return Y
 
@@ -320,7 +522,20 @@ def sky2alm(sky, angs, lmax=100):
     -------
 
     """
-    alms
+    pass
+
+
+def alm2sky(alm, angs):
+    """
+
+    """
+    pass
+
+
+def alm_convolve(alm, conv):
+    """
+    """
+    pass
 
 
 
