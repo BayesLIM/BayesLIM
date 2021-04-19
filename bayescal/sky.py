@@ -163,7 +163,7 @@ class PointSourceModel(SkyBase):
                 Kind of sky model ['point', 'pixel', 'alm']
             sky : tensor
                 Source brightness at discrete locations
-                (Npol, Npol, Nsources, Nfreqs)
+                (Npol, Npol, Nfreqs, Nsources)
             angs : tensor
                 Sky source locations (RA, Dec) [deg]
                 (2, Nsources)
@@ -287,37 +287,32 @@ class SphHarmModel(SkyBase):
         T(s, f) = \sum_{lm} = Y_{lm}(s) a_{lm}(f)
 
     where Y is a spherical harmonic of order l and m
-    and a is the coefficient.
+    and t is its   coefficient.
     """
     def __init__(self, params, lms, freqs, R=None, parameter=True):
         """
         Spherical harmonic representation of the sky brightness.
-        Note that this model does not by default transform the
-        representation to the spatial domain on the sky.
-        By default, this model operates in harmonic space all the
-        way down to the visibility level, however, there are methods
-        to transform to the sky spatial domain if desired.
+        Can also accomodate a spherical Fourier Bessel model.
 
         Parameters
         ----------
         params : list of tensors
             Spherical harmonic parameterization of the sky.
             The first element of params must be a tensor holding
-            the a_lm coefficients of shape (Npol, Npol, Ncoeff, ...).
-            Additional tensors may expand the parameterization.
-            Example includes spherical harmonic for a single or
-            multiple frequency channels, or a spherical
-            Fourier-bessel for multiple channels.
+            the a_lm coefficients of shape
+            (Npol, Npol, Nfreqs, Ncoeff). Nfreqs may also be
+            replaced by Nk for a spherical Fourier Bessel model.
+            Additional tensors can also parameterize frequency axis.
         lms : array
             Array holding spherical harmonic orders (l, m) of shape
-            (Ncoeff, 2).
+            (2, Ncoeff).
         freqs : tensor
             Frequency array of sky model [Hz].
         R : callable, optional
             An arbitrary response function for the
             spherical harmonic model, mapping input self.params
             to an output a_lm basis of shape
-            (Npol, Npol, Ncoeff, Nfreqs).
+            (Npol, Npol, Nfreqs, Ncoeff).
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
@@ -425,6 +420,7 @@ def stokes2linear(stokes, dtype=torch.cfloat):
                 \begin{array}{cc}I + Q & U + iV \\
                 U - iV & I - Q \end{array}
             \right)
+
     """
     B = torch.zeros(2, 2, stokes.shape[1:], dtype=dtype)
     B[0, 0] = stokes[0] + stokes[1]

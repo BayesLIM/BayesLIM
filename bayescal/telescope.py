@@ -6,7 +6,7 @@ import numpy as np
 from astropy import units, time, constants
 from astropy.coordinates import AltAz, EarthLocation, ICRS
 from scipy import special
-import healpy
+import healpy, mhealpy
 import copy
 
 from . import utils, beam
