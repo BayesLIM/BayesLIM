@@ -4,6 +4,7 @@ Utility module
 import numpy as np
 import torch
 import healpy, mhealpy
+from scipy import special
 
 
 ########################################
