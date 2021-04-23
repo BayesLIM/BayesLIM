@@ -3,7 +3,12 @@ Utility module
 """
 import numpy as np
 import torch
+import healpy, mhealpy
 
+
+########################################
+######### Linear Algebra Tools #########
+########################################
 
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
@@ -332,6 +337,312 @@ def cmatmul(a, b):
     return c
 
 
+#####################################
+######### Sky Mapping Tools #########
+#####################################
 
 
+def voigt_beam(nside, sigma, gamma):
+    """
+    A power beam with a Voigt profile
 
+    Parameters
+    ----------
+    nside : int
+        HEALpix nside parameter
+    sigma ; float
+        Standard deviation of Gaussian component [rad]
+    gamma : float
+        Half-width at half-max of Cauchy component [rad]
+
+    Returns
+    -------
+    beam
+        HEALpix map (ring ordered) of Voigt beam
+    theta, phi
+        co-latitude and longitude of HEALpix map [rad]
+    """
+    theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
+    beam = special.voigt_profile(theta, sigma, gamma)
+    beam /= beam.max()
+
+    return beam, theta, phi
+
+
+def _value_fun(start, stop, hp_map):
+    value = sum(hp_map._data[start:stop])
+    if hp_map._density:
+        value /= stop - start
+    return value
+
+
+def adaptive_healpix_mesh(hp_map, split_fun=None):
+    """
+    Convert a single resolution healpix map to a
+    multi-order coverage (MOC) map based on
+    mhealpy's pixel value algorithm (density = False)
+
+    Parameters
+    ----------
+    hp_map : mhealpy.HealpixBase subclass
+        single resolution map to convert to multi-resolution
+        based on relative pixel values and split_fun.
+        Note that this should have density = False.
+    split_fun : callable
+        Function that determines if a healpix pixel is split into
+        multiple pixels. See mhealpy.adaptive_moc_mesh().
+        Default is mhealpy default function.
+
+    Returns
+    -------
+    grid : HealpixMap object
+        Downsampled healpix grid. Note that, due to how
+        mhealpy.get_interp_val works, this will have density = True.
+    theta, phi : array_like
+        Co-latitude and longitude of downsampled map [rad]
+
+    Notes
+    -----
+    See multires_map for downsampling a sky map onto
+    output grid.
+    """
+    # set split_fun
+    if split_fun is None:
+        def split_fun(start, stop):
+            max_value = max(hp_map)
+            return _value_fun(start, stop, hp_map) > max_value
+
+    # convert to nested if ring
+    if hp_map.is_ring:
+        ring2nest = healpy.ring2nest(hp_map.nside,
+                                     np.arange(healpy.nside2npix(hp_map.nside)))
+        hp_map._data = hp_map._data[np.argsort(ring2nest)]
+        hp_map._scheme = 'NESTED'
+
+    # downsample healpix map grid
+    grid = hp_map.adaptive_moc_mesh(hp_map.nside, split_fun,
+                                          dtype=hp_map.dtype)
+    grid._density = True
+
+    # fill data array
+    rangesets = grid.pix_rangesets(grid.nside)
+    for pix,(start, stop) in enumerate(rangesets):
+        grid[pix] = _value_fun(start, stop, hp_map)
+
+    # get theta, phi arrays
+    theta, phi = grid.pix2ang(np.arange(grid.npix))
+
+    return grid, theta, phi 
+
+
+def multires_map(hp_map, grid, weights=None):
+    """
+    Given a multi-resolution grid, downsample
+    a singe-res healpix map to multi-res grid.
+
+    Parameters
+    ----------
+    hp_map : array_like or mhealpy.HealpixMap object
+        A single-res healpix map to downsample (NESTED)
+        If array_like, the last axis must be sky pixel axis
+    grid : mhealpy.HealpixMap object
+        Multi-resolution HealpixMap object containing
+        grid to downsample to.
+    weights : array_like or mhealpy.HealpixMap object, optional
+        Optional weights to use when averaging
+        child pixels of hp_map within a parent
+        pixel in grid. Must be same nside as hp_map.
+
+    Returns
+    -------
+    hp_map_mr
+        Multiresolution healpix object of hp_map
+    """
+    if isinstance(hp_map, mhealpy.HealpixBase):
+        hp_map_mr = copy.deepcopy(grid)
+        nside = hp_map.nside
+    else:
+        hp_map_mr = np.zeros(hp_map.shape[:-1] + grid.data.shape,
+                             dtype=hp_map.dtype)
+        nside = healpy.npix2nside(hp_map.shape[-1])
+
+    # average hp_map
+    for i, rs in enumerate(grid.pix_rangesets(nside)):
+        # get weights
+        w = np.ones(rs[1] - rs[0])
+        if weights is not None:
+            w = weights[..., rs[0]:rs[1]]
+        # take average of child pixels
+        hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w, axis=-1) / np.sum(w, axis=-1).clip(1e-40, np.inf)
+
+    return hp_map_mr
+
+
+def _recursive_pixelization(bsky, prev_ind, prev_nside, max_nside, theta, phi, nsides, total_nsides,
+                           sigma=None, target_nside=None):
+    """
+    A dynamic pixelization scheme. See dynamic_pixelization() for operation.
+
+    Parameters
+    ----------
+    bsky : array_like
+        beam weighted healpix sky in NEST order (at high nside resolution)
+    prev_ind : int
+        HEALpix index of the leaf we are currently subdividing
+    prev_nside : int
+        HEALpix nside of the leaf we are currently subdividing
+    max_nside : int
+        Maximum nside of dynamic pixelization.
+    theta, phi, nsides, total_nsides: list
+        Empty lists to append to
+    sigma : float, optional
+        Sigma threshold for beam weighted pixelization
+    target_nside : int
+        The nside assigned to the leaf we are currently subdividign.
+    """
+    # get new nside
+    this_nside = prev_nside * 2
+    # determine if prev_nside is enough
+    if (prev_nside >= max_nside) or (target_nside is not None and prev_nside >= target_nside):
+        angs = healpy.pix2ang(prev_nside, prev_ind, nest=True)
+        theta.append(angs[0])
+        phi.append(angs[1])
+        nsides.append(prev_nside)
+        total_nsides.extend([prev_nside] * int(4**(np.log(max_nside / this_nside) / np.log(2) + 1)))
+        return
+    # get the four indices of this leaf in this_nside nest ordering
+    start_ind = 4 * prev_ind
+    inds = range(start_ind, start_ind + 4)
+    # get the bsky interpolated values
+    angs = healpy.pix2ang(this_nside, inds, nest=True)
+    # figure out if we need to subdivide or not
+    if sigma is not None:
+        vals = healpy.get_interp_val(bsky, *angs, nest=True)
+        stop_divide = np.std(vals) < sigma
+    if this_nside >= max_nside:
+        stop_divide = True
+    if target_nside is not None:
+        stop_divide = this_nside >= target_nside
+    if stop_divide:
+        theta.extend(angs[0])
+        phi.extend(angs[1])
+        nsides.extend([this_nside] * 4)
+        total_nsides.extend([this_nside] * int(4**(np.log(max_nside / this_nside) / np.log(2) + 1)))
+    # otherwise, iterate over each leaf and subdivide again
+    else:
+        for ind in inds:
+            _recursive_pixelization(bsky, ind, this_nside, max_nside, theta, phi, nsides, total_nsides,
+                                    sigma=sigma, target_nside=target_nside)
+
+
+def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=15,
+                  ra_min_max=None, min_nside=32, max_nside=256):
+    """
+    Compute nside binning using a voigt profile given
+    a map of sky angles. Note for the ra axis: be mindful
+    of how the ra_min_max cuts depend on the wrapping of
+    the input ra array.
+
+    Parameters
+    ----------
+    zen_dec : array_like
+        Zenith sky angle along the declination axis [deg].
+    ra : array_like
+        Right ascension coordinate [deg]. 
+    dec_sigma, dec_gamma : float
+        Sigma and gamma parameters of voigt profile along
+        declination axis [deg]
+    ra_sigma, ra_gamma : float
+        Sigma and gamma parameters of voigt profile
+        along right ascension [deg]
+    ra_min_max : 2-tuple
+        Minimum and maximum ra [deg] cut to keep a flat, max
+        nside response of the binning. Outside of these cuts
+        the voigt profile parameters lower the nside resolution.
+    min_nside : int
+        Minimum nside resolution. Must be a power of 2.
+    max_nside : int
+        Maximum nside resolution. Must be a power of 2.
+
+    Returns
+    -------
+    curve : array_like
+        Voigt profile curve used to set the nside binning
+    nside_bins : array_like
+        The nside of each pixel on the sky
+    """
+    # get dec component of voigt profile
+    curve = special.voigt_profile(zen_dec, dec_sigma, dec_gamma)
+    curve -= curve.min()
+    curve /= curve.max()
+
+    # get ra component of voigt profile
+    if ra_min_max is None:
+        ra_min_max = ra.min(), ra.max()
+    ra_low = ra < ra_min_max[0]
+    ra_low_curve = special.voigt_profile(ra[ra_low] - ra_min_max[0], ra_sigma, ra_gamma)
+    ra_low_curve -= ra_low_curve.min()
+    ra_low_curve /= ra_low_curve.max()
+    curve[ra_low] *= ra_low_curve
+    ra_hi = ra > ra_min_max[1]
+    ra_hi_curve = special.voigt_profile(ra[ra_hi] - ra_min_max[1], ra_sigma, ra_gamma)
+    ra_hi_curve -= ra_hi_curve.min()
+    ra_hi_curve /= ra_hi_curve.max()
+    curve[ra_hi] *= ra_hi_curve
+
+    # normalize curve to max and min_nside
+    curve *= (max_nside - min_nside)
+    curve += min_nside
+
+    # bin the inputs
+    bins = np.array([2 ** i for i in range(int(np.log(min_nside)/np.log(2)), int(np.log(max_nside)/np.log(2)) + 1)])
+    inds = np.array([np.argmin(np.abs(bins - c)) for c in curve])
+    nside_bins = np.array([bins[i] for i in inds])
+
+    return curve, nside_bins
+
+def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_nsides=None):
+    """
+    Two dynamic HEALpix pixelization schemes.
+    1. Based on Zheng+2016 MITEOR Map Making (sigma)
+    2. Manual pixelization (set by target_nsides)
+
+    Parameters
+    ----------
+    base_nside : int
+        The starting, minimum nside of the map. Must be power of 2.
+    max_nside : int
+        The upper limit on nside resolution. Must be a power of 2.
+    sigma : float, optional
+        If using algorithm (1), this is the standard deviation
+        threshold of the bsky map, above which the healpix pixel
+        is subdivded, below which the pixelization stops.
+    bsky : array_like, optional
+        If using algorithm (1), this is the beam weighted sky (NEST)
+        to compute the standard deviations. This should be fed
+        at an nside resolution higher than max_nside.
+    target_nsides : array_like, optional
+        If using algorithm (2), this should be an array of integers
+        that has a length nside2npix(base_nside). Each element
+        sets the nside resolution of that healpix pixel.
+        See nside_binning() for examples.
+
+    Returns
+    -------
+    theta, phi : array_like
+        Co-latitude and longitude [radians] of dynamic pixels
+    nsides : array_like
+        nside resolution of each pixel in theta, phi
+    total_nsides : array_like
+        An array that has the full shape of nside2npix(max_nside),
+        with each element containing the nside resolution of the
+        dynamic pixelization map at that location. This is used
+        to plot the nside resolution of the map in healpix format.
+    """
+    theta, phi, nsides, total_nsides = [], [], [], []
+    for i in range(healpy.nside2npix(base_nside)):
+        target = target_nsides[i] if target_nsides is not None else None
+        _recursive_pixelization(bsky, i, base_nside, max_nside, theta, phi, nsides, total_nsides,
+                                sigma=sigma, target_nside=target)
+
+    return np.array(theta), np.array(phi), np.array(nsides), np.array(total_nsides)

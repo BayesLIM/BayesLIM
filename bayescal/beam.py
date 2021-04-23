@@ -29,7 +29,8 @@ class BeamBase(torch.nn.Module):
     at boresight. Also, a single beam can be used for all
     antennas, or one can fit for per-antenna models.
     """
-    def __init__(self, params, freqs, R, parameter, polmode='1pol', fov=180):
+    def __init__(self, params, freqs, R, parameter, polmode='1pol',
+                 powerbeam=False, fov=180):
         """
         Instantiate BeamBase object.
 
@@ -51,6 +52,9 @@ class BeamBase(torch.nn.Module):
             1pol : single linear polarization
             2pol : two linear polarizations (diag of Jones)
             4pol : four linear and cross pol (2x2 Jones)
+        powerbeam : bool, optional
+            If True, take the antenna beam to be a real-valued, baseline
+            "power" beam, or psky = beam * sky. Only valid for 1pol or 2pol.
         fov : float, optional
             Total angular extent of the field-of-view in degrees, centered
             at the pointing center (alitude). Parts of the sky outside of fov
@@ -79,6 +83,9 @@ class BeamBase(torch.nn.Module):
         self.Nfreqs = len(freqs)
         self.R = R
         self.polmode = polmode
+        self.powerbeam = powerbeam
+        if self.powerbeam:
+            assert self.polmode in ['1pol', '2pol']
         self.Npol = 1 if polmode == '1pol' else 2
         self.fov = fov
         self._transform = {}
@@ -109,7 +116,8 @@ class PixelBeam(BeamBase):
     Fourier space). This takes sky models of 'point'
     and 'pixel' kind.
     """
-    def __init__(self, params, freqs, R=None, parameter=True, polmode='1pol', fov=180):
+    def __init__(self, params, freqs, R=None, parameter=True, polmode='1pol',
+                 powerbeam=False, fov=180):
         """
         A generic beam model evaluated on the sky
 
@@ -139,6 +147,9 @@ class PixelBeam(BeamBase):
             1pol : single linear polarization (default)
             2pol : two linear polarizations (diag of Jones)
             4pol : four linear and cross pol (2x2 Jones)
+        powerbeam : bool, optional
+            If True, take the antenna beam to be a real-valued, baseline
+            "power" beam, or psky = beam * sky. Only valid for 1pol or 2pol.
         fov : float, optional
             Total angular extent of the field-of-view in degrees, centered
             at the pointing center (alitude). Parts of the sky outside of fov
@@ -152,7 +163,8 @@ class PixelBeam(BeamBase):
                 def beam_func(zen, az, freqs):
                     return torch.ones(params.shape + (zen.size,), dtype=params.dtype)
 
-        super(PixelBeam, self).__init__(params, freqs, R, parameter, polmode, fov)
+        super(PixelBeam, self).__init__(params, freqs, R, parameter, polmode,
+                                        powerbeam, fov)
 
     def gen_beam(self, params, zen, az, beam_func=None):
         """
@@ -219,7 +231,12 @@ class PixelBeam(BeamBase):
             beam2 = beam1
 
         if self.polmode in ['1pol', '2pol']:
-            psky = utils.diag_matmul(utils.diag_matmul(beam1, sky), beam2.conj())
+            if self.powerbeam:
+                # assume beam is baseline beam, only use beam1
+                psky = utils.diag_matmul(beam1, sky)
+            else:
+                # assume antenna beams
+                psky = utils.diag_matmul(utils.diag_matmul(beam1, sky), beam2.conj())
         else:
             psky = torch.einsum("ab...,bc...,dc...->ad...", beam1,
                     sky, beam2.conj())
@@ -333,7 +350,9 @@ class PixelBeam(BeamBase):
                 # transform SphBeam to PixelBeam
                 params, R = self._transform['alm'](self.params)
                 pix_beam = PixelBeam(params, freqs=self.freqs, R=R,
-                                     parameter=True, polmode=self.polmode, fov=self.fov)
+                                     parameter=True, polmode=self.polmode,
+                                     powerbeam=self.powerbeam, fov=self.fov)
+                return pix_beam
 
         elif kind == 'alm':
             if self.__class__ == SphBeam:
@@ -343,7 +362,8 @@ class PixelBeam(BeamBase):
                 # transform PixelBeam to SphBeam
                 params, R = self._transform['pixel'](self.params)
                 sph_beam = SphBeam(params, freqs=self.freqs, R=R,
-                                   parameter=True, polmode=self.polmode, fov=self.fov)
+                                   parameter=True, polmode=self.polmode,
+                                   powerbeam=self.powerbeam, fov=self.fov)
                 return sph_beam
 
 
@@ -362,7 +382,8 @@ class SphBeam(BeamBase):
     ``spherical harmonic space'' on the sky.
     This takes sky models of 'alm' kind.
     """
-    def __init__(self, params, freqs, R, parameter=True, polmode='1pol', fov=180):
+    def __init__(self, params, freqs, R, parameter=True, polmode='1pol',
+                 powerbeam=False, fov=180):
         """
         A generic beam model evaluated on the sky
 
@@ -392,6 +413,9 @@ class SphBeam(BeamBase):
             1pol : single linear polarization (default)
             2pol : two linear polarizations (diag of Jones)
             4pol : four linear and cross pol (2x2 Jones)
+        powerbeam : bool, optional
+            If True, take the antenna beam to be a real-valued, baseline
+            "power" beam, or psky = beam * sky. Only valid for 1pol or 2pol.
         fov : float, optional
             Total angular extent of the field-of-view in degrees, centered
             at the pointing center (alitude). Parts of the sky outside of fov
@@ -400,6 +424,7 @@ class SphBeam(BeamBase):
             while fov = 90 means we view the sky withih 45 deg of zenith.
             Default is full sky above the horizon.
         """
-        super(SphBeam, self).__init__(params, freqs, R, parameter, polmode, fov)
+        super(SphBeam, self).__init__(params, freqs, R, parameter, polmode,
+                                      powerbeam, fov)
 
 

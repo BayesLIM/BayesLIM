@@ -520,7 +520,7 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
     # get theta, phi arrays
     theta, phi = grid.pix2ang(np.arange(grid.npix))
 
-    return grid, theta, phi
+    return grid, theta, phi 
 
 
 def multires_map(hp_map, grid, weights=None):
@@ -561,7 +561,7 @@ def multires_map(hp_map, grid, weights=None):
         if weights is not None:
             w = weights[..., rs[0]:rs[1]]
         # take average of child pixels
-        hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w) / np.sum(w).clip(1e-40, np.inf)
+        hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w, axis=-1) / np.sum(w, axis=-1).clip(1e-40, np.inf)
 
     return hp_map_mr
 
