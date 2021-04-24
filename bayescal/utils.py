@@ -578,7 +578,7 @@ def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=1
     curve /= curve.max()
 
     # get ra component of voigt profile
-    if ra_min_mix is not None:
+    if ra_min_max is not None:
         # enact a nside res decay for ra less than min ra
         assert ra_min_max[0] > ra.min()
         ra_low = ra < ra_min_max[0]
