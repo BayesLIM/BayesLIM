@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import healpy, mhealpy
 from scipy import special
+import copy
 
 
 ########################################
@@ -459,7 +460,7 @@ def multires_map(hp_map, grid, weights=None):
     hp_map_mr
         Multiresolution healpix object of hp_map
     """
-    if isinstance(hp_map, mhealpy.HealpixBase):
+    if isinstance(grid, mhealpy.HealpixBase):
         hp_map_mr = copy.deepcopy(grid)
         nside = hp_map.nside
     else:
