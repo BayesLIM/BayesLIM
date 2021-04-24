@@ -422,7 +422,7 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
 
     # downsample healpix map grid
     grid = hp_map.adaptive_moc_mesh(hp_map.nside, split_fun,
-                                          dtype=hp_map.dtype)
+                                    dtype=hp_map.dtype)
     grid._density = True
 
     # fill data array
@@ -578,18 +578,21 @@ def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=1
     curve /= curve.max()
 
     # get ra component of voigt profile
-    if ra_min_max is None:
-        ra_min_max = ra.min(), ra.max()
-    ra_low = ra < ra_min_max[0]
-    ra_low_curve = special.voigt_profile(ra[ra_low] - ra_min_max[0], ra_sigma, ra_gamma)
-    ra_low_curve -= ra_low_curve.min()
-    ra_low_curve /= ra_low_curve.max()
-    curve[ra_low] *= ra_low_curve
-    ra_hi = ra > ra_min_max[1]
-    ra_hi_curve = special.voigt_profile(ra[ra_hi] - ra_min_max[1], ra_sigma, ra_gamma)
-    ra_hi_curve -= ra_hi_curve.min()
-    ra_hi_curve /= ra_hi_curve.max()
-    curve[ra_hi] *= ra_hi_curve
+    if ra_min_mix is not None:
+        # enact a nside res decay for ra less than min ra
+        assert ra_min_max[0] > ra.min()
+        ra_low = ra < ra_min_max[0]
+        ra_low_curve = special.voigt_profile(ra[ra_low] - ra_min_max[0], ra_sigma, ra_gamma)
+        ra_low_curve -= ra_low_curve.min()
+        ra_low_curve /= ra_low_curve.max()
+        curve[ra_low] *= ra_low_curve
+        # enact a nside res decay for ra greater than max ra
+        ra_hi = ra > ra_min_max[1]
+        assert ra_min_max[1] < ra.max()
+        ra_hi_curve = special.voigt_profile(ra[ra_hi] - ra_min_max[1], ra_sigma, ra_gamma)
+        ra_hi_curve -= ra_hi_curve.min()
+        ra_hi_curve /= ra_hi_curve.max()
+        curve[ra_hi] *= ra_hi_curve
 
     # normalize curve to max and min_nside
     curve *= (max_nside - min_nside)
@@ -632,8 +635,10 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     -------
     theta, phi : array_like
         Co-latitude and longitude [radians] of dynamic pixels
-    nsides : array_like
-        nside resolution of each pixel in theta, phi
+    nsides : mhealpy HealpixBase object
+        nside resolution of each pixel in theta, phi. This also
+        holds the pixrangesets used in multires_map for downsampling
+        a single-resolution healpix map to the dynamic res map.
     total_nsides : array_like
         An array that has the full shape of nside2npix(max_nside),
         with each element containing the nside resolution of the
@@ -645,5 +650,10 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
         target = target_nsides[i] if target_nsides is not None else None
         _recursive_pixelization(bsky, i, base_nside, max_nside, theta, phi, nsides, total_nsides,
                                 sigma=sigma, target_nside=target)
+    theta, phi, total_nsides = np.array(theta), np.array(phi), np.array(total_nsides)
+    # turn nsides into mhealpy HealpixMap object
+    ipix = [healpy.ang2pix(ns, th, ph, nest=True) for ns, th, ph in zip(nsides, theta, phi)]
+    uniq = [4 * ns**2 + ip for ns, ip in zip(nsides, ipix)]
+    nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nest')
 
-    return np.array(theta), np.array(phi), np.array(nsides), np.array(total_nsides)
+    return theta, phi, nsides, total_nsides
