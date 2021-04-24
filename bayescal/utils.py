@@ -464,7 +464,7 @@ def multires_map(hp_map, grid, weights=None, dtype=None):
     """
     if isinstance(grid, mhealpy.HealpixBase):
         hp_map_mr = copy.deepcopy(grid)
-        nside = healpy.npix2nside(len(hp_map))
+        nside = hp_map.nside
     else:
         hp_map_mr = np.zeros(hp_map.shape[:-1] + grid.data.shape,
                              dtype=hp_map.dtype)
