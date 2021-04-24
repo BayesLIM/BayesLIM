@@ -437,7 +437,7 @@ def adaptive_healpix_mesh(hp_map, split_fun=None):
     return grid, theta, phi 
 
 
-def multires_map(hp_map, grid, weights=None):
+def multires_map(hp_map, grid, weights=None, dtype=None):
     """
     Given a multi-resolution grid, downsample
     a singe-res healpix map to multi-res grid.
@@ -454,15 +454,17 @@ def multires_map(hp_map, grid, weights=None):
         Optional weights to use when averaging
         child pixels of hp_map within a parent
         pixel in grid. Must be same nside as hp_map.
+    dtype : object
+        Data type of output map. Default is grid.dtype.
 
     Returns
     -------
     hp_map_mr
-        Multiresolution healpix object of hp_map
+        Multiresolution healpix object of hp_map.
     """
     if isinstance(grid, mhealpy.HealpixBase):
         hp_map_mr = copy.deepcopy(grid)
-        nside = hp_map.nside
+        nside = healpy.npix2nside(len(hp_map))
     else:
         hp_map_mr = np.zeros(hp_map.shape[:-1] + grid.data.shape,
                              dtype=hp_map.dtype)
@@ -476,6 +478,9 @@ def multires_map(hp_map, grid, weights=None):
             w = weights[..., rs[0]:rs[1]]
         # take average of child pixels
         hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w, axis=-1) / np.sum(w, axis=-1).clip(1e-40, np.inf)
+
+    if dtype is not None:
+        hp_map_mr._data = hp_map_mr._data.astype(dtype)
 
     return hp_map_mr
 
@@ -655,6 +660,6 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     # turn nsides into mhealpy HealpixMap object
     ipix = [healpy.ang2pix(ns, th, ph, nest=True) for ns, th, ph in zip(nsides, theta, phi)]
     uniq = [4 * ns**2 + ip for ns, ip in zip(nsides, ipix)]
-    nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nest')
+    nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nest', dtype=np.float32)
 
     return theta, phi, nsides, total_nsides
