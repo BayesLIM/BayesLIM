@@ -464,10 +464,11 @@ def multires_map(hp_map, grid, weights=None, dtype=None):
     """
     if isinstance(grid, mhealpy.HealpixBase):
         hp_map_mr = copy.deepcopy(grid)
+        hp_map_mr._data = hp_map_mr._data.astype(dtype)
         nside = hp_map.nside
     else:
         hp_map_mr = np.zeros(hp_map.shape[:-1] + grid.data.shape,
-                             dtype=hp_map.dtype)
+                             dtype=dtype)
         nside = healpy.npix2nside(hp_map.shape[-1])
 
     # average hp_map
@@ -478,9 +479,6 @@ def multires_map(hp_map, grid, weights=None, dtype=None):
             w = weights[..., rs[0]:rs[1]]
         # take average of child pixels
         hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w, axis=-1) / np.sum(w, axis=-1).clip(1e-40, np.inf)
-
-    if dtype is not None:
-        hp_map_mr._data = hp_map_mr._data.astype(dtype)
 
     return hp_map_mr
 

@@ -197,7 +197,7 @@ class PixelBeam(BeamBase):
         """
         # get beam function
         if beam_func is None:
-            beam_func = R(params)
+            beam_func = self.R(params)
 
         # enact fov cut
         cut = zen < self.fov / 2

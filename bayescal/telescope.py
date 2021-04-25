@@ -65,7 +65,7 @@ class TelescopeModel:
         """
         if key is None:
             del self.conv_cache
-            self.cov_cache = {}
+            self.conv_cache = {}
         else:
             del self.conv_cache[key]
 
@@ -156,7 +156,7 @@ class ArrayModel(torch.nn.Module):
         bl : 2-tuple
             Baseline tuple, specifying the participating
             antennas from self.ants
-        freqs : array_like
+        freqs : tensor
             Frequencies [Hz]
         kind : str
             Kind of fringe model ['point', 'pixel', 'alm']
@@ -176,12 +176,12 @@ class ArrayModel(torch.nn.Module):
             or (Nfreqs, Nalm)
         """
         if kind in ['pixel', 'point']:
-            bl_vec = self.antpos[bl[1]] - self.antpos[bl[0]]
-            s = np.array([np.sin(zen * self.d2r) * np.cos(az * self.d2r),
-                          np.sin(zen * self.d2r) * np.sin(az * self.d2r),
-                          np.cos(zen * self.d2r)])
+            bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]])
+            s = torch.tensor([np.sin(zen * self.d2r) * np.cos(az * self.d2r),
+                              np.sin(zen * self.d2r) * np.sin(az * self.d2r),
+                              np.cos(zen * self.d2r)])
             fringe = np.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
-            return torch.as_tensor(fringe)
+            return fringe
 
         elif kind == 'alm':
             raise NotImplementedError
@@ -360,7 +360,7 @@ class RIME(torch.nn.Module):
                     psky = beam_model.apply_beam(beam1, cut_sky, beam2=beam2)
 
                     # generate fringe
-                    fringe = self.array.gen_fringe((ant1, ant2), self.freqs.detach().numpy(), kind, zen=zen, az=az)
+                    fringe = self.array.gen_fringe((ant1, ant2), self.freqs, kind, zen=zen, az=az)
 
                     # apply fringe
                     psky = self.array.apply_fringe(fringe, psky, kind)
@@ -430,138 +430,5 @@ def top2eq(location, obs_jd, alt, az):
     return out.ra.deg, out.dec.deg
 
 
-def voigt_beam(nside, sigma, gamma):
-    """
-    A power beam with a Voigt profile
 
-    Parameters
-    ----------
-    nside : int
-        HEALpix nside parameter
-    sigma ; float
-        Standard deviation of Gaussian component [rad]
-    gamma : float
-        Half-width at half-max of Cauchy component [rad]
-
-    Returns
-    -------
-    beam
-        HEALpix map (ring ordered) of Voigt beam
-    theta, phi
-        co-latitude and longitude of HEALpix map [rad]
-    """
-    theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
-    beam = special.voigt_profile(theta, sigma, gamma)
-    beam /= beam.max()
-
-    return beam, theta, phi
-
-
-def _value_fun(start, stop, hp_map):
-    value = sum(hp_map._data[start:stop])
-    if hp_map._density:
-        value /= stop - start
-    return value
-
-
-def adaptive_healpix_mesh(hp_map, split_fun=None):
-    """
-    Convert a single resolution healpix map to a
-    multi-order coverage (MOC) map based on
-    the pixel values (density = False)
-
-    Parameters
-    ----------
-    hp_map : mhealpy.HealpixBase subclass
-        single resolution map to convert to multi-resolution
-        based on relative pixel values and split_fun.
-        Note that this should have density = False.
-    split_fun : callable
-        Function that determines if a healpix pixel is split into
-        multiple pixels. See mhealpy.adaptive_moc_mesh().
-        Default is mhealpy default function.
-
-    Returns
-    -------
-    grid : HealpixMap object
-        Downsampled healpix grid. Note that, due to how
-        mhealpy.get_interp_val works, this will have density = True.
-    theta, phi : array_like
-        Co-latitude and longitude of downsampled map [rad]
-
-    Notes
-    -----
-    See multires_map for downsampling a sky map onto
-    output grid.
-    """
-    # set split_fun
-    if split_fun is None:
-        def split_fun(start, stop):
-            max_value = max(hp_map)
-            return _value_fun(start, stop, hp_map) > max_value
-
-    # convert to nested if ring
-    if hp_map.is_ring:
-        ring2nest = healpy.ring2nest(hp_map.nside,
-                                     np.arange(healpy.nside2npix(hp_map.nside)))
-        hp_map._data = hp_map._data[np.argsort(ring2nest)]
-        hp_map._scheme = 'NESTED'
-
-    # downsample healpix map grid
-    grid = hp_map.adaptive_moc_mesh(hp_map.nside, split_fun,
-                                          dtype=hp_map.dtype)
-    grid._density = True
-
-    # fill data array
-    rangesets = grid.pix_rangesets(grid.nside)
-    for pix,(start, stop) in enumerate(rangesets):
-        grid[pix] = _value_fun(start, stop, hp_map)
-
-    # get theta, phi arrays
-    theta, phi = grid.pix2ang(np.arange(grid.npix))
-
-    return grid, theta, phi 
-
-
-def multires_map(hp_map, grid, weights=None):
-    """
-    Given a multi-resolution grid, downsample
-    a singe-res healpix map to multi-res grid.
-
-    Parameters
-    ----------
-    hp_map : array_like or mhealpy.HealpixMap object
-        A single-res healpix map to downsample (NESTED)
-        If array_like, the last axis must be sky pixel axis
-    grid : mhealpy.HealpixMap object
-        Multi-resolution HealpixMap object containing
-        grid to downsample to.
-    weights : array_like or mhealpy.HealpixMap object, optional
-        Optional weights to use when averaging
-        child pixels of hp_map within a parent
-        pixel in grid. Must be same nside as hp_map.
-
-    Returns
-    -------
-    hp_map_mr
-        Multiresolution healpix object of hp_map
-    """
-    if isinstance(hp_map, mhealpy.HealpixBase):
-        hp_map_mr = copy.deepcopy(grid)
-        nside = hp_map.nside
-    else:
-        hp_map_mr = np.zeros(hp_map.shape[:-1] + grid.data.shape,
-                             dtype=hp_map.dtype)
-        nside = healpy.npix2nside(hp_map.shape[-1])
-
-    # average hp_map
-    for i, rs in enumerate(grid.pix_rangesets(nside)):
-        # get weights
-        w = np.ones(rs[1] - rs[0])
-        if weights is not None:
-            w = weights[..., rs[0]:rs[1]]
-        # take average of child pixels
-        hp_map_mr[..., i] = np.sum(hp_map[..., rs[0]:rs[1]] * w, axis=-1) / np.sum(w, axis=-1).clip(1e-40, np.inf)
-
-    return hp_map_mr
 
