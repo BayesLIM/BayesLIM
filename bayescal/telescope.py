@@ -396,6 +396,11 @@ def eq2top(location, obs_jd, ra, dec):
     -----
     zenith angle (zen) is alt + 90
     """
+    # if ra/dec are tensors, then this is a lot slower
+    if isinstance(ra, torch.Tensor):
+        ra = ra.detach().numpy()
+    if isinstance(dec, torch.Tensor):
+        dec = dec.detach().numpy()
     altaz = AltAz(location=location, obstime=time.Time(obs_jd, format='jd'))
     icrs = ICRS(ra=ra * units.deg, dec=dec * units.deg)
     out = icrs.transform_to(altaz)
@@ -422,6 +427,11 @@ def top2eq(location, obs_jd, alt, az):
     ra, dec : array
         ra and dec in [deg]
     """
+    # if alt/az are tensors, then this is a lot slower
+    if isinstance(alt, torch.Tensor):
+        alt = alt.detach().numpy()
+    if isinstance(az, torch.Tensor):
+        az = az.detach().numpy()
     altaz = AltAz(location=location, obstime=time.Time(obs_jd, format='jd'),
                   alt=alt * units.deg, az=az * units.deg)
     icrs = ICRS()
