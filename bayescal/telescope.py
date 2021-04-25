@@ -180,8 +180,7 @@ class ArrayModel(torch.nn.Module):
             s = torch.tensor([np.sin(zen * self.d2r) * np.cos(az * self.d2r),
                               np.sin(zen * self.d2r) * np.sin(az * self.d2r),
                               np.cos(zen * self.d2r)])
-            fringe = np.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
-            return fringe
+            return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
 
         elif kind == 'alm':
             raise NotImplementedError
