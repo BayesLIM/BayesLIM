@@ -179,9 +179,10 @@ class ArrayModel(torch.nn.Module):
             bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]])
             zen = torch.as_tensor(zen * self.d2r)
             az = torch.as_tensor(az * self.d2r)
-            s = torch.tensor([np.sin(zen) * np.cos(az),
-                              np.sin(zen) * np.sin(az),
-                              np.cos(zen)])
+            s = torch.zeros(3, len(zen))
+            s[0] = torch.sin(zen) * torch.cos(az)
+            s[1] = torch.sin(zen) * torch.sin(az)
+            s[2] = torch.cos(zen)
             return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
 
         elif kind == 'alm':
