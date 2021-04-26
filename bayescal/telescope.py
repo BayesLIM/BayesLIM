@@ -23,7 +23,7 @@ class TelescopeModel:
         ----------
         location : tuple
             3-tuple location of the telescope in geodetic
-            frame (lat, lon) in degrees.
+            frame (lon, lat) in degrees.
         """
         # setup telescope location in geocentric (ECEF) frame
         self.location = location
@@ -177,9 +177,11 @@ class ArrayModel(torch.nn.Module):
         """
         if kind in ['pixel', 'point']:
             bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]])
-            s = torch.tensor([np.sin(zen * self.d2r) * np.cos(az * self.d2r),
-                              np.sin(zen * self.d2r) * np.sin(az * self.d2r),
-                              np.cos(zen * self.d2r)])
+            zen = torch.as_tensor(zen * self.d2r)
+            az = torch.as_tensor(az * self.d2r)
+            s = torch.tensor([np.sin(zen) * np.cos(az),
+                              np.sin(zen) * np.sin(az),
+                              np.cos(zen)])
             return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
 
         elif kind == 'alm':
@@ -198,8 +200,7 @@ class ArrayModel(torch.nn.Module):
         fringe : tensor
             Holds the fringe response for a given baseline
             vector across frequency. If kind = 'point'
-            or 'pixel' its shape is (Npix, Nfreqs)
-            elif kind = 'alm' shape is (Nalm, Nfreqs)
+            or 'pixel' its shape is (Nfreqs, Npix)
         sky : tensor
             Holds the sky representatation. If kind = 'point'
             or 'pixel', its shape is (Npol, Npol, Nfreqs, Npix)
@@ -310,6 +311,7 @@ class RIME(torch.nn.Module):
         vis : tensor
             Measured visibilities, shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
         """
+        assert isinstance(sky_components, list)
         # initialize visibility tensor
         Npol = self.beam.Npol
         vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
@@ -351,25 +353,33 @@ class RIME(torch.nn.Module):
 
                 # iterate over baselines
                 for k, (ant1, ant2) in enumerate(self.bls):
-                    # get beam of each antenna
-                    beam1 = beam[:, :, self.ant2model[ant1]]
-                    beam2 = beam[:, :, self.ant2model[ant2]]
-
-                    # apply beam to sky
-                    psky = beam_model.apply_beam(beam1, cut_sky, beam2=beam2)
-
-                    # generate fringe
-                    fringe = self.array.gen_fringe((ant1, ant2), self.freqs, kind, zen=zen, az=az)
-
-                    # apply fringe
-                    psky = self.array.apply_fringe(fringe, psky, kind)
-
-                    # sum across sky
-                    sky_vis[:, :, k, j, :] = torch.sum(psky, axis=-1)
+                    self._prod_and_sum(beam_model, beam, cut_sky, ant1, ant2,
+                                       kind, zen, az, sky_vis, k, j)
 
             vis = vis + sky_vis
 
         return vis
+
+    def _prod_and_sum(self, beam_model, beam, cut_sky, ant1, ant2,
+                      kind, zen, az, sky_vis, bl_ind, obs_ind):
+        """
+        Sky product and sum into sky_vis inplace
+        """
+        # get beam of each antenna
+        beam1 = beam[:, :, self.ant2model[ant1]]
+        beam2 = beam[:, :, self.ant2model[ant2]]
+
+        # apply beam to sky
+        psky = beam_model.apply_beam(beam1, cut_sky, beam2=beam2)
+
+        # generate fringe
+        fringe = self.array.gen_fringe((ant1, ant2), self.freqs, kind, zen=zen, az=az)
+
+        # apply fringe
+        psky = self.array.apply_fringe(fringe, psky, kind)
+
+        # sum across sky
+        sky_vis[:, :, bl_ind, obs_ind, :] = torch.sum(psky, axis=-1)
 
 
 def eq2top(location, obs_jd, ra, dec):

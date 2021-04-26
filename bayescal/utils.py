@@ -540,7 +540,7 @@ def _recursive_pixelization(bsky, prev_ind, prev_nside, max_nside, theta, phi, n
                                     sigma=sigma, target_nside=target_nside)
 
 
-def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=15,
+def nside_binning(zen, ra, zen_sigma=5, zen_gamma=15, ra_sigma=5, ra_gamma=15,
                   ra_min_max=None, min_nside=32, max_nside=256):
     """
     Compute nside binning using a voigt profile given
@@ -550,13 +550,13 @@ def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=1
 
     Parameters
     ----------
-    zen_dec : array_like
-        Zenith sky angle along the declination axis [deg].
+    zen : array_like
+        Zenith sky coordinate along the declination axis [deg].
     ra : array_like
         Right ascension coordinate [deg]. 
-    dec_sigma, dec_gamma : float
-        Sigma and gamma parameters of voigt profile along
-        declination axis [deg]
+    zen_sigma, zen_gamma : float
+        Sigma and gamma parameters of voigt profile of the
+        zenith angle along the declination axis [deg]
     ra_sigma, ra_gamma : float
         Sigma and gamma parameters of voigt profile
         along right ascension [deg]
@@ -576,8 +576,8 @@ def nside_binning(zen_dec, ra, dec_sigma=5, dec_gamma=15, ra_sigma=5, ra_gamma=1
     nside_bins : array_like
         The nside of each pixel on the sky
     """
-    # get dec component of voigt profile
-    curve = special.voigt_profile(zen_dec, dec_sigma, dec_gamma)
+    # get zen component of voigt profile
+    curve = special.voigt_profile(zen, zen_sigma, zen_gamma)
     curve -= curve.min()
     curve /= curve.max()
 
