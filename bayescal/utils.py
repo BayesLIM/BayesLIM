@@ -657,6 +657,6 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     # turn nsides into mhealpy HealpixMap object
     ipix = [healpy.ang2pix(ns, th, ph, nest=True) for ns, th, ph in zip(nsides, theta, phi)]
     uniq = [4 * ns**2 + ip for ns, ip in zip(nsides, ipix)]
-    nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nest', dtype=np.int16)
+    nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nested', dtype=np.int16)
 
     return theta, phi, nsides, total_nsides

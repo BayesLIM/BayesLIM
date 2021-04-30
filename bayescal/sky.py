@@ -229,9 +229,10 @@ class PixelModel(SkyBase):
         freqs : tensor
             Frequency array of sky model [Hz].
         areas : tensor
-            Contains the solid angle of each pixel. This is multiplied
-            into the final sky modle, and thus needs to be of shape
-            (1, 1, 1, Npix) to allow for broadcasting rules to apply.
+            Contains the solid angle of each pixel [str]. This is multiplied
+            into the final sky modle, and thus needs to be a scalar or
+            a tensor of shape (1, 1, 1, Npix) to allow for broadcasting
+            rules to apply.
         R : callable, optional
             An arbitrary response function for the sky model, mapping
             self.params to a sky pixel tensor of shape
@@ -350,8 +351,6 @@ class SphHarmModel(SkyBase):
         pass
 
 
-
-
 class CompositeModel(torch.nn.Module):
     """
     Multiple sky models
@@ -389,7 +388,7 @@ class CompositeModel(torch.nn.Module):
         return [mod.forward() for mod in _models]
 
 
-def stokes2linear(stokes, dtype=torch.cfloat):
+def stokes2linear(stokes):
     """
     Convert Stokes parameters to coherency matrix
     for xyz cartesian (aka linear) feed basis.
@@ -405,8 +404,6 @@ def stokes2linear(stokes, dtype=torch.cfloat):
         sky model parameterization, of shape (4, ...)
         with the zeroth axis holding the Stokes parameters
         in the order of [I, Q, U, V].
-    dtype : torch dtype object
-        dtype of output coherency matrix, default is cfloat
 
     Returns
     -------
@@ -422,7 +419,7 @@ def stokes2linear(stokes, dtype=torch.cfloat):
             \right)
 
     """
-    B = torch.zeros(2, 2, stokes.shape[1:], dtype=dtype)
+    B = torch.zeros(2, 2, stokes.shape[1:])
     B[0, 0] = stokes[0] + stokes[1]
     B[0, 1] = stokes[2] + 1j * stokes[3]
     B[1, 0] = stokes[2] - 1j * stokes[3]
@@ -456,83 +453,24 @@ def gen_lm(lmax, real=True):
     return np.array(lms)
 
 
-def Ylm(angs, lmax, dtype=torch.cfloat):
+def eval_sph_harm(coeffs, angs):
     """
-    Generate an array of spherical harmonics
-    basis vectors.
-
-    Parameters
-    ----------
-    angs : tensor
-        Sky locations at which to evaluate spherical
-        harmonics, of shape (Ncells, 2), where
-        the last axis is RA and Dec in radians
-    lmax : int
-        Maximum l parameter
-    mmax : int
-        Maximum m parameter. Must be
-        equal to or less than lmax.
-    dtype : torch datatype
-        Datatype of harmonic vectors
-
-    Returns
-    -------
-    tensor
-        Holds spherical harmonic Ylm, of shape
-        (Nalm, Ncells)
-    array
-        array of shape (Nalm, 2) holding
-        the (l, m) parameters.
-    """
-    # get l and m params
-    lms = gen_lm(lmax)
-    Nalms = len(lms)
-    Nsources = angs.shape[1]
-
-    # iterate and generate Ylms
-    Y = torch.zeros((Nsources, Nalms), dtype=dtype)
-
-    for i, lm in enumerate(lms):
-        Y[:, i] = torch.tensor(sph_harm(lm[1], lm[0], angs[0], angs[1]), dtype=dtype)
-
-    return Y
-
-
-def sky2alm(sky, angs, lmax=100):
-    """"
-    Expand sky into spherical harmonic
-    coefficients, a_lm.
-
-    Parameters
-    ----------
-    sky : tensor
-        Sky map of shape (Npols, Npols, Nsources, Nfreqs)
-        in units of flux density. For diffuse models,
-        replace Nsources with Ncells, and multiply
-        the sky temperature by the cell solid angle.
-    angs : tensor
-        Source locations in equatorial coordinates
-        of the sky map.
-
-    Returns
-    -------
+    Evaluate a spherical harmonic model
+    given coefficients and sky positions
 
     """
-    pass
 
+def eval_sph_harm_bessel(coeffs, angs, freqs):
+    """
+    Evaluate a spherical harmonic / Fourier bessel
+    model given coefficients, sky positions,
+    and frequency bins.
 
-def alm2sky(alm, angs):
     """
 
-    """
-    pass
 
 
-def alm_convolve(alm, conv):
-    """
-    """
-    pass
 
-
+    
 
 

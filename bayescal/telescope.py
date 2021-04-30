@@ -14,7 +14,7 @@ from . import utils, beam
 
 class TelescopeModel:
 
-    def __init__(self, location):
+    def __init__(self, location, dtype=torch.float32):
         """
         A telescope model for performing
         coordinate conversions
@@ -31,6 +31,7 @@ class TelescopeModel:
 
         # setup coordinate conversion cache
         self.conv_cache = {}
+        self.dtype = dtype
 
     def hash(self, obs_jd, sky):
         """
@@ -104,6 +105,8 @@ class TelescopeModel:
 
         # if not, perform conversion
         angs = eq2top(self.tloc, obs_jd, ra, dec)
+        angs = (torch.as_tensor(angs[0], dtype=self.dtype),
+                torch.as_tensor(angs[1], dtype=self.dtype))
 
         # save cache
         if store:
@@ -116,7 +119,7 @@ class ArrayModel(torch.nn.Module):
     """
     A model for antenna layout
     """
-    def __init__(self, antpos, parameter=False):
+    def __init__(self, antpos, parameter=False, dtype=torch.float32):
         """
         A model of an interferometric array
 
@@ -137,6 +140,7 @@ class ArrayModel(torch.nn.Module):
         # set location metadata
         self.d2r = np.pi / 180
         self.antpos = antpos
+        self.dtype = dtype
         if parameter:
             # make ant positions a parameter if desired
             for ant in self.antpos:
@@ -176,10 +180,10 @@ class ArrayModel(torch.nn.Module):
             or (Nfreqs, Nalm)
         """
         if kind in ['pixel', 'point']:
-            bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]])
-            zen = torch.as_tensor(zen * self.d2r)
-            az = torch.as_tensor(az * self.d2r)
-            s = torch.zeros(3, len(zen))
+            bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]], dtype=self.dtype)
+            zen = torch.as_tensor(zen * self.d2r, dtype=self.dtype)
+            az = torch.as_tensor(az * self.d2r, dtype=self.dtype)
+            s = torch.zeros(3, len(zen), dtype=self.dtype)
             s[0] = torch.sin(zen) * torch.cos(az)
             s[1] = torch.sin(zen) * torch.sin(az)
             s[2] = torch.cos(zen)
@@ -241,13 +245,18 @@ class RIME(torch.nn.Module):
     where K is the interferometric fringe term.
     """
     def __init__(self, telescope, beam, ant2model, array, bls, obs_jds, freqs,
-                 dtype=torch.cfloat):
+                 vis_dtype=torch.cfloat):
         """
         RIME object. Takes as input a model
         of the sky brightness, passes it through
         a primary beam model (optional) and a
         fringe model, and then sums
         across the sky to produce the visibilities.
+
+        If this is being used only for a forward model (i.e. no gradient
+        calculation) you can reduce the memory load by either
+        ensuring all params have parameter=False, or by running
+        the forward() call in a torch.no_grad() context.
 
         Parameters
         ----------
@@ -274,7 +283,7 @@ class RIME(torch.nn.Module):
             Array of observational times in Julian Date
         freqs : tensor
             Array of observational frequencies [Hz]
-        dtype : torch dtype, optional
+        vis_dtype : torch dtype, optional
             Data type of output visibilities.
         """
         super().__init__()
@@ -285,7 +294,7 @@ class RIME(torch.nn.Module):
         self.bls = bls
         self.obs_jds = obs_jds
         self.Ntimes = len(obs_jds)
-        self.dtype = dtype
+        self.vis_dtype = vis_dtype
         self.Nbls = len(self.bls)
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -316,14 +325,14 @@ class RIME(torch.nn.Module):
         # initialize visibility tensor
         Npol = self.beam.Npol
         vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
-                          dtype=self.dtype)
+                          dtype=self.vis_dtype)
 
         # iterate over sky components
         for i, sky_comp in enumerate(sky_components):
 
             # setup visibility for this sky component
             sky_vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
-                                  dtype=self.dtype)
+                                  dtype=self.vis_dtype)
 
             kind = sky_comp['kind']
             sky = sky_comp['sky']
@@ -357,6 +366,7 @@ class RIME(torch.nn.Module):
                     self._prod_and_sum(beam_model, beam, cut_sky, ant1, ant2,
                                        kind, zen, az, sky_vis, k, j)
 
+            # explicit add needed for pytorch graph
             vis = vis + sky_vis
 
         return vis
