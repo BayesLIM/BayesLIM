@@ -14,7 +14,7 @@ from . import utils, beam
 
 class TelescopeModel:
 
-    def __init__(self, location, dtype=torch.float32):
+    def __init__(self, location):
         """
         A telescope model for performing
         coordinate conversions
@@ -31,7 +31,6 @@ class TelescopeModel:
 
         # setup coordinate conversion cache
         self.conv_cache = {}
-        self.dtype = dtype
 
     def hash(self, obs_jd, sky):
         """
@@ -105,8 +104,6 @@ class TelescopeModel:
 
         # if not, perform conversion
         angs = eq2top(self.tloc, obs_jd, ra, dec)
-        angs = (torch.as_tensor(angs[0], dtype=self.dtype),
-                torch.as_tensor(angs[1], dtype=self.dtype))
 
         # save cache
         if store:
@@ -425,6 +422,7 @@ def eq2top(location, obs_jd, ra, dec):
     altaz = AltAz(location=location, obstime=time.Time(obs_jd, format='jd'))
     icrs = ICRS(ra=ra * units.deg, dec=dec * units.deg)
     out = icrs.transform_to(altaz)
+
     return out.alt.deg, out.az.deg
 
 
@@ -457,8 +455,7 @@ def top2eq(location, obs_jd, alt, az):
                   alt=alt * units.deg, az=az * units.deg)
     icrs = ICRS()
     out = altaz.transform_to(icrs)
+
     return out.ra.deg, out.dec.deg
-
-
 
 
