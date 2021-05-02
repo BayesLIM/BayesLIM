@@ -181,9 +181,10 @@ class ArrayModel(torch.nn.Module):
             zen = torch.as_tensor(zen * self.d2r, dtype=self.dtype)
             az = torch.as_tensor(az * self.d2r, dtype=self.dtype)
             s = torch.zeros(3, len(zen), dtype=self.dtype)
-            s[0] = torch.sin(zen) * torch.cos(az)
-            s[1] = torch.sin(zen) * torch.sin(az)
-            s[2] = torch.cos(zen)
+            # az is East of North
+            s[0] = torch.sin(zen) * torch.sin(az)  # x
+            s[1] = torch.sin(zen) * torch.cos(az)  # y
+            s[2] = torch.cos(zen)                  # z
             return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
 
         elif kind == 'alm':
@@ -262,12 +263,12 @@ class RIME(torch.nn.Module):
         beam : BeamModel object, optional
             A model of the directional and frequency response of the
             antenna primary beam. Default is a tophat response.
-        ant2model : list
-            List of integers that map each antenna in array.ants to
-            a particular index in the beam model output from beam.
-            E.g. [0, 0, 0] for 3-antennas with 1 beam model
-            or [0, 1, 2] for 3-antennas with 3 beam models
-            or [0, 0, 1] for 3-antennas with 2 beam models.
+        ant2model : dict
+            Dict of integers that map each antenna number in array.ants
+            to a particular index in the beam model output from beam.
+            E.g. {10: 11, 1: 12, 2: 0} for 3-antennas [10, 11, 21] with
+            1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
+            with different 3 beam models.
         array : ArrayModel object
             A model of the telescope location and antenna positions
         bls : list of 2-tuples
