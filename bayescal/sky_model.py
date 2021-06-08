@@ -3,7 +3,7 @@ Module for torch sky models and relevant functions
 """
 import torch
 import numpy as np
-from scipy.special import sph_harm
+from scipy import special
 
 from . import utils
 
@@ -142,10 +142,6 @@ class PointSourceModel(SkyBase):
         super().__init__(params, 'point', freqs, R=R, parameter=parameter)
         self.angs = angs
         self.Npol = len(self.param0)
-        if R is None:
-            # dummy params eval
-            R = lambda x: x[0]
-        self.R = R
 
     def forward(self, params=None):
         """
@@ -205,7 +201,7 @@ class PixelModel(SkyBase):
             A list of source parameters. Bare minimum, the
             first element should be a tensor of shape
             (Npol, Npol, Nfreqs, Npix), where Npix is the number
-            of free parameters. This could be individual pixels, but
+            of free parameters (default). This could be individual pixels, but
             it could also be some sparse parameterization that is eventually
             mapped to pixel space after passing through R().
             Npol is the number of feed polarizations.
@@ -353,9 +349,9 @@ class SphHarmModel(SkyBase):
 
 class CompositeModel(torch.nn.Module):
     """
-    Multiple sky models
+    Multiple sky models, possibly on different devices
     """
-    def __init__(self, models):
+    def __init__(self, models, sum_output=False, device=None):
         """
         Multiple sky models to be evaluated
         and returned in a list
@@ -364,8 +360,19 @@ class CompositeModel(torch.nn.Module):
         ----------
         models : list
             List of sky model objects
+        sum_output : bool, optional
+            If True, sum output sky model from
+            each model before returning. This only
+            works if each input model is of the
+            same kind, and if they have the same
+            shape.
+        device : str, optional
+            Device to move output to before summing
+            if sum_output
         """
         self.models = models
+        self.sum_output = sum_output
+        self.device = device
 
     def forward(self, models=None):
         """
@@ -379,13 +386,26 @@ class CompositeModel(torch.nn.Module):
         Returns
         -------
         list
-            List of each sky model output
+            List of each sky model output or their sum
         """
         _models = self.models
         if models is not None:
             _models = models
 
-        return [mod.forward() for mod in _models]
+        output = [mod.forward() for mod in _models]
+        if self.sum_output:
+            # assert only one kind of sky models
+            assert len(set([mod['kind'] for mod in _models])) == 1
+            _output = output[0]
+            _output['sky'] = torch.sum([out['sky'].to(self.device) for out in output], axis=0)
+            output = _output
+            # make sure other keys are on the same device
+            for k in output:
+                if isinstance(output[k], torch.Tensor):
+                    if output[k].device.type != self.device:
+                        output[k] = output[k].to(self.device)
+
+        return output
 
 
 def stokes2linear(stokes):
@@ -417,7 +437,6 @@ def stokes2linear(stokes):
                 \begin{array}{cc}I + Q & U + iV \\
                 U - iV & I - Q \end{array}
             \right)
-
     """
     B = torch.zeros(2, 2, stokes.shape[1:])
     B[0, 0] = stokes[0] + stokes[1]
@@ -426,51 +445,5 @@ def stokes2linear(stokes):
     B[1, 1] = stokes[0] - stokes[1]
 
     return B
-
-
-def gen_lm(lmax, real=True):
-    """
-    Generate array of l and m parameters
-
-    Parameters
-    ----------
-    lmax : int
-        Maximum l parameter
-    real : bool, optional
-        If True, treat sky as real-valued (default)
-        so truncate negative m values.
-
-    Returns
-    -------
-    array
-        array of shape (Nalm, 2) holding
-        the (l, m) parameters.
-    """
-    lms = []
-    for i in range(lmax):
-        for j in range(-i, i + 1):
-            lms.append([i, j])
-    return np.array(lms)
-
-
-def eval_sph_harm(coeffs, angs):
-    """
-    Evaluate a spherical harmonic model
-    given coefficients and sky positions
-
-    """
-
-def eval_sph_harm_bessel(coeffs, angs, freqs):
-    """
-    Evaluate a spherical harmonic / Fourier bessel
-    model given coefficients, sky positions,
-    and frequency bins.
-
-    """
-
-
-
-
-    
 
 

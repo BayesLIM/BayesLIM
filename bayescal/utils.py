@@ -3,9 +3,24 @@ Utility module
 """
 import numpy as np
 import torch
-import healpy, mhealpy
 from scipy import special
 import copy
+import warnings
+
+# try to import healpy
+try:
+    import healpy
+    import_healpy = True
+except ImportError:
+    import_healpy = False
+if not import_healpy:
+    try:
+        # note this will have more limited capability
+        # than healpy, but can do what we need
+        from astropy_healpix import healpy
+        import_healpy = True
+    except ImportError:
+        warnings.warn("could not import healpy")
 
 
 ########################################
@@ -14,6 +29,7 @@ import copy
 
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
+D2R = np.pi / 180
 
 def cmult(a, b):
     """
@@ -122,7 +138,7 @@ def cinv(z):
 
 def diag_matmul(a, b):
     """
-    Multiply two, diagonal 1x1 or 2x2 matrices manually.
+    Multiply two diagonal 1x1 or 2x2 matrices manually.
     This is generally faster than matmul or einsum
     for large, high dimensional stacks of 2x2 matrices.
 
@@ -275,7 +291,7 @@ def cmatmul(a, b):
     along the first two axes of a and b
     in 2-real form. Note: this is slow
     compared to torch.einsum, but doesn't need
-    to cast 
+    to cast to complex
 
     Parameters
     -----------
@@ -341,6 +357,124 @@ def cmatmul(a, b):
 #####################################
 ######### Sky Mapping Tools #########
 #####################################
+
+def gen_lm(lmax, real_field=True):
+    """
+    Generate array of l and m parameters.
+
+    Parameters
+    ----------
+    lmax : int
+        Maximum l parameter
+    real_field : bool, optional
+        If True, treat sky as real-valued (default)
+        so truncate negative m values.
+
+    Returns
+    -------
+    l, m : array_like
+        array of shape (2, Ncoeff) holding
+        the (l, m) parameters.
+    """
+    lms = []
+    for i in range(lmax):
+        lowm = 0 if real_field else -i
+        for j in range(lowm, i + 1):
+            lms.append([i, j]) 
+    return np.array(lms).T
+
+
+def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
+                dtype=torch.complex64):
+    """
+    Generate spherical harmonic forward model matrix.
+    Note for lmax > 50, this can begin to take >= minutes to run.
+
+    Parameters
+    ----------
+    theta : array_like
+        Co-latitude (i.e. zenith angle) [rad]
+    phi : array_like
+        Longitude (i.e. azimuth) [rad]
+    l : array_like, optional
+        Integer array of spherical harmonic l modes
+    m : array_like, optional
+        Integer array of spherical harmonic m modes
+    lmax : int, optional
+        If l, m are None, this generates l and m
+        arrays
+    real_field : bool, optional
+        If True, treat sky as real-valued
+        so truncate negative m values (used for lmax).
+    dtype : dtype, optional
+        Data type of output matrix.
+
+    Returns
+    -------
+    Y : array_like
+        An Npix x Ncoeff matrix encoding a spherical
+        harmonic transform from a_lm -> map
+    """
+    if lmax is not None:
+        l, m = gen_lm(lmax, real_field=real_field)
+    torch_type = type(dtype) == torch.dtype
+
+    if torch_type:
+        Y = torch.zeros(len(theta), len(l), dtype=dtype)
+    else:
+        Y = np.zeros((len(theta), len(l)), dtype=dtype)
+
+    # iterate over coefficients
+    for i, (_l, _m) in enumerate(zip(l, m)):
+        y = special.sph_harm(_m, _l, phi, theta)
+        if torch_type:
+            y = torch.as_tensor(y, dtype=dtype)
+        Y[:, i] = y
+
+    return Y
+
+
+def gen_bessel2freq(l, k, dk, r, dtype=torch.float32):
+    """
+    Generate spherical Bessel forward model matrices.
+
+    The inverse transformation from Fourier space (k)
+    to configuration space (r) is
+
+    .. math::
+
+        T_{\ell m}(r) = \int dk k^2 j_\ell(k r) T_{\ell m}(k)
+
+    Parameters
+    ----------
+    l : array_like
+
+    k : array_like
+
+    r : array_like
+
+    Returns
+    -------
+    J : dict
+        A dictionary holding a series of Nk x Nfreq
+        spherical Fourier Bessel transform matrices,
+        one for each unique l mode.
+        Keys are l mode integers, values are matrices.
+    """
+    J = {}
+    torch_type = type(dtype) == torch.dtype
+    for _l in l:
+        if torch_type:
+            J[_l] - torch.zeros(len(k), len(r), dtype=dtype)
+        else:
+            J[_l] = np.zeros((len(k), len(r)), dtype=dtype)
+        for _k in k:
+            j = k**2 * special.spherical_jn(_l, _k * r) * dk
+            if torch_type:
+                j = torch.as_tensor(j, dtype=dtype)
+            J[_l] = j * np.sqrt(2 / np.pi)
+
+    return J
 
 
 def voigt_beam(nside, sigma, gamma):
@@ -608,6 +742,7 @@ def nside_binning(zen, ra, zen_sigma=5, zen_gamma=15, ra_sigma=5, ra_gamma=15,
 
     return curve, nside_bins
 
+
 def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_nsides=None):
     """
     Two dynamic HEALpix pixelization schemes.
@@ -648,6 +783,7 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
         dynamic pixelization map at that location. This is used
         to plot the nside resolution of the map in healpix format.
     """
+    import mhealpy
     theta, phi, nsides, total_nsides = [], [], [], []
     for i in range(healpy.nside2npix(base_nside)):
         target = target_nsides[i] if target_nsides is not None else None

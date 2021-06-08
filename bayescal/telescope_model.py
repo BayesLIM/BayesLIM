@@ -6,10 +6,12 @@ import numpy as np
 from astropy import units, time, constants
 from astropy.coordinates import AltAz, EarthLocation, ICRS
 from scipy import special
-import healpy, mhealpy
 import copy
 
-from . import utils, beam
+from . import utils, beam_model
+
+
+D2R = utils.D2R
 
 
 class TelescopeModel:
@@ -135,7 +137,6 @@ class ArrayModel(torch.nn.Module):
         # init
         super().__init__()
         # set location metadata
-        self.d2r = np.pi / 180
         self.antpos = antpos
         self.dtype = dtype
         if parameter:
@@ -178,8 +179,8 @@ class ArrayModel(torch.nn.Module):
         """
         if kind in ['pixel', 'point']:
             bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]], dtype=self.dtype)
-            zen = torch.as_tensor(zen * self.d2r, dtype=self.dtype)
-            az = torch.as_tensor(az * self.d2r, dtype=self.dtype)
+            zen = torch.as_tensor(zen * D2R, dtype=self.dtype)
+            az = torch.as_tensor(az * D2R, dtype=self.dtype)
             s = torch.zeros(3, len(zen), dtype=self.dtype)
             # az is East of North
             s[0] = torch.sin(zen) * torch.sin(az)  # x
@@ -325,6 +326,10 @@ class RIME(torch.nn.Module):
         vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
                           dtype=self.vis_dtype)
 
+        # clear pre-computed beam for YlmResponse type
+        if self.beam.R.__class__ == beam_model.YlmResponse:
+            self.beam.R.clear_beam()
+
         # iterate over sky components
         for i, sky_comp in enumerate(sky_components):
 
@@ -334,12 +339,6 @@ class RIME(torch.nn.Module):
 
             kind = sky_comp['kind']
             sky = sky_comp['sky']
-
-            # transform beam to appropriate sky representation
-            beam_model = self.beam.transform_to(kind)
-
-            # get beam response function
-            beam_func = beam_model.R(beam_model.params)
 
             # iterate over observation times
             for j, obs_jd in enumerate(self.obs_jds):
@@ -352,7 +351,7 @@ class RIME(torch.nn.Module):
 
                     # evaluate beam response
                     zen = 90 - alt
-                    beam, cut = beam_model.gen_beam(None, zen, az, beam_func=beam_func)
+                    ant_beams, cut = self.beam.gen_beam(zen, az)
                     zen, az = zen[cut], az[cut]
                     cut_sky = sky[..., cut]
 
@@ -361,7 +360,7 @@ class RIME(torch.nn.Module):
 
                 # iterate over baselines
                 for k, (ant1, ant2) in enumerate(self.bls):
-                    self._prod_and_sum(beam_model, beam, cut_sky, ant1, ant2,
+                    self._prod_and_sum(self.beam, ant_beams, cut_sky, ant1, ant2,
                                        kind, zen, az, sky_vis, k, j)
 
             # explicit add needed for pytorch graph
@@ -369,17 +368,17 @@ class RIME(torch.nn.Module):
 
         return vis
 
-    def _prod_and_sum(self, beam_model, beam, cut_sky, ant1, ant2,
+    def _prod_and_sum(self, beam, ant_beams, cut_sky, ant1, ant2,
                       kind, zen, az, sky_vis, bl_ind, obs_ind):
         """
         Sky product and sum into sky_vis inplace
         """
         # get beam of each antenna
-        beam1 = beam[:, :, self.ant2model[ant1]]
-        beam2 = beam[:, :, self.ant2model[ant2]]
+        beam1 = ant_beams[:, :, self.ant2model[ant1]]
+        beam2 = ant_beams[:, :, self.ant2model[ant2]]
 
         # apply beam to sky
-        psky = beam_model.apply_beam(beam1, cut_sky, beam2=beam2)
+        psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # generate fringe
         fringe = self.array.gen_fringe((ant1, ant2), self.freqs, kind, zen=zen, az=az)

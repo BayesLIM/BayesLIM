@@ -140,6 +140,7 @@ class JonesModel(torch.nn.Module):
 
         return V_p
 
+
 class RedVisModel(torch.nn.Module):
     """
     Redundant visibility model (r) relating the starting
