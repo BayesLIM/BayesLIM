@@ -7,21 +7,6 @@ import warnings
 
 from . import utils
 
-# try to import healpy
-try:
-    import healpy
-    import_healpy = True
-except ImportError:
-    import_healpy = False
-if not import_healpy:
-    try:
-        # note this will have more limited capability
-        # than healpy, but can do what we need
-        from astropy_healpix import healpy
-        import_healpy = True
-    except ImportError:
-        warnings.warn("could not import healpy")
-
 
 D2R = utils.D2R
 
@@ -351,9 +336,9 @@ class PixelResponse:
         else:
             # otherwise generate it
             if self.pixtype == 'healpix':
-                nside = healpy.npix2nside(self.npix)
+                nside = utils.healpy.npix2nside(self.npix)
                 ## TODO: ensure az has the same starting convention as healpy phi
-                inds, wgts = healpy.get_interp_weights(nside, zen * D2R, az * D2R)
+                inds, wgts = utils.healpy.get_interp_weights(nside, zen * D2R, az * D2R)
 
             else:
                 raise NotImplementedError
@@ -466,7 +451,7 @@ class YlmResponse(PixelResponse):
         ang_cache : a cache for (zen, az) arrays [deg]
         """
         super(YlmResponse, self).__init__(params, 'healpix')
-        self.npix = healpy.nside2npix(nside)
+        self.npix = utils.healpy.nside2npix(nside)
         self.l, self.m = l, m
         self.real_field = real_field
         self.neg_m = np.any(m < 0)
@@ -537,7 +522,7 @@ class YlmResponse(PixelResponse):
         """
         # get polynomial A matrix wrt freq
         Ndeg = self.params.shape[3]
-        A = freq_poly_A(freqs, Ndeg, dtype=self.params.dtype)
+        A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype)
 
         # first do fast dot product along Ndeg axis
         p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)
@@ -573,27 +558,6 @@ class YlmResponse(PixelResponse):
             beam = self._interp(zen, az, self.beam_cache[0])
 
         return beam
-
-
-def freq_poly_A(freqs, Ndeg, dtype=torch.float32):
-    """
-    Generate design matrix (A) for polynomial of Ndeg across freqs
-
-    Parameters
-    ----------
-    freqs : ndarray
-        Frequency bins [Hz]
-    Ndeg : int
-        Polynomial degree
-
-    Returns
-    -------
-    torch tensor
-        Polynomial design matrix
-    """
-    dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
-    A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype).T
-    return A
 
 
 def airy_disk(zen, az, Dns, freqs, Dew=None):

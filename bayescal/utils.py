@@ -358,6 +358,28 @@ def cmatmul(a, b):
 ######### Sky Mapping Tools #########
 #####################################
 
+def colat2lat(theta, deg=True):
+    """
+    Convert colatitude to latitude and vice versa
+
+    Parameters
+    ----------
+    theta : ndarray
+        Colatitude
+    deg : bool, optional
+        If True, theta is in deg, otherwise in rad
+
+    Returns
+    -------
+    ndarray
+        Converted angles
+    """
+    if deg:
+        return 90 - theta
+    else:
+        return np.pi / 2 - theta
+
+
 def gen_lm(lmax, real_field=True):
     """
     Generate array of l and m parameters.
@@ -475,6 +497,28 @@ def gen_bessel2freq(l, k, dk, r, dtype=torch.float32):
             J[_l] = j * np.sqrt(2 / np.pi)
 
     return J
+
+
+def gen_poly_A(freqs, Ndeg, dtype=torch.float32):
+    """
+    Generate design matrix (A) for polynomial of Ndeg across freqs
+
+    Parameters
+    ----------
+    freqs : ndarray
+        Frequency bins [Hz]
+    Ndeg : int
+        Polynomial degree
+
+    Returns
+    -------
+    torch tensor
+        Polynomial design matrix
+    """
+    dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
+    A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype).T
+    return A
+
 
 
 def voigt_beam(nside, sigma, gamma):

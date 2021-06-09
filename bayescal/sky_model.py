@@ -141,7 +141,6 @@ class PointSourceModel(SkyBase):
         """
         super().__init__(params, 'point', freqs, R=R, parameter=parameter)
         self.angs = angs
-        self.Npol = len(self.param0)
 
     def forward(self, params=None):
         """
@@ -174,7 +173,7 @@ class PointSourceModel(SkyBase):
         return dict(kind=self.kind, sky=self.R(_params), angs=self.angs)
 
 
-class PixelModel(SkyBase):
+class PixelSky(SkyBase):
     """
     Pixelized model (e.g. Healpix) of the sky
     specific intensity (aka brightness or temperature)
@@ -240,7 +239,6 @@ class PixelModel(SkyBase):
         super().__init__(params, 'pixel', freqs, R=R, parameter=parameter)
         self.angs = angs
         self.areas = areas
-        self.Npol = len(self.param0)
 
     def forward(self, params=None):
         """
@@ -316,7 +314,6 @@ class SphHarmModel(SkyBase):
         """
         super().__init__(params, 'alm', freqs, R=R, parameter=parameter)
         self.lms = lms
-        self.Npol = len(params)
 
     def forward(self, params=None):
         """
