@@ -61,6 +61,23 @@ class SkyBase(torch.nn.Module):
         self.freqs = freqs
         self.Nfreqs = len(freqs)
 
+    def push(self, device, attrs=[]):
+        """
+        Wrapper around nn.Module.to(device) method
+        but always pushes self.params whether its a 
+        parameter or not.
+
+        Parameters
+        ----------
+        device : str
+            'cpu' or 'cuda:0', 'cuda:1', ... device
+        attrs : list of str
+            List of self.attr attributes to push
+        """
+        self.params = self.params.to(device)
+        for attr in attrs:
+            setattr(self, attr, getattr(self, attr).to(device))
+
 
 class PointSourceModel(SkyBase):
     """
@@ -173,7 +190,7 @@ class PointSourceModel(SkyBase):
         return dict(kind=self.kind, sky=self.R(_params), angs=self.angs)
 
 
-class PixelSky(SkyBase):
+class PixelModel(SkyBase):
     """
     Pixelized model (e.g. Healpix) of the sky
     specific intensity (aka brightness or temperature)
@@ -312,36 +329,7 @@ class SphHarmModel(SkyBase):
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
         """
-        super().__init__(params, 'alm', freqs, R=R, parameter=parameter)
-        self.lms = lms
-
-    def forward(self, params=None):
-        """
-        Forward pass the sky parameters
-
-        Parameters
-        ----------
-        params : list of tensors, optional
-            Set of parameters to use instead of self.params.
-
-        Returns
-        -------
-        kind : str
-            Kind of sky model ['point', 'pixel', 'alm']
-        sky : tensor
-            Sky flux density at discrete locations
-        """
-        # apply fed params or attr params
-        if params is None:
-            _params = self.params
-        else:
-            _params = params
-
-        # pass through response
-        return dict(kind=self.kind, sky=self.R(_params), lms=self.lms)
-
-    def alm2sky(self):
-        pass
+        raise NotImplementedError
 
 
 class CompositeModel(torch.nn.Module):

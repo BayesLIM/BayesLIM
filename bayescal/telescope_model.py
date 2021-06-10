@@ -118,7 +118,7 @@ class ArrayModel(torch.nn.Module):
     """
     A model for antenna layout
     """
-    def __init__(self, antpos, parameter=False, dtype=torch.float32):
+    def __init__(self, antpos, parameter=False, dtype=torch.float32, device=None):
         """
         A model of an interferometric array
 
@@ -133,20 +133,35 @@ class ArrayModel(torch.nn.Module):
         parameter : bool, optional
             If True, antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
+        dtype : torch dtype
+            Data type of baseline vectors in the fringe term
+            The complex fringe is 2x the baseline dtype
+            i.e. bl_vec [float32] -> fringe [complex64]
+        device : str, optional
+            device to hold baseline vector and fringe term
+            none is cpu.
         """
         # init
         super().__init__()
         # set location metadata
-        self.antpos = antpos
         self.dtype = dtype
+        self.device = device
+        self.ants = sorted(antpos.keys())
+        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
         if parameter:
-            # make ant positions a parameter if desired
-            for ant in self.antpos:
-                self.antpos[ant] = torch.nn.Parameter(self.antpos[ant])
-        self.ants = sorted(self.antpos.keys())
-        self.ant_vecs = np.array([self.antpos[a] for a in self.ants])
-        for i, a in enumerate(self.ants):
-            setattr(self, '_ant{}_vec'.format(a), self.ant_vecs[i])
+            # make ant vecs a parameter if desired
+            self.antpos = torch.nn.Parameter(self.antpos)
+
+    def get_antpos(self, ant):
+        """
+        Get antenna vector
+
+        Parameters
+        ----------
+        ant : int
+            antenna number in self.ants
+        """
+        return self.antpos[self.ants.index(ant)]
 
     def gen_fringe(self, bl, freqs, kind, zen=None, az=None):
         """
@@ -178,10 +193,11 @@ class ArrayModel(torch.nn.Module):
             or (Nfreqs, Nalm)
         """
         if kind in ['pixel', 'point']:
-            bl_vec = torch.as_tensor(self.antpos[bl[1]] - self.antpos[bl[0]], dtype=self.dtype)
-            zen = torch.as_tensor(zen * D2R, dtype=self.dtype)
-            az = torch.as_tensor(az * D2R, dtype=self.dtype)
-            s = torch.zeros(3, len(zen), dtype=self.dtype)
+            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+            ## TODO: can cache fringe term if this is a bottleneck
+            zen = torch.as_tensor(zen * D2R, dtype=self.dtype, device=self.device)
+            az = torch.as_tensor(az * D2R, dtype=self.dtype, device=self.device)
+            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
             # az is East of North
             s[0] = torch.sin(zen) * torch.sin(az)  # x
             s[1] = torch.sin(zen) * torch.cos(az)  # y
@@ -267,9 +283,9 @@ class RIME(torch.nn.Module):
         ant2model : dict
             Dict of integers that map each antenna number in array.ants
             to a particular index in the beam model output from beam.
-            E.g. {10: 11, 1: 12, 2: 0} for 3-antennas [10, 11, 21] with
+            E.g. {10: 0, 1: 0, 12: 0} for 3-antennas [10, 11, 12] with
             1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
-            with different 3 beam models.
+            [10, 11, 12] with different 3 beam models.
         array : ArrayModel object
             A model of the telescope location and antenna positions
         bls : list of 2-tuples

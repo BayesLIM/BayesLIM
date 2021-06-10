@@ -383,6 +383,7 @@ def colat2lat(theta, deg=True):
 def gen_lm(lmax, real_field=True):
     """
     Generate array of l and m parameters.
+    Matches healpy.sphtfunc.Alm.getlm order.
 
     Parameters
     ----------
@@ -399,10 +400,11 @@ def gen_lm(lmax, real_field=True):
         the (l, m) parameters.
     """
     lms = []
-    for i in range(lmax):
-        lowm = 0 if real_field else -i
-        for j in range(lowm, i + 1):
-            lms.append([i, j]) 
+    lowm = 0 if real_field else -lmax
+    for m in range(lowm, lmax + 1):
+        for l in range(0, lmax + 1):
+            if np.abs(m) > l: continue
+            lms.append([l, m]) 
     return np.array(lms).T
 
 
