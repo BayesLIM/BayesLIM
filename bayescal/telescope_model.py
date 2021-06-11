@@ -173,7 +173,7 @@ class ArrayModel(torch.nn.Module):
         bl : 2-tuple
             Baseline tuple, specifying the participating
             antennas from self.ants
-        freqs : tensor
+        freqs : array_like
             Frequencies [Hz]
         kind : str
             Kind of fringe model ['point', 'pixel', 'alm']
@@ -198,6 +198,7 @@ class ArrayModel(torch.nn.Module):
             zen = torch.as_tensor(zen * D2R, dtype=self.dtype, device=self.device)
             az = torch.as_tensor(az * D2R, dtype=self.dtype, device=self.device)
             s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
+            freqs = torch.as_tensor(freqs, dtype=self.dtype, device=self.device)
             # az is East of North
             s[0] = torch.sin(zen) * torch.sin(az)  # x
             s[1] = torch.sin(zen) * torch.cos(az)  # y
@@ -244,6 +245,11 @@ class ArrayModel(torch.nn.Module):
             raise ValueError("{} not recognized".format(kind))
 
         return psky
+
+    def push(self, device):
+        """push parameters to a new device"""
+        self.antpos = utils.push(self.antpos, device)
+        self.device = device
 
 
 class RIME(torch.nn.Module):
