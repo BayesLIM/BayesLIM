@@ -354,9 +354,9 @@ def cmatmul(a, b):
     return c
 
 
-#####################################
-######### Sky Mapping Tools #########
-#####################################
+######################################
+######### Sky Modeling Tools #########
+######################################
 
 def colat2lat(theta, deg=True):
     """
@@ -854,3 +854,31 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     nsides = mhealpy.HealpixMap(nsides, uniq=uniq, scheme='nested', dtype=np.int16)
 
     return theta, phi, nsides, total_nsides
+
+
+#################################
+######### Miscellaneous #########
+#################################
+
+def push(tensor, device):
+    """
+    Push a tensor to a new device. If the tensor
+    is a parameter, it instantiates the parameter
+    class on device.
+
+    Parameters
+    ----------
+    tensor : tensor
+        A pytorch tensor, optionally a pytorch Parameter
+    device : str
+        The device to push it to
+
+    Returns
+    -------
+    tensor
+        The tensor on device
+    """
+    if isinstance(tensor, torch.nn.Parameter):
+        return torch.nn.Parameter(tensor.to(device))
+    else:
+        return tensor.to(device)

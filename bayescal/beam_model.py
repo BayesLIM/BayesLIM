@@ -2,6 +2,7 @@
 Module for primary beam modeling
 """
 import torch
+from torch.nn import Parameter
 import numpy as np
 import warnings
 
@@ -109,7 +110,7 @@ class PixelBeam(torch.nn.Module):
         device : str
             Device to push to
         """
-        self.params = self.params.to(device)
+        self.params = utils.push(self.params, device)
         self.R.push(device)
         self.device = device
 
@@ -305,7 +306,7 @@ class PixelResponse:
 
     def push(self, device):
         """push params and other attrs to device"""
-        self.params = self.params.to(device)
+        self.params = utils.push(self.params, device)
         self.device = device
         for k, interp in self.interp_cache.items():
             self.interp_cache[k] = (interp[0], interp[1].to(device))
@@ -413,7 +414,7 @@ class GaussResponse:
   
     def push(self, device):
         """push params and other attrs to device"""
-        self.params = self.params.to(device)
+        self.params = utils.push(self.params, device)
         self.device = device
 
 
@@ -577,12 +578,12 @@ class YlmResponse(PixelResponse):
 
     def push(self, device):
         """push params and other attrs to device"""
-        self.params = self.params.to(device)
+        self.params = utils.push(self.params, device)
         self.device = device
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
-            self.beam_cache['beam'] = self.beam_cache['beam'].to(device)
+            self.beam_cache['beam'] = utils.push(self.beam_cache['beam'], device)
 
 
 def airy_disk(zen, az, Dns, freqs, Dew=None):

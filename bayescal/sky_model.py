@@ -60,7 +60,7 @@ class SkyBase(torch.nn.Module):
         attrs : list of str
             List of additional attributes to push
         """
-        self.params = self.params.to(device)
+        self.params = utils.push(self.params, device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
 
