@@ -279,7 +279,7 @@ class PixelResponse:
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, pixtype, *args):
+    def __init__(self, params, pixtype, npix):
         """
         Parameters
         ----------
@@ -295,7 +295,7 @@ class PixelResponse:
         if pixtype != 'healpix':
             raise NotImplementedError("only supports healpix pixelization currently")
         self.pixtype = pixtype
-        self.npix = self.params.shape[-1]
+        self.npix = npix
         self.interp_cache = {}
 
     def hash(self, zen):
