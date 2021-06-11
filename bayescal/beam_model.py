@@ -512,7 +512,7 @@ class YlmResponse(PixelResponse):
         return Ylm
 
     def set_beam(self, beam, zen, az, freqs):
-        self.beam_cache = dict(beam=beam, zen-zen, az=az, freqs=freqs)
+        self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
 
     def clear_beam(self):
         self.beam_cache = None
