@@ -260,7 +260,7 @@ class RIME(torch.nn.Module):
     where K is the interferometric fringe term.
     """
     def __init__(self, telescope, beam, ant2model, array, bls, obs_jds, freqs,
-                 vis_dtype=torch.cfloat):
+                 vis_dtype=torch.cfloat, device=None):
         """
         RIME object. Takes as input a model
         of the sky brightness, passes it through
@@ -310,6 +310,7 @@ class RIME(torch.nn.Module):
         self.obs_jds = obs_jds
         self.Ntimes = len(obs_jds)
         self.vis_dtype = vis_dtype
+        self.device = device
         self.Nbls = len(self.bls)
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -340,7 +341,7 @@ class RIME(torch.nn.Module):
         # initialize visibility tensor
         Npol = self.beam.Npol
         vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
-                          dtype=self.vis_dtype)
+                          dtype=self.vis_dtype, device=self.device)
 
         # clear pre-computed beam for YlmResponse type
         if self.beam.R.__class__ == beam_model.YlmResponse:
@@ -351,7 +352,7 @@ class RIME(torch.nn.Module):
 
             # setup visibility for this sky component
             sky_vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
-                                  dtype=self.vis_dtype)
+                                  dtype=self.vis_dtype, device=self.device)
 
             kind = sky_comp['kind']
             sky = sky_comp['sky']
@@ -366,7 +367,7 @@ class RIME(torch.nn.Module):
                                                     sky=kind, store=True)
 
                     # evaluate beam response
-                    zen = 90 - alt
+                    zen = utils.colat2lat(alt, deg=True)
                     ant_beams, cut = self.beam.gen_beam(zen, az)
                     zen, az = zen[cut], az[cut]
                     cut_sky = sky[..., cut]

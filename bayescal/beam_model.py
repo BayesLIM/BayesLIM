@@ -36,13 +36,13 @@ class PixelBeam(torch.nn.Module):
     antennas, or one can fit for per-antenna models.
     """
     def __init__(self, params, freqs, response=None, response_args=(), parameter=True, polmode='1pol',
-                 powerbeam=True, fov=180):
+                 powerbeam=True, fov=180, device=None):
         """
         A generic pixelized beam model evaluated on the sky
 
         Parameters
         ----------
-        params : tensor or list of tensor
+        params : tensor
             Initial beam parameterization, matched to the adopted
             response function R.
             By default, params should be a tensor of shape
@@ -79,24 +79,13 @@ class PixelBeam(torch.nn.Module):
         """
         super().__init__()
         self.params = params
-        if isinstance(params, (list, tuple)):
-            _params = []
-            for i in range(len(params)):
-                p = params[i]
-                if parameter:
-                    p = torch.nn.Parameter(p)
-                setattr(self, 'param{}'.format(i), p)
-                _params.append(p)
-            if parameter:
-                self.params = _params
-
-        else:
-            if parameter:
-                self.params = torch.nn.Parameter(self.params)
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
 
         if response is None:
             # assumes Npix axis of params is healpix
-            self.R = PixelResponse(self.params, 'healpix')
+            self.R = PixelResponse(self.params, 'healpix',
+                                   healpy.npix2nside(params.shape[-1]))
         else:
             self.R = response(self.params, *response_args)
 
@@ -105,9 +94,24 @@ class PixelBeam(torch.nn.Module):
         self.polmode = polmode
         self.powerbeam = powerbeam
         self.fov = fov
+        self.device = device
         if self.powerbeam:
             assert self.polmode in ['1pol', '2pol']
         self.Npol = 1 if polmode == '1pol' else 2
+
+    def push(self, device):
+        """
+        Wrapper around pytorch.to(device) that pushes
+        params and response object to device.
+
+        Parameters
+        ----------
+        device : str
+            Device to push to
+        """
+        self.params = self.params.to(device)
+        self.R.push(device)
+        self.device = device
 
     def gen_beam(self, zen, az):
         """
@@ -222,7 +226,7 @@ class PixelBeam(torch.nn.Module):
             # get coords
             alt, az = telescope.eq2top(obs_jd, sky_comp['angs'][0], sky_comp['angs'][1],
                                        sky=kind, store=False)
-            zen = 90 - alt
+            zen = utils.colat2lat(alt, deg=True)
 
             # evaluate beam
             beam, cut = self.gen_beam(zen, az)
@@ -231,7 +235,7 @@ class PixelBeam(torch.nn.Module):
 
             # iterate over baselines
             shape = sky.shape
-            psky = torch.zeros(shape[:2] + (len(antpairs),) + shape[2:], dtype=sky.dtype)
+            psky = torch.zeros(shape[:2] + (len(antpairs),) + shape[2:], dtype=sky.dtype, device=self.device)
             for k, (ant1, ant2) in enumerate(antpairs):
                 # get beam of each antenna
                 beam1 = beam[:, :, ant1]
@@ -279,7 +283,7 @@ class PixelResponse:
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, pixtype, npix):
+    def __init__(self, params, pixtype, npix, device=None):
         """
         Parameters
         ----------
@@ -297,6 +301,14 @@ class PixelResponse:
         self.pixtype = pixtype
         self.npix = npix
         self.interp_cache = {}
+        self.device = device
+
+    def push(self, device):
+        """push params and other attrs to device"""
+        self.params = self.params.to(device)
+        self.device = device
+        for k, interp in self.interp_cache.items():
+            self.interp_cache[k] = (interp[0], interp[1].to(device))
 
     def hash(self, zen):
         """
@@ -344,7 +356,7 @@ class PixelResponse:
                 raise NotImplementedError
 
             # store it
-            interp = (inds, torch.as_tensor(wgts, dtype=self.params.dtype))
+            interp = (inds, torch.as_tensor(wgts, dtype=self.params.dtype, device=self.device))
             self.interp_cache[h] = interp
 
         return interp
@@ -375,7 +387,7 @@ class GaussResponse:
 
     Recall azimuth is defined as the angle East of North
     """
-    def __init__(self, params):
+    def __init__(self, params, device=None):
         """
         .. math::
 
@@ -389,15 +401,21 @@ class GaussResponse:
             with units of the dimensionless image-plane l & m (azimuth sines & cosines).
         """
         self.params = params
+        self.device = device
 
     def __call__(self, zen, az, freqs):
         # get azimuth dependent sigma
         zen_rad, az_rad = zen * D2R, az * D2R
-        l = torch.as_tensor(np.sin(zen_rad) * np.sin(az_rad))
-        m = torch.as_tensor(np.sin(zen_rad) * np.cos(az_rad))
+        l = torch.as_tensor(np.sin(zen_rad) * np.sin(az_rad), device=self.device)
+        m = torch.as_tensor(np.sin(zen_rad) * np.cos(az_rad), device=self.device)
         beam = torch.exp(-0.5 * ((l / self.params[0][..., None])**2 + (m / self.params[1][..., None])**2))
         return beam
   
+    def push(self, device):
+        """push params and other attrs to device"""
+        self.params = self.params.to(device)
+        self.device = device
+
 
 class YlmResponse(PixelResponse):
     """
@@ -412,7 +430,7 @@ class YlmResponse(PixelResponse):
 
     """ 
     def __init__(self, params, l, m, nside, mode='generate', interp_angs=None,
-                 powerbeam=True, dtype=torch.complex64):
+                 powerbeam=True, dtype=torch.complex64, device=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -456,6 +474,7 @@ class YlmResponse(PixelResponse):
         self.Ylm_cache = {}
         self.ang_cache = {}
         self.mode = mode
+        self.device = device
         self.interp_angs = interp_angs
         self.beam_cache = None
 
@@ -482,7 +501,7 @@ class YlmResponse(PixelResponse):
         else:
             # generate it, may take a while
             # generate exact Y_lm
-            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m,
+            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m, device=self.device,
                                     real_field=self.powerbeam, dtype=self.dtype)
             if self.powerbeam and not self.neg_m:
                 Ylm[:, self.m > 0] *= 2
@@ -493,7 +512,7 @@ class YlmResponse(PixelResponse):
         return Ylm
 
     def set_beam(self, beam, zen, az, freqs):
-        self.beam_cache = beam, zen, az, freqs
+        self.beam_cache = dict(beam=beam, zen-zen, az=az, freqs=freqs)
 
     def clear_beam(self):
         self.beam_cache = None
@@ -519,7 +538,7 @@ class YlmResponse(PixelResponse):
         """
         # get polynomial A matrix wrt freq
         Ndeg = self.params.shape[3]
-        A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype)
+        A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype, device=self.device)
 
         # first do fast dot product along Ndeg axis
         p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)
@@ -552,9 +571,18 @@ class YlmResponse(PixelResponse):
                 self.set_beam(beam, int_zen, int_az, freqs)
 
             # interpolate the beam at the desired locations
-            beam = self._interp(zen, az, self.beam_cache[0])
+            beam = self._interp(zen, az, self.beam_cache['beam'])
 
         return beam
+
+    def push(self, device):
+        """push params and other attrs to device"""
+        self.params = self.params.to(device)
+        self.device = device
+        for k, Ylm in self.Ylm_cache.items():
+            self.Ylm_cache[k] = Ylm.to(device)
+        if self.beam_cache is not None:
+            self.beam_cache['beam'] = self.beam_cache['beam'].to(device)
 
 
 def airy_disk(zen, az, Dns, freqs, Dew=None):
