@@ -225,7 +225,7 @@ class PixelBeam(torch.nn.Module):
             zen = 90 - alt
 
             # evaluate beam
-            beam, cut = self.gen_beam(None, zen, az)
+            beam, cut = self.gen_beam(zen, az)
             sky = sky_comp['sky'][..., cut]
             zen, alt, az = zen[cut], alt[cut], az[cut]
 
