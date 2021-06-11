@@ -329,7 +329,7 @@ class RIME(torch.nn.Module):
                 'sky' : tensor, sky representation
                 Extra kwargs given 'kind', including possibly
                     'angs' : tensor, optional, RA and Dec [deg] of pixels
-                    'lms' : tensor, optional, l and m ints of a_lm coeffs
+                    'lms' : tensor, optional, l and m modes of a_lm coeffs
 
         Returns
         -------

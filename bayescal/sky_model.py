@@ -18,9 +18,9 @@ class SkyBase(torch.nn.Module):
 
         Parameters
         ----------
-        params : tensor or list of tensors
-            A sky model parameterization as a tensor or list
-            of tensors to be pushed through the response R().
+        params : tensor
+            A sky model parameterization as a tensor to
+            be pushed through the response function R().
         kind : str
             Kind of sky model. options = ['point', 'pixel', 'alm']
             for point source model, pixelized model, and spherical
@@ -38,25 +38,11 @@ class SkyBase(torch.nn.Module):
         """
         super().__init__()
         self.params = params
-        oneparam = True
-        if isinstance(self.params, (list, tuple)):
-            oneparam = False
-            _params = []
-            for i, p in enumerate(self.params):
-                if parameter:
-                    p = torch.nn.Parameter(p)
-                name = "param{}".format(i)
-                setattr(self, name, p)
-                _params.append(p)
-            if parameter:
-                self.params = _params
-        else:
-            if parameter:
-                self.params = torch.nn.Parameter(self.params)
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
         self.kind = kind
         if R is None:
-            if oneparam: R = lambda x: x
-            else: R = lambda x: x[0]
+            R = lambda x: x[0]
         self.R = R
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -70,9 +56,9 @@ class SkyBase(torch.nn.Module):
         Parameters
         ----------
         device : str
-            'cpu' or 'cuda:0', 'cuda:1', ... device
+            Device to push to, e.g. 'cpu', 'cuda:0'
         attrs : list of str
-            List of self.attr attributes to push
+            List of additional attributes to push
         """
         self.params = self.params.to(device)
         for attr in attrs:
@@ -97,13 +83,14 @@ class PointSourceModel(SkyBase):
 
         Parameters
         ----------
-        params : list of tensors
-            A list of point source parameters. Bare minimum, the
-            first element should be a tensor of shape
-            (Npol, Npol, Nfreqs, Nsources), also referred to as "sky",
-            containing the flux density of each source.
-            Npol is the number of feed polarizations.
-            The first two axes are the coherency matrix B:
+        params : tensor
+            Point source flux parameterization adopted by R().
+            In general, this is of shape (Npol, Npol, Ncoeff, Nsources),
+            where Ncoeff is the chosen parameterization across frequency.
+            For no parameterization (default) this should be a tensor
+            of shape (Npol, Npol, Nfreqs, Nsources).
+            Npol is the number of feed polarizations, and
+            the first two axes are the coherency matrix B:
 
             .. math::
 
@@ -113,9 +100,6 @@ class PointSourceModel(SkyBase):
                 \right)
 
             See bayescal.sky.stokes2linear() for details.
-            Additionally, params may contain other tensor parameters
-            e.g. a frequency power law, which should be expected
-            by the R function.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -190,6 +174,64 @@ class PointSourceModel(SkyBase):
         return dict(kind=self.kind, sky=self.R(_params), angs=self.angs)
 
 
+class PointSourceResponse:
+    """
+    Frequency parameterization of point sources at
+    fixed locations but variable flux wrt frequency
+    options include
+        - direct : vary all frequency channels
+        - poly : fit a low-order polynomial across freqs
+        - powerlaw : fit an amplitude and exponent across freqs
+    """
+    def __init__(self, freqs, mode='poly',  f0=None, dtype=torch.float32,
+                 device=None, Ndeg=None):
+        """
+        Choose a frequency parameterization for PointSourceModel
+
+        Parameters
+        ----------
+        freqs : tensor
+            Frequency array [Hz]
+        mode : str, optional
+            options = ['direct', 'poly', 'powerlaw']
+            Frequency parameterization mode. Choose between
+            direct - each frequency is a parameter
+            poly - polynomial basis of Ndeg
+            powerlaw - amplitude and powerlaw basis anchored at f0
+        f0 : float, optional
+            Fiducial frequency [Hz]. Used for poly and powerlaw.
+        dtype : torch dtype, optional
+            Tensor data type of point source params
+        device : str, optional
+            Device of point source params
+        Ndeg : int, optional
+            Polynomial degrees if mode is 'poly'
+
+        Notes
+        -----
+        The ordering of the coeff axis in params should be
+            poly - follows that of utils.gen_poly_A()
+            powerlaw - ordered as (amplitude, exponent)
+        """
+        self.freqs = freqs
+        self.f0 = f0
+        self.dfreqs = (freqs - f0) / 1e6  # MHz
+        self.mode = mode
+        self.Ndeg = Ndeg
+
+        # setup
+        if self.mode == 'poly':
+            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=device)
+
+    def __call__(self, params):
+        if self.mode == 'direct':
+            return params
+        elif self.mode == 'poly':
+            return self.A @ params
+        elif self.mode == 'powerlaw':
+            return params[..., 0, :] * (self.dfreqs / self.f0)**params[..., 1, :]
+
+
 class PixelModel(SkyBase):
     """
     Pixelized model (e.g. Healpix) of the sky
@@ -213,13 +255,13 @@ class PixelModel(SkyBase):
 
         Parameters
         ----------
-        params : list of tensors
-            A list of source parameters. Bare minimum, the
-            first element should be a tensor of shape
-            (Npol, Npol, Nfreqs, Npix), where Npix is the number
-            of free parameters (default). This could be individual pixels, but
-            it could also be some sparse parameterization that is eventually
-            mapped to pixel space after passing through R().
+        params : tensor
+            Sky model flux parameterization of shape
+            (Npol, Npol, Nfreq_coeff, Nsky_coeff), where Nsky_coeff is
+            the free parameters describing angular fluctations, and Nfreq_coeff
+            is the number of free parameters describing frequency fluctuations,
+            both of which should be expected by the response function R().
+            By default, this is just Nfreqs and Npix, respectively.
             Npol is the number of feed polarizations.
             The first two axes are the coherency matrix B:
 
@@ -231,9 +273,6 @@ class PixelModel(SkyBase):
                 \right)
 
             See bayescal.sky.stokes2linear() for details.
-            Additionally, params may contain other tensor parameters
-            e.g. a frequency power law, which should be expected
-            by the R function.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -287,6 +326,49 @@ class PixelModel(SkyBase):
         # pass through response
         sky = self.R(_params) * self.areas
         return dict(kind=self.kind, sky=sky, angs=self.angs)
+
+
+class PixelModelResponse:
+    """
+    Spatial and frequency parameterization for PixelModel
+
+    options for spatial parameterization include
+        - 'direct' : sky pixel
+        - 'alm' : spherical harmonic
+
+    options for frequency parameterization include
+        - 'direct' : frequency channels
+        - 'poly' : low-order polynomials
+        - 'powerlaw' : power law model
+        - 'bessel' : spherical bessel (for 'alm')
+    """
+    def __init__(self, theta, phi, freqs, spatial_mode='direct', freq_mode='direct',
+                 spatial_device=None, freq_device=None, transform_order=0,
+                 lms=None, f0=None, kbins=None,):
+        """
+        Parameters
+        ----------
+        theta, phi : ndarrays
+            colatitude and azimuth angles [rad] of the output sky map
+            in arbitrary coordintes
+        freqs : ndarray
+            Frequency bins [Hz]
+        spatial_mode : str, optional
+            Choose the spatial parameterization (default is direct)
+        freq_mode : str, optional
+            Choose the freq parameterization (default is direct)
+        spatial_device
+        lms : ndarray, optional
+            l and m modes for alm decomposition, shape (2, Ncoeff)
+        f0 : float, optional
+            Fiducial frequency [Hz], only used for polynomial basis
+        kbins : ndarray, optional
+            The wavevector bins used in the spherical bessel transform
+        """
+        pass
+
+    def __call__(self, params):
+        pass
 
 
 class SphHarmModel(SkyBase):

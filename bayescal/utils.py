@@ -409,7 +409,7 @@ def gen_lm(lmax, real_field=True):
 
 
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
-                dtype=torch.complex64):
+                dtype=torch.complex64, device=None):
     """
     Generate spherical harmonic forward model matrix.
     Note for lmax > 50, this can begin to take >= minutes to run.
@@ -430,12 +430,14 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     real_field : bool, optional
         If True, treat sky as real-valued
         so truncate negative m values (used for lmax).
+    device : str, optional
+        Device to push Ylm to.
     dtype : dtype, optional
         Data type of output matrix.
 
     Returns
     -------
-    Y : array_like
+    Ylm : array_like
         An Npix x Ncoeff matrix encoding a spherical
         harmonic transform from a_lm -> map
     """
@@ -452,13 +454,13 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     for i, (_l, _m) in enumerate(zip(l, m)):
         y = special.sph_harm(_m, _l, phi, theta)
         if torch_type:
-            y = torch.as_tensor(y, dtype=dtype)
+            y = torch.as_tensor(y, dtype=dtype, device=device)
         Y[:, i] = y
 
     return Y
 
 
-def gen_bessel2freq(l, k, dk, r, dtype=torch.float32):
+def gen_bessel2freq(l, k, dk, r, dtype=torch.float32, device=None):
     """
     Generate spherical Bessel forward model matrices.
 
@@ -476,6 +478,9 @@ def gen_bessel2freq(l, k, dk, r, dtype=torch.float32):
     k : array_like
 
     r : array_like
+
+    device : str, optional
+        Device to push Ylm to.
 
     Returns
     -------
@@ -495,15 +500,20 @@ def gen_bessel2freq(l, k, dk, r, dtype=torch.float32):
         for _k in k:
             j = k**2 * special.spherical_jn(_l, _k * r) * dk
             if torch_type:
-                j = torch.as_tensor(j, dtype=dtype)
+                j = torch.as_tensor(j, dtype=dtype, device=device)
             J[_l] = j * np.sqrt(2 / np.pi)
 
     return J
 
 
-def gen_poly_A(freqs, Ndeg, dtype=torch.float32):
+def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
     """
-    Generate design matrix (A) for polynomial of Ndeg across freqs
+    Generate design matrix (A) for polynomial of Ndeg across freqs,
+    with coefficient ordering
+
+    .. math::
+
+        a0 * x^0 + a1 * x^1 + a2 * x^2 + ...
 
     Parameters
     ----------
@@ -511,6 +521,8 @@ def gen_poly_A(freqs, Ndeg, dtype=torch.float32):
         Frequency bins [Hz]
     Ndeg : int
         Polynomial degree
+    device : str
+        device to send A matrix to
 
     Returns
     -------
@@ -518,7 +530,7 @@ def gen_poly_A(freqs, Ndeg, dtype=torch.float32):
         Polynomial design matrix
     """
     dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
-    A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype).T
+    A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype, device=device).T
     return A
 
 

@@ -411,7 +411,7 @@ class YlmResponse(PixelResponse):
         beam = R(zen, az, freqs)
 
     """ 
-    def __init__(self, params, l, m, nside, real_field=True, mode='generate', interp_angs=None,
+    def __init__(self, params, l, m, nside, mode='generate', interp_angs=None,
                  powerbeam=True, dtype=torch.complex64):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -431,9 +431,6 @@ class YlmResponse(PixelResponse):
             Nside integer of original healpix map. Note that this may be equal
             to Ncoeff, but it may not, as you can truncate the l and m modes
             as desired.
-        real_field : bool, optional
-            If True, assume beam is real valued and that only positive
-            m are fed, meaning multiply all Y_lm for m > 0 by 2.
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm given zen, az for each call
             interpolate - interpolate existing beam onto zen, az
@@ -453,7 +450,6 @@ class YlmResponse(PixelResponse):
         super(YlmResponse, self).__init__(params, 'healpix')
         self.npix = utils.healpy.nside2npix(nside)
         self.l, self.m = l, m
-        self.real_field = real_field
         self.neg_m = np.any(m < 0)
         self.dtype = dtype
         self.powerbeam = powerbeam
@@ -486,8 +482,9 @@ class YlmResponse(PixelResponse):
         else:
             # generate it, may take a while
             # generate exact Y_lm
-            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m, dtype=self.dtype)
-            if self.real_field and not self.neg_m:
+            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m,
+                                    real_field=self.powerbeam, dtype=self.dtype)
+            if self.powerbeam and not self.neg_m:
                 Ylm[:, self.m > 0] *= 2
             # store it
             self.Ylm_cache[h] = Ylm
