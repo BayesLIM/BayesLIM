@@ -16,7 +16,7 @@ D2R = utils.D2R
 
 class TelescopeModel:
 
-    def __init__(self, location):
+    def __init__(self, location, device=None):
         """
         A telescope model for performing
         coordinate conversions
@@ -33,6 +33,7 @@ class TelescopeModel:
 
         # setup coordinate conversion cache
         self.conv_cache = {}
+        self.device = device
 
     def hash(self, obs_jd, sky):
         """
@@ -105,13 +106,18 @@ class TelescopeModel:
             return self.conv_cache[h]
 
         # if not, perform conversion
-        angs = eq2top(self.tloc, obs_jd, ra, dec)
+        angs = torch.as_tensor(eq2top(self.tloc, obs_jd, ra, dec), device=self.device)
 
         # save cache
         if store:
             self.conv_cache[h] = angs
 
         return angs
+
+    def push(self, device):
+        """push cache to device"""
+        for key, angs in self.conv_cache.items():
+            self.conv_cache[h] = angs.to(device)
 
 
 class ArrayModel(torch.nn.Module):
