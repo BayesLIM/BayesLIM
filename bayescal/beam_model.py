@@ -131,6 +131,8 @@ class PixelBeam(torch.nn.Module):
             (Npol, Npol, Nmodel, Nfreqs, Npix)
         cut : array
             Indexing of Npix axis given fov cut
+        zen, az : tensor
+            truncated zen and az tensors
         """
         # enact fov cut
         cut = zen < self.fov / 2
@@ -145,7 +147,7 @@ class PixelBeam(torch.nn.Module):
                 beam = torch.real(beam)
             beam = torch.abs(beam)
 
-        return beam, cut
+        return beam, cut, zen, az
 
     def apply_beam(self, beam1, sky, beam2=None):
         """
@@ -230,7 +232,7 @@ class PixelBeam(torch.nn.Module):
             zen = utils.colat2lat(alt, deg=True)
 
             # evaluate beam
-            beam, cut = self.gen_beam(zen, az)
+            beam, cut, zen, az = self.gen_beam(zen, az)
             sky = sky_comp['sky'][..., cut]
             zen, alt, az = zen[cut], alt[cut], az[cut]
 

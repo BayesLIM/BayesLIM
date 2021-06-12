@@ -369,13 +369,12 @@ class RIME(torch.nn.Module):
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
-                    zen, az = sky_comp['angs']
-                    alt, az = self.telescope.eq2top(obs_jd, zen, az, sky=kind, store=True)
+                    ra, dec = sky_comp['angs']
+                    alt, az = self.telescope.eq2top(obs_jd, ra, dec, sky=kind, store=True)
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
-                    ant_beams, cut = self.beam.gen_beam(zen, az)
-                    zen, az = zen[cut], az[cut]
+                    ant_beams, cut, zen, az = self.beam.gen_beam(zen, az)
                     cut_sky = sky[..., cut]
 
                 elif kind == 'alm':
