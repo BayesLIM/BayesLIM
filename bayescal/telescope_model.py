@@ -248,7 +248,7 @@ class ArrayModel(torch.nn.Module):
     def push(self, device):
         """push parameters to a new device"""
         self.antpos = utils.push(self.antpos, device)
-        self.freqs = freqs.to(device)
+        self.freqs = self.freqs.to(device)
         self.device = device
 
 
