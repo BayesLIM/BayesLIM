@@ -313,18 +313,24 @@ class PixelResponse:
 
     def hash(self, zen):
         """
-        Hash the first five entries of zen.
+        Hash zen (normally array hash is not allowed) by
+        using its first value, last value and length
+        as a unique identifier of the array.
+        Note that if zen is a tensor, the device and
+        require_grad values will affect the hash!
 
         Parameters
         ----------
-        zen : ndarray
+        zen : ndarray or tensor
             Zenith angle (co-latitude) [arb. units]
         
         Returns
         -------
         hash object
         """
-        return hash(str(zen[:5]))
+        return hash((float(utils.tensor2numpy(zen[0])),
+                     float(utils.tensor2numpy(zen[-1])),
+                     len(zen)))
 
     def get_interp(self, zen, az):
         """
@@ -357,7 +363,8 @@ class PixelResponse:
                 raise NotImplementedError
 
             # store it
-            interp = (inds, torch.as_tensor(wgts, dtype=self.params.dtype, device=self.device))
+            interp = (torch.as_tensor(inds, device=self.device),
+                      torch.as_tensor(wgts, dtype=self.params.dtype, device=self.device))
             self.interp_cache[h] = interp
 
         return interp

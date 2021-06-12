@@ -117,7 +117,7 @@ class TelescopeModel:
     def push(self, device):
         """push cache to device"""
         for key, angs in self.conv_cache.items():
-            self.conv_cache[h] = angs.to(device)
+            self.conv_cache[key] = angs.to(device)
 
 
 class ArrayModel(torch.nn.Module):

@@ -882,3 +882,26 @@ def push(tensor, device):
         return torch.nn.Parameter(tensor.to(device))
     else:
         return tensor.to(device)
+
+def tensor2numpy(tensor):
+    """
+    Convert a tensor (on any device)
+    to a numpy ndarray on the cpu
+
+    Parameters
+    ----------
+    tensor : tensor
+        A pytorch tensor on any device
+
+    Returns
+    -------
+    ndarray
+        The tensor as an ndarray on cpu
+    """
+    if isinstance(tensor, np.ndarray):
+        return tensor
+    tensor = tensor.detach()
+    if tensor.device != 'cpu':
+        tensor = tensor.cpu()
+    return tensor.numpy()
+
