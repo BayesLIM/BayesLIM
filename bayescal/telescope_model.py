@@ -81,9 +81,9 @@ class TelescopeModel:
         ----------
         obs_jd : float
             Observation time in Julian Date
-        ra : array_like
+        ra : tensor or ndarray
             right ascension in degrees [J2000]
-        dec : array_like
+        dec : tensor or ndarray
             declination in degrees [J2000]
         sky : SkyBase subclass or int
             The SkyBase subclass object, or some unique
@@ -105,11 +105,13 @@ class TelescopeModel:
         if h in self.conv_cache:
             return self.conv_cache[h]
 
-        # if not, perform conversion
+        # if not present, perform conversion
         ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
-        angs = torch.as_tensor(eq2top(self.tloc, obs_jd, ra, dec), device=self.device)
+        dtype = ra.dtype if isinstance(ra, torch.Tensor) else None
+        angs = eq2top(self.tloc, obs_jd, ra, dec)
+        angs = torch.as_tensor(angs, device=self.device, dtype=dtype)
 
-        # save cache
+        # and save to cache
         if store:
             self.conv_cache[h] = angs
 
@@ -246,6 +248,7 @@ class ArrayModel(torch.nn.Module):
     def push(self, device):
         """push parameters to a new device"""
         self.antpos = utils.push(self.antpos, device)
+        self.freqs = freqs.to(device)
         self.device = device
 
 
@@ -366,8 +369,7 @@ class RIME(torch.nn.Module):
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
-                    alt, az = self.telescope.eq2top(obs_jd, sky_comp['angs'][0], sky_comp['angs'][1],
-                                                    sky=kind, store=True)
+                    alt, az = self.telescope.eq2top(obs_jd, zen, az, sky=kind, store=True)
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
