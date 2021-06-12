@@ -61,6 +61,8 @@ class SkyBase(torch.nn.Module):
             List of additional attributes to push
         """
         self.params = utils.push(self.params, device)
+        if hasattr(self, 'angs'):
+            self.angs = self.angs.to(device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
 

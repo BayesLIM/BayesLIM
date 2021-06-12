@@ -106,6 +106,7 @@ class TelescopeModel:
             return self.conv_cache[h]
 
         # if not, perform conversion
+        ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
         angs = torch.as_tensor(eq2top(self.tloc, obs_jd, ra, dec), device=self.device)
 
         # save cache
@@ -124,7 +125,7 @@ class ArrayModel(torch.nn.Module):
     """
     A model for antenna layout
     """
-    def __init__(self, antpos, parameter=False, dtype=torch.float32, device=None):
+    def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None):
         """
         A model of an interferometric array
 
@@ -136,6 +137,8 @@ class ArrayModel(torch.nn.Module):
             are len-3 float arrays with antenna
             position in East-North-Up coordinates,
             centered at telescope location.
+        freqs : tensor
+            Frequencies to evaluate fringe [Hz]
         parameter : bool, optional
             If True, antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
@@ -154,6 +157,7 @@ class ArrayModel(torch.nn.Module):
         self.device = device
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
+        self.freqs = torch.as_tensor(freqs, dtype=dtype, device=device)
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
@@ -169,7 +173,7 @@ class ArrayModel(torch.nn.Module):
         """
         return self.antpos[self.ants.index(ant)]
 
-    def gen_fringe(self, bl, freqs, kind, zen=None, az=None):
+    def gen_fringe(self, bl, zen, az):
         """
         Compute a fringe term given a representation kind
         and an antenna pair (baseline).
@@ -179,16 +183,10 @@ class ArrayModel(torch.nn.Module):
         bl : 2-tuple
             Baseline tuple, specifying the participating
             antennas from self.ants
-        freqs : array_like
-            Frequencies [Hz]
-        kind : str
-            Kind of fringe model ['point', 'pixel', 'alm']
-            Note that 'point' and 'pixel' are functionally
-            the same thing.
-        zen : array_like, optional
+        zen : tensor
             Zenith angle [degrees] of shape (Npix,).
             Used of kind of 'pixel' or 'point'
-        az : array_like, optional
+        az : tensor
             Azimuth [degrees] of shape (Npix,).
             Used for kind of 'pixel' or 'point'
 
@@ -198,24 +196,17 @@ class ArrayModel(torch.nn.Module):
             Fringe response of shape (Nfreqs, Npix)
             or (Nfreqs, Nalm)
         """
-        if kind in ['pixel', 'point']:
-            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
-            ## TODO: can cache fringe term if this is a bottleneck
-            zen = torch.as_tensor(zen * D2R, dtype=self.dtype, device=self.device)
-            az = torch.as_tensor(az * D2R, dtype=self.dtype, device=self.device)
-            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
-            freqs = torch.as_tensor(freqs, dtype=self.dtype, device=self.device)
-            # az is East of North
-            s[0] = torch.sin(zen) * torch.sin(az)  # x
-            s[1] = torch.sin(zen) * torch.cos(az)  # y
-            s[2] = torch.cos(zen)                  # z
-            return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * freqs[:, None])
+        bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+        ## TODO: can cache fringe term if this is a bottleneck
+        zen = zen * D2R
+        az = az * D2R
+        s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
+        # az is East of North
+        s[0] = torch.sin(zen) * torch.sin(az)  # x
+        s[1] = torch.sin(zen) * torch.cos(az)  # y
+        s[2] = torch.cos(zen)                  # z
 
-        elif kind == 'alm':
-            raise NotImplementedError
-
-        else:
-            raise ValueError("kind = {} not recognized".format(kind))
+        return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
 
     def apply_fringe(self, fringe, sky, kind):
         """
@@ -410,7 +401,7 @@ class RIME(torch.nn.Module):
         psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # generate fringe
-        fringe = self.array.gen_fringe((ant1, ant2), self.freqs, kind, zen=zen, az=az)
+        fringe = self.array.gen_fringe((ant1, ant2), zen, az)
 
         # apply fringe
         psky = self.array.apply_fringe(fringe, psky, kind)
