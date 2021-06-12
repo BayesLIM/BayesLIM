@@ -357,7 +357,9 @@ class PixelResponse:
             if self.pixtype == 'healpix':
                 nside = utils.healpy.npix2nside(self.npix)
                 ## TODO: ensure az has the same starting convention as healpy phi
-                inds, wgts = utils.healpy.get_interp_weights(nside, zen * D2R, az * D2R)
+                inds, wgts = utils.healpy.get_interp_weights(nside,
+                                                             utils.tensor2numpy(zen) * D2R,
+                                                             utils.tensor2numpy(az) * D2R)
 
             else:
                 raise NotImplementedError
