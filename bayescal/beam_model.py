@@ -86,7 +86,7 @@ class PixelBeam(torch.nn.Module):
         if response is None:
             # assumes Npix axis of params is healpix
             self.R = PixelResponse(self.params, 'healpix',
-                                   healpy.npix2nside(params.shape[-1]))
+                                   utils.healpy.npix2nside(params.shape[-1]))
         else:
             self.R = response(self.params, *response_args)
 
@@ -234,7 +234,7 @@ class PixelBeam(torch.nn.Module):
             # evaluate beam
             beam, cut, zen, az = self.gen_beam(zen, az)
             sky = sky_comp['sky'][..., cut]
-            zen, alt, az = zen[cut], alt[cut], az[cut]
+            alt = alt[cut]
 
             # iterate over baselines
             shape = sky.shape
