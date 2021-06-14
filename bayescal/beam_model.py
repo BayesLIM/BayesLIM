@@ -249,7 +249,7 @@ class PixelBeam(torch.nn.Module):
 
             sky_comp['sky'] = psky
             sky_comp['angs'] = sky_comp['angs'][:, cut]
-            sky_comp['altaz'] = torch.tensor([alt, az])
+            sky_comp['altaz'] = torch.vstack([alt, az])
 
         else:
             raise NotImplementedError

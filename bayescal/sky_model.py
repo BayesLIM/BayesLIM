@@ -42,7 +42,7 @@ class SkyBase(torch.nn.Module):
             self.params = torch.nn.Parameter(self.params)
         self.kind = kind
         if R is None:
-            R = lambda x: x[0]
+            R = lambda x: x
         self.R = R
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -278,7 +278,7 @@ class PixelModel(SkyBase):
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
-            last two axes are RA and Dec.
+            last two axes are RA and Dec [deg].
         freqs : tensor
             Frequency array of sky model [Hz].
         areas : tensor
