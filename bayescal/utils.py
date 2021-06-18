@@ -7,6 +7,8 @@ from scipy import special
 import copy
 import warnings
 
+from .data import DATA_PATH
+
 # try to import healpy
 try:
     import healpy
@@ -21,6 +23,21 @@ if not import_healpy:
         import_healpy = True
     except ImportError:
         warnings.warn("could not import healpy")
+
+########################
+######### Misc #########
+########################
+def set_dtype(real_dtype):
+    """
+    Set the global torch data type.
+    The complex dtype is 2 x real_dtype
+
+    Parameters
+    ----------
+    real_dtype : torch.dtype
+        The default dtype for real tensors
+    """
+    pass
 
 
 ########################################
@@ -461,50 +478,109 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     return Y
 
 
-def gen_bessel2freq(l, k, dk, r, dtype=torch.float32, device=None):
+def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
+                    dtype=torch.float32, device=None):
     """
-    Generate spherical Bessel forward model matrices.
+    Generate spherical Bessel forward model matrices k^2 j_l(kr)
+    from Fourier domain (k) to LOS distance or frequency domain (r_nu)
 
     The inverse transformation from Fourier space (k)
     to configuration space (r) is
 
     .. math::
 
-        T_{\ell m}(r) = \int dk k^2 j_\ell(k r) T_{\ell m}(k)
+        T_{lm}(r) &= \frac{2}{\pi} \int dk k^2 j_l(k r) T_{lm}(k) \\
+        T(r,\theta,\phi) &= \frac{2}{\pi} \int dk k^2 j_l(k r)
+                            T_l(k,\theta,\phi)
+
+    following convention of Liu, Zhang, & Parsons 2016
 
     Parameters
     ----------
     l : array_like
-
-    k : array_like
-
-    r : array_like
-
+        Spherical harmonic l modes for j_l(kr) terms
+    freqs : array_like
+        Frequency array [Hz]
+    cosmo : Cosmology object
+    Nk : int, optional
+        Number of modes to compute, starting at smallest
+    decimate : bool, optional
+        Use every other j_l(z) zero as k bins.
     device : str, optional
-        Device to push Ylm to.
+        Device to push j_l(kr) to.
 
     Returns
     -------
-    J : dict
-        A dictionary holding a series of Nk x Nfreq
+    jl : dict
+        A dictionary holding a series of Nk x Nfreqs
         spherical Fourier Bessel transform matrices,
         one for each unique l mode.
         Keys are l mode integers, values are matrices.
+    k : ndarray
+        k modes [Mpc^-1]
     """
-    J = {}
+    # convert frequency to LOS distance
+    r = cosmo.f2r(freqs)
+    R = r.max() - r.min()
+    # setup dicts
+    jl = {}
+    kbins = {}
+    # configure 
     torch_type = type(dtype) == torch.dtype
-    for _l in l:
+    dr = r - r.min()
+    if Nk is None:
+        Nk = len(r) // 2 
+    for _l in np.unique(l):
+        k = sph_bessel_kn(_l, R, Nk, decimate=decimate)
         if torch_type:
-            J[_l] - torch.zeros(len(k), len(r), dtype=dtype)
+            j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
         else:
-            J[_l] = np.zeros((len(k), len(r)), dtype=dtype)
-        for _k in k:
-            j = k**2 * special.spherical_jn(_l, _k * r) * dk
+            j = np.zeros((Nk, len(r)), dtype=dtype)
+        for i, _k in enumerate(k):
+            j_i = np.sqrt(2 / np.pi) * _k**2 * special.spherical_jn(_l, _k * dr)
             if torch_type:
-                j = torch.as_tensor(j, dtype=dtype, device=device)
-            J[_l] = j * np.sqrt(2 / np.pi)
+                j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
+            else:
+                j[i] = j_i
+        jl[_l] = j
+        kbins[_l] = k
 
-    return J
+    return jl, kbins
+
+
+def sph_bessel_kn(l, R, Nk, decimate=True):
+    """
+    Get spherical bessel Fourier bins
+    by referencing a lookup table for zeros
+
+    ... math::
+
+        k_{ln} = a_{ln} / R
+
+    where a_ln is the nth zero of j_l(z)
+
+    Parameters
+    ----------
+    l : int
+        Angular l mode
+    R : float
+        Survey width [Mpc]
+    Nk : int
+        Number of k bins, starts with
+        smallest modes and works up
+    decimate : bool, optional
+        If True, use every other zero
+        starting at second zero.
+
+    Returns
+    -------
+    array
+        Fourier modes [1/R]
+    """
+    zeros = np.loadtxt(DATA_PATH+'/jl_zeros.csv', delimiter=',')[l, 1:]
+    if decimate:
+        zeros = zeros[1::2]
+    return zeros[:Nk] / R
 
 
 def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):

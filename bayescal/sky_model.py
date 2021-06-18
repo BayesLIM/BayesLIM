@@ -42,7 +42,7 @@ class SkyBase(torch.nn.Module):
             self.params = torch.nn.Parameter(self.params)
         self.kind = kind
         if R is None:
-            R = lambda x: x
+            R = DefaultResponse()
         self.R = R
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -65,6 +65,17 @@ class SkyBase(torch.nn.Module):
             self.angs = self.angs.to(device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
+
+
+class DefaultResponse:
+    """
+    Default response function for SkyBase  
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, params):
+        return params
 
 
 class PointSourceModel(SkyBase):
@@ -168,12 +179,10 @@ class PointSourceModel(SkyBase):
         """
         # fed params or attr params
         if params is None:
-            _params = self.params
-        else:
-            _params = params
+            params = self.params
 
         # pass through response
-        return dict(kind=self.kind, sky=self.R(_params), angs=self.angs)
+        return dict(kind=self.kind, sky=self.R(params), angs=self.angs)
 
 
 class PointSourceResponse:
@@ -185,7 +194,7 @@ class PointSourceResponse:
         - poly : fit a low-order polynomial across freqs
         - powerlaw : fit an amplitude and exponent across freqs
     """
-    def __init__(self, freqs, mode='poly',  f0=None, dtype=torch.float32,
+    def __init__(self, freqs, mode='poly', f0=None, dtype=torch.float32,
                  device=None, Ndeg=None):
         """
         Choose a frequency parameterization for PointSourceModel
@@ -217,7 +226,7 @@ class PointSourceResponse:
         """
         self.freqs = freqs
         self.f0 = f0
-        self.dfreqs = (freqs - f0) / 1e6  # MHz
+        self.dfreqs = (freqs - freqs[0]) / 1e6  # MHz
         self.mode = mode
         self.Ndeg = Ndeg
 
@@ -231,7 +240,7 @@ class PointSourceResponse:
         elif self.mode == 'poly':
             return self.A @ params
         elif self.mode == 'powerlaw':
-            return params[..., 0, :] * (self.dfreqs / self.f0)**params[..., 1, :]
+            return params[..., 0, :] * (self.freqs / self.f0)**params[..., 1, :]
 
 
 class PixelModel(SkyBase):
@@ -246,7 +255,7 @@ class PixelModel(SkyBase):
     of the forward model is in flux density [Jy]
     (i.e. we multiply by each cell's solid angle).
     """
-    def __init__(self, params, angs, freqs, areas, R=None, parameter=True):
+    def __init__(self, params, angs, freqs, px_area, R=None, parameter=True):
         """
         Pixelized model of the sky brightness distribution.
         This can be parameterized in any generic way via params,
@@ -281,9 +290,9 @@ class PixelModel(SkyBase):
             last two axes are RA and Dec [deg].
         freqs : tensor
             Frequency array of sky model [Hz].
-        areas : tensor
+        px_area : float
             Contains the solid angle of each pixel [str]. This is multiplied
-            into the final sky modle, and thus needs to be a scalar or
+            into the final sky model, and thus needs to be a scalar or
             a tensor of shape (1, 1, 1, Npix) to allow for broadcasting
             rules to apply.
         R : callable, optional
@@ -296,7 +305,7 @@ class PixelModel(SkyBase):
         """
         super().__init__(params, 'pixel', freqs, R=R, parameter=parameter)
         self.angs = angs
-        self.areas = areas
+        self.px_area = px_area
 
     def forward(self, params=None):
         """
@@ -321,12 +330,10 @@ class PixelModel(SkyBase):
         """
         # apply fed params or attr params
         if params is None:
-            _params = self.params
-        else:
-            _params = params
+            params = self.params
 
         # pass through response
-        sky = self.R(_params) * self.areas
+        sky = self.R(params) * self.px_area
         return dict(kind=self.kind, sky=sky, angs=self.angs)
 
 
@@ -342,16 +349,18 @@ class PixelModelResponse:
         - 'direct' : frequency channels
         - 'poly' : low-order polynomials
         - 'powerlaw' : power law model
-        - 'bessel' : spherical bessel (for 'alm')
+        - 'bessel' : spherical bessel j_l (for spatial mode 'alm')
+            For this mode, the all elements in params must be
+            from a single l mode
     """
     def __init__(self, theta, phi, freqs, spatial_mode='direct', freq_mode='direct',
-                 spatial_device=None, freq_device=None, transform_order=0,
-                 lms=None, f0=None, kbins=None,):
+                 device=None, transform_order=0, dtype=torch.float32,
+                 lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None):
         """
         Parameters
         ----------
         theta, phi : ndarrays
-            colatitude and azimuth angles [rad] of the output sky map
+            colatitude and azimuth angles [radian] of the output sky map
             in arbitrary coordintes
         freqs : ndarray
             Frequency bins [Hz]
@@ -359,18 +368,121 @@ class PixelModelResponse:
             Choose the spatial parameterization (default is direct)
         freq_mode : str, optional
             Choose the freq parameterization (default is direct)
-        spatial_device
+        device : str, optional
+            Device to put model on
+        transform_order : int, optional
+            0 - spatial then frequency transform (default)
+            1 - frequency then spatial transform
         lms : ndarray, optional
             l and m modes for alm decomposition, shape (2, Ncoeff)
         f0 : float, optional
             Fiducial frequency [Hz], only used for polynomial basis
         kbins : ndarray, optional
             The wavevector bins used in the spherical bessel transform
+        cosmo : Cosmology object
+            Cosmology object for computing conversions
         """
-        pass
+        self.theta, self.phi = theta, phi
+        self.freqs = freqs
+        self.spatial_mode = spatial_model
+        self.freq_mode = freq_mode
+        self.device = device
+        self.transform_order = transform_order
+        self.l, self.m = lms
+        self.f0 = f0
+        self.dfreqs = (freqs - freqs[0]) / 1e6
+        self.Ndeg = Ndeg
+        self.Nk = Nk
+        self.decimate = decimate
+        self.cosmo = cosmo
+        self.dtype = dtype
+
+        # freq setup
+        self.A, self.j = None, None
+        if self.freq_mode == 'poly':
+            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device)
+        elif self.freq_mode == 'bessel':
+            # compute comoving line of sight distances
+            self.z = cosmo.f2z(freqs)
+            self.r = cosmo.comoving_distance(self.z).value
+            self.dr = self.r = self.r.min()
+            jl, kbins = utils.gen_bessel2freq(self.l, freqs, cosmo,
+                                              Nk=Nk, decimate=decimate,
+                                              device=device, dtype=dtype)
+            self.jl = jl[list(jl.keys())[0]]
+            self.kbins = kbins[list(kbins.keys())[0]]
+
+        # spatial setup
+        self.Ylm = None
+        if self.spatial_mode == 'alm':
+            self.Ylm = utils.gen_sph2pix(theta, phi, self.l, self.m, device=self.device,
+                                         real_field=True, dtype=self.dtype)
+
+        # assertions
+        if self.freq_mode == 'bessel':
+            assert self.spatial_mode == 'alm'
+            assert len(np.unique(self.l)) == 1
+            assert self.transform_order == 1
+
+    def spatial_transform(self, params):
+        """
+        Forward model the sky params tensor
+        through a spatial transform.
+
+        Parameters
+        ----------
+        params : tensor
+            Sky model parameters (Npol, Npol, Ndeg, Ncoeff)
+            where Ndeg may equal Nfreqs, and Ncoeff
+            are the coefficients for the sky representations.
+
+        Returns
+        -------
+        tensor
+            Sky model of shape (Npol, Npol, Ndeg, Npix)
+        """
+        if self.spatial_mode == 'direct':
+            return params
+        elif self.spatial_mode == 'alm':
+            return params @ self.Ylm.transpose(-1, -2)
+
+    def freq_transform(self, params):
+        """
+        Forward model the sky params tensor
+        through a frequency transform.
+
+        Parameters
+        ----------
+        params : tensor
+            Sky model parameters (Npol, Npol, Ndeg, Ncoeff)
+            where Ncoeff may equal Npix, and Ndeg
+            are the coefficients for the frequency representations.
+    
+        Returns
+        -------
+        tensor
+            Sky model of shape (Npol, Npol, Nfreqs, Ncoeff)
+        """
+        if self.freq_mode == 'direct':
+            return params
+        elif self.freq_mode == 'poly':
+            return self.A @ params
+        elif self.freq_mode == 'powerlaw':
+            return params[..., 0, :] * (self.freqs / self.f0)**params[..., 1, :]
+        elif self.freq_mode == 'bessel':
+            return (params.transpose(-1, -2) @ self.j).transpose(-1, -2)
 
     def __call__(self, params):
-        pass
+        if params.device != self.device:
+            params = utils.push(params, self.device)
+        if self.transform_order == 0:
+            params = self.spatial_transform(params)
+            params = self.freq_transform(params)
+        else:
+            params = self.freq_transform(params)
+            params = self.spatial_transform(params)
+
+        return params
 
 
 class SphHarmModel(SkyBase):
@@ -457,17 +569,15 @@ class CompositeModel(torch.nn.Module):
         list
             List of each sky model output or their sum
         """
-        _models = self.models
         if models is not None:
-            _models = models
+            models = self.models
 
-        output = [mod.forward() for mod in _models]
+        sky_models = [mod.forward() for mod in models]
         if self.sum_output:
             # assert only one kind of sky models
-            assert len(set([mod['kind'] for mod in _models])) == 1
-            _output = output[0]
-            _output['sky'] = torch.sum([out['sky'].to(self.device) for out in output], axis=0)
-            output = _output
+            assert len(set([mod['kind'] for mod in models])) == 1
+            output = sky_models[0]
+            output['sky'] = torch.sum([utils.push(mode['sky'], self.device) for mode in sky_models], axis=0)
             # make sure other keys are on the same device
             for k in output:
                 if isinstance(output[k], torch.Tensor):
@@ -515,4 +625,28 @@ def stokes2linear(stokes):
 
     return B
 
+
+def parse_catalogue(catfile, parameter=False):
+    """
+    Read a point source catalogue YAML file.
+    See bayescal.data.DATA_PATH for examples.
+
+    Parameters
+    ----------
+    catfile : str
+        Path to a YAML point source catalogue file
+
+    Returns
+    -------
+    tensor
+        PointSourceModel object
+    """
+    import yaml
+    with open(catfile) as f:
+        d = yaml.load(d, Loader=yaml.FullLoader)
+
+    R  = PointSourceResponse(d['freqs'], mode=f['mode'])
+    S = PointSoureModel(params, angs, freqs, R=R, parameter=parameter)
+
+    return S
 
