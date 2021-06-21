@@ -587,9 +587,9 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None, dtype=tor
 
         elif method == 'samushia':
             # j_l(kr) + A y_l(kr)
-            A = -jn(l, _k * r_min) / yn(l, _k * r_min)
+            A = -jn(l, _k * r_min) / yn(l, _k * r_min).clip(-1e50, np.inf)
             j_i = np.sqrt(2 / np.pi) * _k**2 \
-                 * (jn(l, _k * r) + A * yn(l, _k * r))
+                 * (jn(l, _k * r) + A * yn(l, _k * r).clip(-1e50, np.inf))
 
         elif method == 'gebhardt':
             raise NotImplementedError
@@ -656,8 +656,8 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
             kmin = 2 * np.pi / (r_max - r_min)
             dk = kmin / 500
             k_arr = dk + np.arange(0, 30000) * dk
-            y = (jn(l, k_arr * r_min) * yn(l, k_arr * r_max) \
-                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min)) * k_arr**2
+            y = (jn(l, k_arr * r_min) * yn(l, k_arr * r_max).clip(-1e50, np.inf) \
+                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min)).clip(-1e50, np.inf) * k_arr**2
             k = get_zeros(k_arr, y)
 
         elif method == 'gebhardt':
