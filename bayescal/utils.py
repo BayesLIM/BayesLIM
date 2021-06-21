@@ -1088,8 +1088,9 @@ def get_zeros(x, y):
         if i == 0:
             prev = np.sign(y[i])
             continue
+        # prev and curr vars used to avoid nans when y jitters around abs(y) < 1e-200
         curr = np.sign(y[i])
-        if (curr != prev) and (prev != 0.0) and (curr != 0.0) and np.isfinite(prev):
+        if (curr != prev) and (np.abs(y[i]) > 1e-100) and (curr != 0.0) and np.isfinite(prev):
             # get 3 nn points and fit quadratic for root
             nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
             roots.append(fit_zero(x[nn], y[nn]))
