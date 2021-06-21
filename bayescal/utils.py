@@ -508,7 +508,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     method : str, optional
         Method for constraining radial basis functions.
         options=['default', 'samushia', 'gebhardt']
-        See sph_bessel_kn for details.
+        See sph_bessel_kln for details.
     decimate : bool, optional
         Use every other j_l(z) zero as k bins (i.e. DFT convention)
     device : str, optional
@@ -527,25 +527,28 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
     r_min, r_max = r.min(), r.max()
+    dr = r - r_min
     # setup dicts
     jl = {}
     kbins = {}
     # configure 
     torch_type = type(dtype) == torch.dtype
-    dr = r - r.min()
     if Nk is None:
         Nk = len(r) // 2 
     for _l in np.unique(l):
-        k = sph_bessel_kn(_l, r_max, Nk, r_min=r_min, decimate=decimate,
+        # get k bins for this l mode
+        k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         if torch_type:
             j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
         else:
             j = np.zeros((Nk, len(r)), dtype=dtype)
+        # loop over kbins and fill j matrix
         for i, _k in enumerate(k):
             if method == 'default':
                 # just j_l(kr)
                 j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
+
             elif method == 'samushia':
                 # j_l(kr) + A y_l(kr)
                 A = -jn(_l, _k * r_min) / yn(_l, _k * r_min)
@@ -612,7 +615,8 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     else:
         if method == 'default':
             import mpmath
-            zeros = [float(mpmath.besseljzero(l+.5, k) for k in range(1, Nk+1))]
+            Nmax = 2 * Nk + 1
+            zeros = [float(mpmath.besseljzero(l+.5, k) for k in range(1, Nmax))]
             k = np.array(zeros) / r_max
 
         elif method == 'samushia':
@@ -630,7 +634,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     if decimate:
         k = k[1::2]
 
-    return k
+    return k[:Nk]
 
 
 def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
