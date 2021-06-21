@@ -536,7 +536,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         # get basis function
-        j = sph_bessel_func(l, k, r, method=method, dtype=dtype, device=device)
+        j = sph_bessel_func(_l, k, r, method=method, dtype=dtype, device=device)
         jl[_l] = j
         kbins[_l] = k
 
@@ -577,13 +577,13 @@ def sph_bessel_func(l, k, r, method='default', dtype=torch.float32, device=None)
     for i, _k in enumerate(k):
         if method == 'default':
             # just j_l(kr)
-            j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
+            j_i = np.sqrt(2 / np.pi) * _k**2 * jn(l, _k * r)
 
         elif method == 'samushia':
             # j_l(kr) + A y_l(kr)
-            A = -jn(_l, _k * r_min) / yn(_l, _k * r_min)
+            A = -jn(l, _k * r_min) / yn(l, _k * r_min)
             j_i = np.sqrt(2 / np.pi) * _k**2 \
-                 * (jn(_l, _k * r) + A * yn(_l, _k * r))
+                 * (jn(l, _k * r) + A * yn(l, _k * r))
 
         elif method == 'gebhardt':
             raise NotImplementedError
