@@ -481,7 +481,7 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
                     decimate=True, dtype=torch.float32, device=None):
     """
-    Generate spherical Bessel forward model matrices k^2 j_l(kr)
+    Generate spherical Bessel forward model matrices sqrt(2/pi) k^2 j_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
 
     The inverse transformation from Fourier space (k)
@@ -537,12 +537,13 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
                           method=method, filepath=kbin_file)
         # get basis function
         j = sph_bessel_func(_l, k, r, method=method, dtype=dtype, device=device)
-        jl[_l] = j
+        jl[_l] = np.sqrt(2 / np.pi) * k**2 * j
         kbins[_l] = k
 
     return jl, kbins
 
-def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None, dtype=torch.float32, device=None):
+def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
+                    dtype=torch.float32, device=None):
     """
     Generate a spherical bessel radial basis function
 
@@ -553,15 +554,25 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None, dtype=tor
     k : array_like
         k modes [cMpc^-1]
     r : array_like
-        radial axis to sample [cMpc]
+        radial points to sample [cMpc]
     method : str, optional
-        Method for generating basis function
-        See gen_bessel2freq for details
+        Method for basis functions.
+        default : interval is 0 -> r_max, basis is
+            j_l(kr), BC is j_l(k_ln r_max) = 0
+        samushia : interval is r_min -> r_max, basis is
+            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
+            is g_nl(k r) = 0 for r_min and r_max (Samushia2019)
+        gebhardt : interval is r_min -> r_max, basis is
+            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
+            BC is potential field continuity (Gebhardt+2021)
     r_min, r_max : float, optional
         r_min and r_max of LIM survey. If None, will use
         min and max of r.
-    dtype
-    device
+    dtype : dtype, optional
+        torch or numpy dtype object that specifies
+        the data type of the output matrices
+    device : str, optional
+        Device to place matrices on, if torch dtype
 
     Returns
     -------
@@ -583,13 +594,12 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None, dtype=tor
     for i, _k in enumerate(k):
         if method == 'default':
             # just j_l(kr)
-            j_i = np.sqrt(2 / np.pi) * _k**2 * jn(l, _k * r)
+            j_i = jn(l, _k * r)
 
         elif method == 'samushia':
             # j_l(kr) + A y_l(kr)
             A = -jn(l, _k * r_min) / yn(l, _k * r_min).clip(-1e50, np.inf)
-            j_i = np.sqrt(2 / np.pi) * _k**2 \
-                 * (jn(l, _k * r) + A * yn(l, _k * r).clip(-1e50, np.inf))
+            j_i = jn(l, _k * r) + A * yn(l, _k * r).clip(-1e50, np.inf)
 
         elif method == 'gebhardt':
             raise NotImplementedError
@@ -623,12 +633,12 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
         starting at the second zero. This
         is consistent with Fourier k convention.
     method : str, optional
-        Method by which to generate k_ln spectrum.
+        Method for basis functions and for k_ln spectrum.
         default : interval is 0 -> r_max, basis is
             j_l(kr), BC is j_l(k_ln r_max) = 0
         samushia : interval is r_min -> r_max, basis is
-            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
-            and BC is g_nl(k r) = 0 for r_min and r_max
+            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
+            is g_nl(k r) = 0 for r_min and r_max (Samushia2019)
         gebhardt : interval is r_min -> r_max, basis is
             g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
             BC is potential field continuity (Gebhardt+2021)
@@ -663,7 +673,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
         elif method == 'gebhardt':
             raise NotImplementedError
 
-    # compute k and decimate if desired
+    # decimate if desired
     if decimate:
         k = k[1::2]
 
@@ -696,7 +706,6 @@ def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
     dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
     A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype, device=device).T
     return A
-
 
 
 def voigt_beam(nside, sigma, gamma):
