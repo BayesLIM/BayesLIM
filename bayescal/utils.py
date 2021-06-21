@@ -1086,11 +1086,14 @@ def get_zeros(x, y):
     roots = []
     for i in range(len(y)):
         if i == 0:
+            prev = np.sign(y[i])
             continue
-        if (np.sign(y[i]) != np.sign(y[i-1])) and np.isfinite(y[i-1]):
+        curr = np.sign(y[i])
+        if (curr != prev) and (prev != 0.0) and (curr != 0.0) and np.isfinite(prev):
             # get 3 nn points and fit quadratic for root
             nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
             roots.append(fit_zero(x[nn], y[nn]))
+            prev = curr
             
     return roots
 
