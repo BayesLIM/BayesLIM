@@ -657,7 +657,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
             dk = kmin / 500
             k_arr = dk + np.arange(0, 30000) * dk
             y = (jn(l, k_arr * r_min) * yn(l, k_arr * r_max).clip(-1e50, np.inf) \
-                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min)).clip(-1e50, np.inf) * k_arr**2
+                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
             k = get_zeros(k_arr, y)
 
         elif method == 'gebhardt':
