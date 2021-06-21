@@ -1088,9 +1088,16 @@ def get_zeros(x, y):
         if i == 0:
             prev = np.sign(y[i])
             continue
-        # prev and curr vars used to avoid nans when y jitters around abs(y) < 1e-200
+        # get current signt
         curr = np.sign(y[i])
-        if (curr != prev) and (np.abs(y[i]) > 1e-100) and (curr != 0.0) and np.isfinite(prev):
+        # check for zero crossing: abs(y) condition avoids y jitters around zero
+        if (curr != prev) and (np.abs(y[i]) > 1e-40) and (curr != 0.0) and np.isfinite(prev):
+            # check for initial divergence from zero, which is not a real root
+            if prev == 0.0:
+                # set prev to curr sign such that future crossings are counted
+                prev = curr
+                continue
+
             # get 3 nn points and fit quadratic for root
             nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
             roots.append(fit_zero(x[nn], y[nn]))
