@@ -526,48 +526,75 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     """
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
-    r_min, r_max = r.min(), r.max()
-    dr = r - r_min
     # setup dicts
     jl = {}
     kbins = {}
-    # configure 
-    torch_type = type(dtype) == torch.dtype
     if Nk is None:
         Nk = len(r) // 2 
     for _l in np.unique(l):
         # get k bins for this l mode
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
-        if torch_type:
-            j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
-        else:
-            j = np.zeros((Nk, len(r)), dtype=dtype)
-        # loop over kbins and fill j matrix
-        for i, _k in enumerate(k):
-            if method == 'default':
-                # just j_l(kr)
-                j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
-
-            elif method == 'samushia':
-                # j_l(kr) + A y_l(kr)
-                A = -jn(_l, _k * r_min) / yn(_l, _k * r_min)
-                j_i = np.sqrt(2 / np.pi) * _k**2 \
-                     * (jn(_l, _k * r) + A * yn(_l, _k * r))
-
-            elif method == 'gebhardt':
-                raise NotImplementedError
-
-            if torch_type:
-                j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
-            else:
-                j[i] = j_i
+        # get basis function
+        j = sph_bessel_func(l, k, r, method=method, dtype=dtype, device=device)
         jl[_l] = j
         kbins[_l] = k
 
     return jl, kbins
 
+def sph_bessel_func(l, k, r, method='default', dtype=torch.float32, device=None):
+    """
+    Generate a spherical bessel radial basis function
 
+    Parameters
+    ----------
+    l : int
+        Integer angular l mode
+    k : array_like
+        k modes [cMpc^-1]
+    r : array_like
+        radial axis [cMpc]
+    method : str, optional
+        Method for generating basis function
+        See gen_bessel2freq for details
+    dtype
+    device
+
+    Returns
+    -------
+    array_like
+        basis functions of shape (Nk, Nr)
+    """
+    # configure 
+    torch_type = type(dtype) == torch.dtype
+    Nk = len(k)
+    r_min, r_max = r.min(), r.max()
+    if torch_type:
+        j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
+    else:
+        j = np.zeros((Nk, len(r)), dtype=dtype)
+    # loop over kbins and fill j matrix
+    for i, _k in enumerate(k):
+        if method == 'default':
+            # just j_l(kr)
+            j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
+
+        elif method == 'samushia':
+            # j_l(kr) + A y_l(kr)
+            A = -jn(_l, _k * r_min) / yn(_l, _k * r_min)
+            j_i = np.sqrt(2 / np.pi) * _k**2 \
+                 * (jn(_l, _k * r) + A * yn(_l, _k * r))
+
+        elif method == 'gebhardt':
+            raise NotImplementedError
+
+        if torch_type:
+            j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
+        else:
+            j[i] = j_i
+
+    return j
+ 
 def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
                    method='default', filepath=None):
     """
@@ -616,7 +643,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
         if method == 'default':
             import mpmath
             Nmax = 2 * Nk + 1
-            zeros = [float(mpmath.besseljzero(l+.5, k)) for k in range(1, Nmax)]
+            zeros = [float(mpmath.besseljzero(l+.5, n)) for n in range(1, Nmax)]
             k = np.array(zeros) / r_max
 
         elif method == 'samushia':
