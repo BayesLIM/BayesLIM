@@ -542,7 +542,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
 
     return jl, kbins
 
-def sph_bessel_func(l, k, r, method='default', dtype=torch.float32, device=None):
+def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None, dtype=torch.float32, device=None):
     """
     Generate a spherical bessel radial basis function
 
@@ -553,10 +553,13 @@ def sph_bessel_func(l, k, r, method='default', dtype=torch.float32, device=None)
     k : array_like
         k modes [cMpc^-1]
     r : array_like
-        radial axis [cMpc]
+        radial axis to sample [cMpc]
     method : str, optional
         Method for generating basis function
         See gen_bessel2freq for details
+    r_min, r_max : float, optional
+        r_min and r_max of LIM survey. If None, will use
+        min and max of r.
     dtype
     device
 
@@ -568,7 +571,10 @@ def sph_bessel_func(l, k, r, method='default', dtype=torch.float32, device=None)
     # configure 
     torch_type = type(dtype) == torch.dtype
     Nk = len(k)
-    r_min, r_max = r.min(), r.max()
+    if r_min is None:
+        r_min = r.min()
+    if r_max is None:
+        r_max = r.max()
     if torch_type:
         j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
     else:
