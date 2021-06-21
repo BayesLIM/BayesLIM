@@ -543,7 +543,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         else:
             j = np.zeros((Nk, len(r)), dtype=dtype)
         for i, _k in enumerate(k):
-            if method in == 'default':
+            if method == 'default':
                 # just j_l(kr)
                 j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
             elif method == 'samushia':
