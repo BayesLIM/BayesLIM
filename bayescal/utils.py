@@ -616,7 +616,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
         if method == 'default':
             import mpmath
             Nmax = 2 * Nk + 1
-            zeros = [float(mpmath.besseljzero(l+.5, k) for k in range(1, Nmax))]
+            zeros = [float(mpmath.besseljzero(l+.5, k)) for k in range(1, Nmax)]
             k = np.array(zeros) / r_max
 
         elif method == 'samushia':
