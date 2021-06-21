@@ -4,6 +4,8 @@ Utility module
 import numpy as np
 import torch
 from scipy import special
+from scipy.special import spherical_jn as jn
+from scipy.special import spherical_yn as yn
 import copy
 import warnings
 
@@ -24,9 +26,7 @@ if not import_healpy:
     except ImportError:
         warnings.warn("could not import healpy")
 
-########################
-######### Misc #########
-########################
+
 def set_dtype(real_dtype):
     """
     Set the global torch data type.
@@ -478,8 +478,8 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     return Y
 
 
-def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
-                    dtype=torch.float32, device=None):
+def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
+                    decimate=True, dtype=torch.float32, device=None):
     """
     Generate spherical Bessel forward model matrices k^2 j_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -502,10 +502,15 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
     freqs : array_like
         Frequency array [Hz]
     cosmo : Cosmology object
+        For freq -> r [comoving Mpc] conversion
     Nk : int, optional
         Number of modes to compute, starting at smallest
+    method : str, optional
+        Method for constraining radial basis functions.
+        options=['default', 'samushia', 'gebhardt']
+        See sph_bessel_kn for details.
     decimate : bool, optional
-        Use every other j_l(z) zero as k bins.
+        Use every other j_l(z) zero as k bins (i.e. DFT convention)
     device : str, optional
         Device to push j_l(kr) to.
 
@@ -521,7 +526,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
     """
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
-    R = r.max() - r.min()
+    r_min, r_max = r.min(), r.max()
     # setup dicts
     jl = {}
     kbins = {}
@@ -531,13 +536,25 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
     if Nk is None:
         Nk = len(r) // 2 
     for _l in np.unique(l):
-        k = sph_bessel_kn(_l, R, Nk, decimate=decimate)
+        k = sph_bessel_kn(_l, r_max, Nk, r_min=r_min, decimate=decimate,
+                          method=method, filepath=kbin_file)
         if torch_type:
             j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
         else:
             j = np.zeros((Nk, len(r)), dtype=dtype)
         for i, _k in enumerate(k):
-            j_i = np.sqrt(2 / np.pi) * _k**2 * special.spherical_jn(_l, _k * dr)
+            if method in == 'default':
+                # just j_l(kr)
+                j_i = np.sqrt(2 / np.pi) * _k**2 * jn(_l, _k * r)
+            elif method == 'samushia':
+                # j_l(kr) + A y_l(kr)
+                A = -jn(_l, _k * r_min) / yn(_l, _k * r_min)
+                j_i = np.sqrt(2 / np.pi) * _k**2 \
+                     * (jn(_l, _k * r) + A * yn(_l, _k * r))
+
+            elif method == 'gebhardt':
+                raise NotImplementedError
+
             if torch_type:
                 j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
             else:
@@ -548,39 +565,72 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, decimate=True,
     return jl, kbins
 
 
-def sph_bessel_kn(l, R, Nk, decimate=True):
+def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
+                   method='default', filepath=None):
     """
-    Get spherical bessel Fourier bins
-    by referencing a lookup table for zeros
-
-    ... math::
-
-        k_{ln} = a_{ln} / R
-
-    where a_ln is the nth zero of j_l(z)
+    Get spherical bessel Fourier bins given method.
 
     Parameters
     ----------
     l : int
         Angular l mode
-    R : float
-        Survey width [Mpc]
+    r_max : float
+        Maximum survey radial extent [cMpc]
     Nk : int
         Number of k bins, starts with
         smallest modes and works up
+    r_min : float, optional
+        Survey starting boundary [cMpc]
+        only used for special method
     decimate : bool, optional
         If True, use every other zero
-        starting at second zero.
+        starting at the second zero. This
+        is consistent with Fourier k convention.
+    method : str, optional
+        Method by which to generate k_ln spectrum.
+        default : interval is 0 -> r_max, basis is
+            j_l(kr), BC is j_l(k_ln r_max) = 0
+        samushia : interval is r_min -> r_max, basis is
+            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
+            and BC is g_nl(k r) = 0 for r_min and r_max
+        gebhardt : interval is r_min -> r_max, basis is
+            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
+            BC is potential field continuity (Gebhardt+2021)
+    filepath : str, optional
+        filepath to csv of kbins [cMpc^-1] in form of
+        l, 1st zero, 2nd zero, 3rd zero, ...
+        This supercedes method if passed.
 
     Returns
     -------
     array
-        Fourier modes [1/R]
+        Fourier modes k_n = [2pi / r_n]
     """
-    zeros = np.loadtxt(DATA_PATH+'/jl_zeros.csv', delimiter=',')[l, 1:]
+    # get pre-computed k bins
+    if filepath is not None:
+        k = np.loadtxt(filepath, delimiter=',')[l, 1:]
+    else:
+        if method == 'default':
+            import mpmath
+            zeros = [float(mpmath.besseljzero(l+.5, k) for k in range(1, Nk+1))]
+            k = np.array(zeros) / r_max
+
+        elif method == 'samushia':
+            kmin = 2 * np.pi / (r_max - r_min)
+            dk = kmin / 500
+            k_arr = dk + np.arange(0, 30000) * dk
+            y = (jn(l, k_arr * r_min) * yn(l, k_arr * r_max) \
+                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min)) * k_arr**2
+            k = get_zeros(k_arr, y)
+
+        elif method == 'gebhardt':
+            raise NotImplementedError
+
+    # compute k and decimate if desired
     if decimate:
-        zeros = zeros[1::2]
-    return zeros[:Nk] / R
+        k = k[1::2]
+
+    return k
 
 
 def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
@@ -981,4 +1031,29 @@ def tensor2numpy(tensor):
     if tensor.device != 'cpu':
         tensor = tensor.cpu()
     return tensor.numpy()
+
+
+def fit_zero(x, y):
+    """fit a quadratic and solve for roots"""
+    a, b, c = np.polyfit(x, y, 2)
+    d = b**2 - 4*a*c
+    x1 = (-b + np.sqrt(d)) / (2 * a)
+    x2 = (-b - np.sqrt(d)) / (2 * a)
+    sol = x1 if np.abs(x1 - x[0]) < np.abs(x2 - x[0]) else x2
+    return sol
+
+
+def get_zeros(x, y):
+    """iterate over y and get zeros"""
+    # get roots
+    roots = []
+    for i in range(len(y)):
+        if i == 0:
+            continue
+        if np.sign(y[i]) != np.sign(y[i-1]):
+            # get 3 nn points and fit quadratic for root
+            nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
+            roots.append(fit_zero(x[nn], y[nn]))
+            
+    return roots
 
