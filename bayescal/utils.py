@@ -1087,7 +1087,7 @@ def get_zeros(x, y):
     for i in range(len(y)):
         if i == 0:
             continue
-        if (np.sign(y[i]) != np.sign(y[i-1])) and np.isfinite(y[i]):
+        if (np.sign(y[i]) != np.sign(y[i-1])) and np.isfinite(y[i-1]):
             # get 3 nn points and fit quadratic for root
             nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
             roots.append(fit_zero(x[nn], y[nn]))
