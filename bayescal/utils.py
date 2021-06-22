@@ -678,7 +678,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     if decimate:
         k = k[1::2]
 
-    return k[:Nk]
+    return np.asarray(k[:Nk])
 
 
 def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
