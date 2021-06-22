@@ -481,7 +481,7 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
                     decimate=True, dtype=torch.float32, device=None):
     """
-    Generate spherical Bessel forward model matrices sqrt(2/pi) k^2 j_l(kr)
+    Generate spherical Bessel forward model matrices sqrt(2/pi) k j_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
 
     The inverse transformation from Fourier space (k)
@@ -489,11 +489,9 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
 
     .. math::
 
-        T_{lm}(r) &= \frac{2}{\pi} \int dk k^2 j_l(k r) T_{lm}(k) \\
-        T(r,\theta,\phi) &= \frac{2}{\pi} \int dk k^2 j_l(k r)
+        T_{lm}(r) &= \frac{2}{\pi} \int dk k j_l(k r) T_{lm}(k) \\
+        T(r,\theta,\phi) &= \frac{2}{\pi} \int dk k j_l(k r)
                             T_l(k,\theta,\phi)
-
-    following convention of Liu, Zhang, & Parsons 2016
 
     Parameters
     ----------
@@ -538,7 +536,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
                           method=method, filepath=kbin_file)
         # get basis function
         j = sph_bessel_func(_l, k, r, method=method, dtype=dtype, device=device)
-        jl[_l] = np.sqrt(2 / np.pi) * k[:, None]**2 * j
+        jl[_l] = np.sqrt(2 / np.pi) * k[:, None] * j
         kbins[_l] = k
 
     return jl, kbins
@@ -611,7 +609,8 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
             j[i] = j_i
 
     return j
- 
+
+
 def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
                    method='default', filepath=None):
     """
