@@ -526,6 +526,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     """
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
+    r_max, r_min = r.max(), r.min()
     # setup dicts
     jl = {}
     kbins = {}
