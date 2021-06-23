@@ -218,6 +218,8 @@ class ArrayModel(torch.nn.Module):
             s[0] = torch.sin(zen) * torch.sin(az)  # x
             s[1] = torch.sin(zen) * torch.cos(az)  # y
             s[2] = torch.cos(zen)                  # z
+            if self.cache_s:
+                self.cache[key] = s
 
         return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
 
