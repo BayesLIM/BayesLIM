@@ -1033,6 +1033,28 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
 ######### Miscellaneous #########
 #################################
 
+def hash(zen):
+    """
+    Hash zen (normally array hash is not allowed) by
+    using its first value, last value and length
+    as a unique identifier of the array.
+    Note that if zen is a tensor, the device and
+    require_grad values will affect the hash!
+
+    Parameters
+    ----------
+    zen : ndarray or tensor
+        Zenith angle (co-latitude) [arb. units]
+
+    Returns
+    -------
+    hash object
+    """
+    return hash((float(tensor2numpy(zen[0])),
+                 float(tensor2numpy(zen[-1])),
+                 len(zen)))
+
+
 def push(tensor, device):
     """
     Push a tensor to a new device. If the tensor

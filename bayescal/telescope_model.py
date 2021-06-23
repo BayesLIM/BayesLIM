@@ -127,7 +127,8 @@ class ArrayModel(torch.nn.Module):
     """
     A model for antenna layout
     """
-    def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None):
+    def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None,
+                 cache_s=True):
         """
         A model of an interferometric array
 
@@ -151,6 +152,9 @@ class ArrayModel(torch.nn.Module):
         device : str, optional
             device to hold baseline vector and fringe term
             none is cpu.
+        cache_s : bool, optional
+            If True, cache the pointing unit vector s computation
+            in the fringe-term for each sky model zen, az combination
         """
         # init
         super().__init__()
@@ -160,6 +164,8 @@ class ArrayModel(torch.nn.Module):
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
         self.freqs = torch.as_tensor(freqs, dtype=dtype, device=device)
+        self.cache_s = cache_s
+        self.cache = {}
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
@@ -198,15 +204,20 @@ class ArrayModel(torch.nn.Module):
             Fringe response of shape (Nfreqs, Npix)
             or (Nfreqs, Nalm)
         """
-        bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
-        ## TODO: can cache fringe term if this is a bottleneck
-        zen = zen * D2R
-        az = az * D2R
-        s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
-        # az is East of North
-        s[0] = torch.sin(zen) * torch.sin(az)  # x
-        s[1] = torch.sin(zen) * torch.cos(az)  # y
-        s[2] = torch.cos(zen)                  # z
+        # check hash if present
+        key = (hash(bl), utils.hash(zen))
+        if self.cache_s and key in self.cache:
+            s = self.cache[key]
+        else:
+            # compute the pointing vector at each sky location
+            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+            zen = zen * D2R
+            az = az * D2R
+            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
+            # az is East of North
+            s[0] = torch.sin(zen) * torch.sin(az)  # x
+            s[1] = torch.sin(zen) * torch.cos(az)  # y
+            s[2] = torch.cos(zen)                  # z
 
         return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
 
