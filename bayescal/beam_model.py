@@ -281,15 +281,16 @@ class PixelResponse:
         beam = R(zen, az, freqs)
 
     where zen, az are the zenith and azimuth angles [deg]
-    to evaluate the beam, computed using bilinear interpolation
-    of the input beam map (params). The output beam has shape
-    (Npol, Npol, Nmodel, Nfreqs, Npix).
+    to evaluate the beam, computed using nearest or bilinear
+    interpolation of the input beam map (params). The output
+    beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
 
     This object also has a caching system for the weights
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, pixtype, npix, device=None):
+    def __init__(self, params, pixtype, npix, interp_mode='nearest',
+                 device=None):
         """
         Parameters
         ----------
@@ -300,6 +301,12 @@ class PixelResponse:
             will change if the input params is updated!
         pixtype : str
             Pixelization type. options = ['healpix', 'other']
+        npix : int
+            Number of sky pixels in the beam
+        interp_mode : str, optional
+            Spatial interpolation method. ['nearest', 'bilinear']
+        device : str, optional
+            Device to place object on
         """
         self.params = params
         if pixtype != 'healpix':
@@ -307,6 +314,7 @@ class PixelResponse:
         self.pixtype = pixtype
         self.npix = npix
         self.interp_cache = {}
+        self.interp_mode = interp_mode
         self.device = device
 
     def push(self, device):
@@ -359,11 +367,9 @@ class PixelResponse:
             # otherwise generate it
             if self.pixtype == 'healpix':
                 nside = utils.healpy.npix2nside(self.npix)
-                ## TODO: ensure az has the same starting convention as healpy phi
                 inds, wgts = utils.healpy.get_interp_weights(nside,
                                                              utils.tensor2numpy(zen) * D2R,
                                                              utils.tensor2numpy(az) * D2R)
-
             else:
                 raise NotImplementedError
 
@@ -379,11 +385,16 @@ class PixelResponse:
         m = m if m is not None else self.params
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
-        # select out 4-nearest neighbor indices for each zen, az
-        # recall beam is (Npol, Npol, Nmodel, Nfreqs, Npix)
-        nearest = m[:, :, :, :, inds.T]
-        # multiply by weights and sum
-        return torch.sum(nearest * wgts.T, axis=-1)
+        if self.interp_mode == 'nearest':
+            # use nearest neighbor
+            inds = torch.argmax(wgts, axis=0)
+            return m[:, :, :, :, inds]
+        elif self.interp_mode == 'bilinear':
+            # select out 4-nearest neighbor indices for each zen, az
+            # recall beam is (Npol, Npol, Nmodel, Nfreqs, Npix)
+            nearest = m[:, :, :, :, inds.T]
+            # multiply by weights and sum
+            return torch.sum(nearest * wgts.T, axis=-1)
 
     def __call__(self, zen, az, *args):
         return self._interp(zen, az)
