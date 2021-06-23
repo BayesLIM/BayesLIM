@@ -1033,7 +1033,7 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
 ######### Miscellaneous #########
 #################################
 
-def hash(zen):
+def zen_hash(zen):
     """
     Hash zen (normally array hash is not allowed) by
     using its first value, last value and length
@@ -1093,12 +1093,12 @@ def tensor2numpy(tensor):
     ndarray
         The tensor as an ndarray on cpu
     """
-    if isinstance(tensor, np.ndarray):
-        return tensor
-    tensor = tensor.detach()
-    if tensor.device != 'cpu':
-        tensor = tensor.cpu()
-    return tensor.numpy()
+    if isinstance(tensor, torch.Tensor):
+        tensor = tensor.detach()
+        if tensor.device != 'cpu':
+            tensor = tensor.cpu()
+        return tensor.numpy()
+    return tensor
 
 
 def fit_zero(x, y):

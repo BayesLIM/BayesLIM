@@ -330,10 +330,7 @@ class PixelResponse:
         -------
         hash object
         """
-        return utils.hash(zen)
-        return hash((float(utils.tensor2numpy(zen[0])),
-                     float(utils.tensor2numpy(zen[-1])),
-                     len(zen)))
+        return utils.zen_hash(zen)
 
     def get_interp(self, zen, az):
         """
