@@ -355,7 +355,8 @@ class PixelModelResponse:
     """
     def __init__(self, theta, phi, freqs, spatial_mode='direct', freq_mode='direct',
                  device=None, transform_order=0, dtype=torch.float32,
-                 lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None):
+                 lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None,
+                 method='samushia', kbin_file=None):
         """
         Parameters
         ----------
@@ -381,6 +382,11 @@ class PixelModelResponse:
             The wavevector bins used in the spherical bessel transform
         cosmo : Cosmology object
             Cosmology object for computing conversions
+        method : str, optional
+            If freq_mode is 'bessel', this is the radial basis method
+        kbin_file : str, optional
+            If freq_mode is 'bessel', this is a filepath to a csv of
+            pre-computed k_ln bins.
         """
         self.theta, self.phi = theta, phi
         self.freqs = freqs
@@ -396,6 +402,8 @@ class PixelModelResponse:
         self.decimate = decimate
         self.cosmo = cosmo
         self.dtype = dtype
+        self.method = method
+        self.kbin_file = kbin_file
 
         # freq setup
         self.A, self.j = None, None
@@ -408,7 +416,8 @@ class PixelModelResponse:
             self.dr = self.r = self.r.min()
             jl, kbins = utils.gen_bessel2freq(self.l, freqs, cosmo,
                                               Nk=Nk, decimate=decimate,
-                                              device=device, dtype=dtype)
+                                              device=device, dtype=dtype,
+                                              method=method, kbin_file=kbin_file)
             self.jl = jl[list(jl.keys())[0]]
             self.kbins = kbins[list(kbins.keys())[0]]
 
@@ -645,8 +654,10 @@ def parse_catalogue(catfile, parameter=False):
     with open(catfile) as f:
         d = yaml.load(d, Loader=yaml.FullLoader)
 
-    R  = PointSourceResponse(d['freqs'], mode=f['mode'])
+    raise NotImplementedError
+    """
+    R = PointSourceResponse(d['freqs'], mode=f['mode'])
     S = PointSoureModel(params, angs, freqs, R=R, parameter=parameter)
-
+    """
     return S
 
