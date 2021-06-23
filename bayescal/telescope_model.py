@@ -210,7 +210,6 @@ class ArrayModel(torch.nn.Module):
             s = self.cache[key]
         else:
             # compute the pointing vector at each sky location
-            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
             zen = zen * D2R
             az = az * D2R
             s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
@@ -220,6 +219,9 @@ class ArrayModel(torch.nn.Module):
             s[2] = torch.cos(zen)                  # z
             if self.cache_s:
                 self.cache[key] = s
+
+        # get bl_vec
+        bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
 
         return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
 
