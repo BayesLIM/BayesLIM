@@ -135,7 +135,10 @@ class PixelBeam(torch.nn.Module):
             truncated zen and az tensors
         """
         # enact fov cut
-        cut = zen < self.fov / 2
+        if self.fov < 360:
+            cut = zen < self.fov / 2
+        else:
+            cut = slice(None)
         zen, az = zen[cut], az[cut]
 
         # get beam
