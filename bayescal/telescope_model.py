@@ -205,7 +205,7 @@ class ArrayModel(torch.nn.Module):
             or (Nfreqs, Nalm)
         """
         # check hash if present
-        key = (hash(bl), utils.hash(zen))
+        key = (hash(bl), utils.zen_hash(zen))
         if self.cache_s and key in self.cache:
             s = self.cache[key]
         else:
