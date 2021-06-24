@@ -128,7 +128,7 @@ class ArrayModel(PixInterp, torch.nn.Module):
     A model for antenna layout
     """
     def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None,
-                 cache_s=True, cache_f=False, cache_f_angs=None):
+                 cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest'):
         """
         A model of an interferometric array
 
@@ -164,6 +164,8 @@ class ArrayModel(PixInterp, torch.nn.Module):
         cache_f_angs : tensor, optional
             If cache_f, these are the sky angles (zen, az, [deg]) to
             evaluate the fringe at and then cache.
+        interp_mode : str, optional
+            If cache_f, this is the interpolation mode ['nearest', 'bilinear']
         """
         # init
         super(PixInterp, self).__init__()
