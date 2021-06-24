@@ -1029,6 +1029,102 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     return theta, phi, nsides, total_nsides
 
 
+class PixInterp:
+    """
+    Sky pixel spatial interpolation object
+    """
+    def __init__(self, pixtype, npix, interp_mode='nearest',
+                 dtype=torch.float32, device=None):
+        """
+        Parameters
+        ----------
+        pixtype : str
+            Pixelization type. options = ['healpix', 'other']
+        npix : int
+            Number of sky pixels in the beam
+        interp_mode : str, optional
+            Spatial interpolation method. ['nearest', 'bilinear']
+        dtype : torch dtype, optional
+            Data type to store weights as
+        device : str, optional
+            Device to place object on
+        """
+        if pixtype != 'healpix':
+            raise NotImplementedError("only supports healpix pixelization currently")
+        self.pixtype = pixtype
+        self.npix = npix
+        self.interp_cache = {}
+        self.interp_mode = interp_mode
+        self.dtype = dtype
+        self.device = device
+
+    def get_interp(self, zen, az):
+        """
+        Get bilinear or nearest interpolation
+
+        Parameters
+        ----------
+        zen, az : zenith and azimuth angles [deg]
+
+        Returns
+        -------
+        interp : tuple
+            4 (1) nearest neighbor (indices, weights)
+            for each entry in zen, az for bilinear (nearest)
+            mode
+        """
+        # get hash
+        h = zen_hash(zen)
+        if h in self.interp_cache:
+            # get interpolation if present
+            interp = self.interp_cache[h]
+        else:
+            # otherwise generate it
+            if self.pixtype == 'healpix':
+                # get indices and weights for bilinear interpolation
+                nside = healpy.npix2nside(self.npix)
+                inds, wgts = healpy.get_interp_weights(nside,
+                                                       tensor2numpy(zen) * D2R,
+                                                       tensor2numpy(az) * D2R)
+                # down select if using nearest interpolation
+                if self.interp_mode == 'nearest':
+                    wmax = np.argmax(wgts, axis=0)
+                    inds = np.array([inds[wi, i] for i, wi in enumerate(wmax)])
+
+            else:
+                raise NotImplementedError
+
+            # store it
+            interp = (torch.as_tensor(inds, device=self.device),
+                      torch.as_tensor(wgts, dtype=self.dtype, device=self.device))
+            self.interp_cache[h] = interp
+
+        return interp
+
+    def interp(self, m, zen, az):
+        """
+        Interpolate a healpix map m at zen, az points
+
+        Parameters
+        ----------
+        m : array_like or tensor
+            healpix map to interpolate
+        zen, az : array_like or tensor
+            Zenith angle (colatittude) and azimuth [deg]
+            points at which to interpolate map
+        """
+        # get interpolation indices and weights
+        inds, wgts = self.get_interp(zen, az)
+        if self.interp_mode == 'nearest':
+            # use nearest neighbor
+            return m[..., inds]
+        elif self.interp_mode == 'bilinear':
+            # select out 4-nearest neighbor indices for each zen, az
+            nearest = m[..., inds.T]
+            # multiply by weights and sum
+            return torch.sum(nearest * wgts.T, axis=-1)
+
+
 #################################
 ######### Miscellaneous #########
 #################################

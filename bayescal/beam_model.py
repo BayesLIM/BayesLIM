@@ -271,7 +271,7 @@ class AlmBeam(torch.nn.Module):
         raise NotImplementedError
 
 
-class PixelResponse:
+class PixelResponse(PixInterp):
     """
     Pixelized representation for PixelBeam.
 
@@ -308,14 +308,9 @@ class PixelResponse:
         device : str, optional
             Device to place object on
         """
+        super().__init__(pixtype, npix, interp_mode=interp_mode,
+                         dtype=params.dtype, device=device)
         self.params = params
-        if pixtype != 'healpix':
-            raise NotImplementedError("only supports healpix pixelization currently")
-        self.pixtype = pixtype
-        self.npix = npix
-        self.interp_cache = {}
-        self.interp_mode = interp_mode
-        self.device = device
 
     def push(self, device):
         """push params and other attrs to device"""
@@ -324,80 +319,8 @@ class PixelResponse:
         for k, interp in self.interp_cache.items():
             self.interp_cache[k] = (interp[0], interp[1].to(device))
 
-    def hash(self, zen):
-        """
-        Hash zen (normally array hash is not allowed) by
-        using its first value, last value and length
-        as a unique identifier of the array.
-        Note that if zen is a tensor, the device and
-        require_grad values will affect the hash!
-
-        Parameters
-        ----------
-        zen : ndarray or tensor
-            Zenith angle (co-latitude) [arb. units]
-        
-        Returns
-        -------
-        hash object
-        """
-        return utils.zen_hash(zen)
-
-    def get_interp(self, zen, az):
-        """
-        Get bilinear interpolation: nearest neighbor indicies
-        and weights.
-
-        Parameters
-        ----------
-        zen, az : zenith and azimuth angles [deg]
-
-        Returns
-        -------
-        interp : tuple
-            4 nearest neighbor (indices, weights)
-            for each entry in zen, az, indexing self.params
-        """
-        # get hash
-        h = self.hash(zen)
-        if h in self.interp_cache:
-            # get interpolation if present
-            interp = self.interp_cache[h]
-        else:
-            # otherwise generate it
-            if self.pixtype == 'healpix':
-                nside = utils.healpy.npix2nside(self.npix)
-                inds, wgts = utils.healpy.get_interp_weights(nside,
-                                                             utils.tensor2numpy(zen) * D2R,
-                                                             utils.tensor2numpy(az) * D2R)
-            else:
-                raise NotImplementedError
-
-            # store it
-            interp = (torch.as_tensor(inds, device=self.device),
-                      torch.as_tensor(wgts, dtype=self.params.dtype, device=self.device))
-            self.interp_cache[h] = interp
-
-        return interp
-
-    def _interp(self, zen, az, m=None):
-        # get interpolating map
-        m = m if m is not None else self.params
-        # get interpolation indices and weights
-        inds, wgts = self.get_interp(zen, az)
-        if self.interp_mode == 'nearest':
-            # use nearest neighbor
-            inds = torch.argmax(wgts, axis=0)
-            return m[:, :, :, :, inds]
-        elif self.interp_mode == 'bilinear':
-            # select out 4-nearest neighbor indices for each zen, az
-            # recall beam is (Npol, Npol, Nmodel, Nfreqs, Npix)
-            nearest = m[:, :, :, :, inds.T]
-            # multiply by weights and sum
-            return torch.sum(nearest * wgts.T, axis=-1)
-
     def __call__(self, zen, az, *args):
-        return self._interp(zen, az)
+        return self._interp(self.params, zen, az)
 
 
 class GaussResponse:
@@ -519,7 +442,7 @@ class YlmResponse(PixelResponse):
             (Nangle, Ncoeff)
         """
         # get hash
-        h = self.hash(zen)
+        h = utils.zen_hash(zen)
         if h in self.Ylm_cache:
             Ylm = self.Ylm_cache[h]
         else:

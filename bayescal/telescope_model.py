@@ -123,12 +123,12 @@ class TelescopeModel:
             self.conv_cache[key] = angs.to(device)
 
 
-class ArrayModel(torch.nn.Module):
+class ArrayModel(PixInterp, torch.nn.Module):
     """
     A model for antenna layout
     """
     def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None,
-                 cache_s=True):
+                 cache_s=True, cache_f=False, cache_f_angs=None):
         """
         A model of an interferometric array
 
@@ -154,21 +154,36 @@ class ArrayModel(torch.nn.Module):
             none is cpu.
         cache_s : bool, optional
             If True, cache the pointing unit vector s computation
-            in the fringe-term for each sky model zen, az combination
+            in the fringe-term for each sky model zen, az combination,
+            but re-compute the fringe for each gen_fringe() call.
+            If cache_f then cache_s is ignored.
+        cache_f : bool, optional
+            Cache the fringe response, shape (Nfreqs, Npix),
+            for each baseline. Repeated calls to gen_fringe()
+            for the same baseline interpolate the cached fringe.
+        cache_f_angs : tensor, optional
+            If cache_f, these are the sky angles (zen, az, [deg]) to
+            evaluate the fringe at and then cache.
         """
         # init
-        super().__init__()
+        super(PixInterp, self).__init__()
+        super().__init__('healpix', cache_f_angs.shape[-1],
+                         interp_mode=interp_mode, dtype=dtype, device=device)
         # set location metadata
-        self.dtype = dtype
-        self.device = device
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
         self.freqs = torch.as_tensor(freqs, dtype=dtype, device=device)
         self.cache_s = cache_s
+        self.cache_f = cache_f
+        self.cache_f_angs = cache_f_angs
         self.cache = {}
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
+
+        # TODO: organize baseline by length and orientation
+        # b/c same-len baselines can have shared fringe cache
+        # after applying an az-rotation
 
     def get_antpos(self, ant):
         """
@@ -204,11 +219,17 @@ class ArrayModel(torch.nn.Module):
             Fringe response of shape (Nfreqs, Npix)
             or (Nfreqs, Nalm)
         """
-        # check hash if present
-        key = (hash(bl), utils.zen_hash(zen))
-        if self.cache_s and key in self.cache:
-            s = self.cache[key]
-        else:
+        s_h = (hash(bl), utils.zen_hash(zen))
+        f_h = hash(bl)
+
+        # check for fringe caching
+        if self.cache_f and f_h not in self.cache:
+            # first generate fringe given cache_f_angs
+            self.gen_fringe(bl, *self.cache_f_angs)
+
+        # check for pointing-vec s caching
+        compute_s = s_h not in self.cache and f_h not in self.cache
+        if compute_s:
             # compute the pointing vector at each sky location
             zen = zen * D2R
             az = az * D2R
@@ -217,13 +238,21 @@ class ArrayModel(torch.nn.Module):
             s[0] = torch.sin(zen) * torch.sin(az)  # x
             s[1] = torch.sin(zen) * torch.cos(az)  # y
             s[2] = torch.cos(zen)                  # z
-            if self.cache_s:
-                self.cache[key] = s
+        elif self.cache_s:
+            s = self.cache[s_h]
 
-        # get bl_vec
-        bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+        # check for fringe caching
+        compute_f = f_h not in self.cache
+        if compute_f:
+            # get bl_vec
+            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+            f = torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
+        elif self.cache_f:
+            f =  self.cache[f_h]
+            # interpolate
+            f = self.interp(f, zen, az)
 
-        return torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
+        return f
 
     def apply_fringe(self, fringe, sky, kind):
         """
