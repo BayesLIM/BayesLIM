@@ -169,8 +169,9 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         """
         # init
         super(utils.PixInterp, self).__init__()
-        super().__init__('healpix', cache_f_angs.shape[-1],
-                         interp_mode=interp_mode, dtype=dtype, device=device)
+        npix = cache_f_angs.shape[-1] if cache_f else None
+        super().__init__('healpix', npix, interp_mode=interp_mode,
+                         dtype=dtype, device=device)
         # set location metadata
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
