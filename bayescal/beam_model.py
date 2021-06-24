@@ -271,7 +271,7 @@ class AlmBeam(torch.nn.Module):
         raise NotImplementedError
 
 
-class PixelResponse(PixInterp):
+class PixelResponse(utils.PixInterp):
     """
     Pixelized representation for PixelBeam.
 
@@ -320,7 +320,7 @@ class PixelResponse(PixInterp):
             self.interp_cache[k] = (interp[0], interp[1].to(device))
 
     def __call__(self, zen, az, *args):
-        return self._interp(self.params, zen, az)
+        return self.interp(self.params, zen, az)
 
 
 class GaussResponse:
@@ -518,7 +518,7 @@ class YlmResponse(PixelResponse):
                 self.set_beam(beam, int_zen, int_az, freqs)
 
             # interpolate the beam at the desired locations
-            beam = self._interp(zen, az, self.beam_cache['beam'])
+            beam = self.interp(self.beam_cache['beam'], zen, az)
 
         return beam
 

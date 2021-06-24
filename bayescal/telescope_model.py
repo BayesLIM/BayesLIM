@@ -123,7 +123,7 @@ class TelescopeModel:
             self.conv_cache[key] = angs.to(device)
 
 
-class ArrayModel(PixInterp, torch.nn.Module):
+class ArrayModel(utils.PixInterp, torch.nn.Module):
     """
     A model for antenna layout
     """
