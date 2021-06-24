@@ -168,7 +168,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             If cache_f, this is the interpolation mode ['nearest', 'bilinear']
         """
         # init
-        super(PixInterp, self).__init__()
+        super(utils.PixInterp, self).__init__()
         super().__init__('healpix', cache_f_angs.shape[-1],
                          interp_mode=interp_mode, dtype=dtype, device=device)
         # set location metadata
