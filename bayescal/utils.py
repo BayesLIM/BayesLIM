@@ -1088,8 +1088,9 @@ class PixInterp:
                                                        tensor2numpy(az) * D2R)
                 # down select if using nearest interpolation
                 if self.interp_mode == 'nearest':
-                    wmax = np.argmax(wgts, axis=0)
-                    inds = np.array([inds[wi, i] for i, wi in enumerate(wmax)])
+                    wgts = np.argmax(wgts, axis=0)
+                    inds = np.array([inds[wi, i] for i, wi in enumerate(wgts)])
+                    wgts = 1.0
 
             else:
                 raise NotImplementedError
