@@ -159,10 +159,13 @@ def diag_matmul(a, b):
     Multiply two diagonal 1x1 or 2x2 matrices manually.
     This is generally faster than matmul or einsum
     for large, high dimensional stacks of 2x2 matrices.
+    This drops the off-diagonal components of a and b.
 
-    !! Note: this ignores the off-diagonal for 2x2 matrices !!
+    !! Note: this specifically ignores the off-diagonal for 2x2 matrices !!
     If you need off-diagonal components, you are
     better off using torch.matmul or torch.einsum directly.
+    If you know off-diagonals are zero and are static, you can
+    just use element-wise multiplication a * b.
 
     Parameters
     ----------
@@ -181,7 +184,7 @@ def diag_matmul(a, b):
         # 2x2
         c = torch.zeros_like(a)
         c[0, 0] = a[0, 0] * b[0, 0]
-        c[1, 1] - a[1, 1] * b[1, 1]
+        c[1, 1] = a[1, 1] * b[1, 1]
         return c
     else:
         raise ValueError("only 1x1 or 2x2 tensors")

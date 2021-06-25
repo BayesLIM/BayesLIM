@@ -554,14 +554,16 @@ class RIME(torch.nn.Module):
         beam1 = ant_beams[:, :, self.ant2model[ant1]]
         beam2 = ant_beams[:, :, self.ant2model[ant2]]
 
-        # apply beam to sky
-        psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
-
         # generate fringe
         fringe = self.array.gen_fringe((ant1, ant2), zen, az)
 
-        # apply fringe
-        psky = self.array.apply_fringe(fringe, psky, kind)
+        # apply fringe to beam1
+        # note: this is done to reduces memory footprint for autograd
+        # also, this is possible b/c fringe term is a scalar matrix
+        beam1 = self.array.apply_fringe(fringe, beam1, kind)
+
+        # apply beam-weighted fringe to sky
+        psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # sum across sky
         sky_vis[:, :, bl_ind, obs_ind, :] = torch.sum(psky, axis=-1)
