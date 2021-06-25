@@ -301,7 +301,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
     def _fringe(self, bl, zen, az):
         """compute fringe term"""
         # check for pointing-vec s caching
-        s_h = utils.zen_hash(zen)
+        s_h = utils.ang_hash(zen), utils.ang_hash(az)
         if s_h not in self.cache and bl not in self.cache:
             # compute the pointing vector at each sky location
             zen = zen * D2R

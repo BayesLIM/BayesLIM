@@ -1074,7 +1074,7 @@ class PixInterp:
             mode
         """
         # get hash
-        h = zen_hash(zen)
+        h = ang_hash(zen), ang_hash(az)
         if h in self.interp_cache:
             # get interpolation if present
             interp = self.interp_cache[h]
@@ -1129,18 +1129,19 @@ class PixInterp:
 ######### Miscellaneous #########
 #################################
 
-def zen_hash(zen):
+def ang_hash(zen):
     """
-    Hash zen (normally array hash is not allowed) by
-    using its first value, last value and length
-    as a unique identifier of the array.
+    Hash sky angle (e.g. zen) by using its
+    first value, last value and length as a
+    unique identifier of the array.
     Note that if zen is a tensor, the device and
     require_grad values will affect the hash!
+    Also note, normally array hash is not allowed.
 
     Parameters
     ----------
     zen : ndarray or tensor
-        Zenith angle (co-latitude) [arb. units]
+        sky angle [arb. units]
 
     Returns
     -------

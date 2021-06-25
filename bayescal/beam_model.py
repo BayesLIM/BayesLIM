@@ -442,7 +442,7 @@ class YlmResponse(PixelResponse):
             (Nangle, Ncoeff)
         """
         # get hash
-        h = utils.zen_hash(zen)
+        h = utils.ang_hash(zen)
         if h in self.Ylm_cache:
             Ylm = self.Ylm_cache[h]
         else:
