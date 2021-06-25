@@ -213,8 +213,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             # iterate over bls
             k = 0
             for bl in bls:
-                blvec = bayescal.utils.tensor2numpy(self.antpos[bl[1]] - self.antpos[bl[0]])
-                print(bl, blvec)
+                blvec = utils.tensor2numpy(self.antpos[bl[1]] - self.antpos[bl[0]])
                 # check if this is a unique bl
                 rgroup = None
                 for i, blv in enumerate(rvec):
