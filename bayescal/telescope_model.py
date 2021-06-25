@@ -7,6 +7,7 @@ from astropy import units, time, constants
 from astropy.coordinates import AltAz, EarthLocation, ICRS
 from scipy import special
 import copy
+import itertools
 
 from . import utils, beam_model
 
@@ -126,9 +127,16 @@ class TelescopeModel:
 class ArrayModel(utils.PixInterp, torch.nn.Module):
     """
     A model for antenna layout
+
+    Two kinds of caching are allowed
+    1. caching the unit pointing s vector
+        This recomputes the fringes exactly
+    2. caching the fringe on the sky
+        This interpolates an existing fringe
     """
     def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None,
-                 cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest'):
+                 cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest',
+                 redtol=0.1):
         """
         A model of an interferometric array
 
@@ -160,12 +168,19 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         cache_f : bool, optional
             Cache the fringe response, shape (Nfreqs, Npix),
             for each baseline. Repeated calls to gen_fringe()
-            for the same baseline interpolate the cached fringe.
+            for the same baseline interpolates the cached fringe.
+            This only saves time and memory (if autodiff) if Ntimes >> 1.
         cache_f_angs : tensor, optional
             If cache_f, these are the sky angles (zen, az, [deg]) to
             evaluate the fringe at and then cache.
         interp_mode : str, optional
             If cache_f, this is the interpolation mode ['nearest', 'bilinear']
+        build_reds : bool, optional
+            Build library of baseline redundancies given antpos. Only 
+            if parameter = False
+        redtol : float, optional
+            If parameter is False, then redundant baseline groups
+            are built. This is the bl vector redundancy tolerance [m]
         """
         # init
         super(utils.PixInterp, self).__init__()
@@ -176,17 +191,67 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
         self.freqs = torch.as_tensor(freqs, dtype=dtype, device=device)
-        self.cache_s = cache_s
+        self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
         self.cache = {}
+        self.parameter = parameter
+        self.redtol = redtol
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
 
-        # TODO: organize baseline by length and orientation
-        # b/c same-len baselines can have shared fringe cache
-        # after applying an az-rotation
+        # TODO: enable clearing of fringe cache if parameter is True
+        if cache_f:
+            assert parameter is False, "fringe caching not yet implemented for parameter = True"
+
+        if parameter is False:
+            # build redundancies
+            bls = [(a, a) for a in self.ants] + list(itertools.combinations(self.ants, 2))
+            # red-bl list, red-bl vec, bl to redgroup index, iso-length groups
+            reds, rvec, bl2red, lengroups = [], [], {}, []
+            # iterate over bls
+            k = 0
+            for bl in bls:
+                blvec = bayescal.utils.tensor2numpy(self.antpos[bl[1]] - self.antpos[bl[0]])
+                print(bl, blvec)
+                # check if this is a unique bl
+                rgroup = None
+                for i, blv in enumerate(rvec):
+                    if np.linalg.norm(blv - blvec) < redtol:
+                        rgroup = i
+                    elif np.linalg.norm(blv + blvec) < redtol:
+                        rgroup = i
+                if rgroup is None:
+                    # this a unique group, append to lists
+                    reds.append([bl])
+                    rvec.append(blvec)
+                    bl2red[bl] = k
+                    k += 1
+                else:
+                    # this falls into an existing redundant group
+                    bl = (bl[1], bl[0]) if conj else bl
+                    reds[rgroup].append(bl)
+                    bl2red[bl] = i
+
+            # solve for red group attributes
+            lens, angs, tags = [], [], []
+            for i, rg in enumerate(reds):
+                # get length [m]
+                bllen = np.linalg.norm(rvec[i])
+                # get angle [deg]
+                blang = np.arctan2(*rvec[i][:2][::-1]) * 180 / np.pi
+                # ensure angle is purely positive
+                if rvec[i][1] < 0: blang += 180
+                # if its close to 180 deg within redtol set it to zero
+                if np.abs(rvec[i][1]) < redtol: blang = 0
+                lens.append(bllen)
+                angs.append(blang)
+                # create tag
+                tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
+
+            self.reds, self.redvec, self.bl2red, self.bls = reds, rvec, bl2red, bls
+            self.redlens, self.redangs, self.redtags = lens, angs, tags
 
     def get_antpos(self, ant):
         """
@@ -199,16 +264,82 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         """
         return self.antpos[self.ants.index(ant)]
 
+    def match_bl_len(self, bl, bls):
+        """
+        Given a baseline and a list of baselines,
+        figure out if any bls match bl in length
+        within redtol. If so return the angle
+        from bl to the bls match [deg], otherwise False.
+        Note all baselines must appear in self.bls.
+
+        Parameter
+        ---------
+        bl : tuple
+            Antenna pair, e.g. (1, 2)
+        bls : list
+            List of ant-pairs, e.g. [(1, 2), (3, 5), ...]
+
+        Returns
+        -------
+        float
+            Angle from bl to match in bls [deg]
+        bool or tuple
+            bl tuple if match, else False
+        """
+        assert not self.parameter, "parameter must be False"
+        match = False
+        ang = 0
+        bllen = self.redlens[self.bl2red[bl]]
+        blang = self.redangs[self.bl2red[bl]]
+        for _bl in bls:
+            i = self.bl2red[_bl]
+            l, a = self.redlens[i], self.redangs[i]
+            if np.isclose(bllen, l, atol=self.redtol):
+                ang = a - blang
+                match = _bl
+                break
+
+        return ang, match
+
+    def _fringe(self, bl, zen, az):
+        """compute fringe term"""
+        # check for pointing-vec s caching
+        s_h = utils.zen_hash(zen)
+        if s_h not in self.cache and bl not in self.cache:
+            # compute the pointing vector at each sky location
+            zen = zen * D2R
+            az = az * D2R
+            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
+            # az is East of North
+            s[0] = torch.sin(zen) * torch.sin(az)  # x
+            s[1] = torch.sin(zen) * torch.cos(az)  # y
+            s[2] = torch.cos(zen)                  # z
+        elif self.cache_s:
+            s = self.cache[s_h]
+
+        # check for fringe caching
+        if bl not in self.cache:
+            # get bl_vec
+            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
+            f = torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
+            if self.cache_f:
+                self.cache[bl] = f
+        else:
+            # interpolate cached fringe
+            f = self.interp(self.cache[bl], zen, az)
+
+        return f
+
     def gen_fringe(self, bl, zen, az):
         """
-        Compute a fringe term given a representation kind
-        and an antenna pair (baseline).
+        Generate a fringe-response given a baseline and
+        collection of sky angles
 
         Parameters
         ----------
         bl : 2-tuple
             Baseline tuple, specifying the participating
-            antennas from self.ants
+            antennas from self.ants, e.g. (1, 2)
         zen : tensor
             Zenith angle [degrees] of shape (Npix,).
             Used of kind of 'pixel' or 'point'
@@ -222,40 +353,20 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             Fringe response of shape (Nfreqs, Npix)
             or (Nfreqs, Nalm)
         """
-        s_h = (hash(bl), utils.zen_hash(zen))
-        f_h = hash(bl)
+        # do checks for fringe caching
+        if self.cache_f:
+            # first figure out if a bl with same len is cached
+            if not self.parameter:
+                ang, match = self.match_bl_len(bl, self.cache.keys())
+                if match:
+                    bl = match
+                    az = (az + ang) % 360
 
-        # check for fringe caching
-        if self.cache_f and f_h not in self.cache:
-            # first generate fringe given cache_f_angs
-            self.gen_fringe(bl, *self.cache_f_angs)
+            # if no cache for this bl, first generate it
+            if bl not in self.cache:
+                self._fringe(bl, *self.cache_f_angs)
 
-        # check for pointing-vec s caching
-        compute_s = s_h not in self.cache and f_h not in self.cache
-        if compute_s:
-            # compute the pointing vector at each sky location
-            zen = zen * D2R
-            az = az * D2R
-            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
-            # az is East of North
-            s[0] = torch.sin(zen) * torch.sin(az)  # x
-            s[1] = torch.sin(zen) * torch.cos(az)  # y
-            s[2] = torch.cos(zen)                  # z
-        elif self.cache_s:
-            s = self.cache[s_h]
-
-        # check for fringe caching
-        compute_f = f_h not in self.cache
-        if compute_f:
-            # get bl_vec
-            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
-            f = torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
-        elif self.cache_f:
-            f =  self.cache[f_h]
-            # interpolate
-            f = self.interp(f, zen, az)
-
-        return f
+        return self._fringe(bl, zen, az)
 
     def apply_fringe(self, fringe, sky, kind):
         """
