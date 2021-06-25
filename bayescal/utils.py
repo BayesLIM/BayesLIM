@@ -1091,7 +1091,6 @@ class PixInterp:
                     wgts = np.argmax(wgts, axis=0)
                     inds = np.array([inds[wi, i] for i, wi in enumerate(wgts)])
                     wgts = 1.0
-
             else:
                 raise NotImplementedError
 

@@ -545,6 +545,7 @@ class RIME(torch.nn.Module):
 
         return vis
 
+    @torch.script.jit
     def _prod_and_sum(self, beam, ant_beams, cut_sky, ant1, ant2,
                       kind, zen, az, sky_vis, bl_ind, obs_ind):
         """
