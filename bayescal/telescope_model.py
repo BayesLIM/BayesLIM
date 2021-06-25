@@ -217,9 +217,8 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
                 # check if this is a unique bl
                 rgroup = None
                 for i, blv in enumerate(rvec):
+                    ## TODO: handle conjugated baselines
                     if np.linalg.norm(blv - blvec) < redtol:
-                        rgroup = i
-                    elif np.linalg.norm(blv + blvec) < redtol:
                         rgroup = i
                 if rgroup is None:
                     # this a unique group, append to lists
@@ -229,7 +228,6 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
                     k += 1
                 else:
                     # this falls into an existing redundant group
-                    bl = (bl[1], bl[0]) if conj else bl
                     reds[rgroup].append(bl)
                     bl2red[bl] = i
 
