@@ -377,7 +377,7 @@ class YlmResponse(PixelResponse):
 
     """ 
     def __init__(self, params, l, m, mode='generate', interp_angs=None,
-                 powerbeam=True, dtype=torch.complex64, device=None):
+                 powerbeam=True, freq_mode='channel', dtype=torch.complex64, device=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -406,6 +406,8 @@ class YlmResponse(PixelResponse):
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
             beam is complex antenna farfield beam.
+        freq_mode : str, optional
+            Frequency parameterization ['channel', 'poly']
 
         Notes
         -----
@@ -424,6 +426,7 @@ class YlmResponse(PixelResponse):
         self.device = device
         self.interp_angs = interp_angs
         self.beam_cache = None
+        self.freq_mode = freq_mode
 
     def get_Ylm(self, zen, az):
         """
@@ -467,8 +470,8 @@ class YlmResponse(PixelResponse):
     def forward(self, zen, az, freqs):
         """
         Perform the mapping from a_lm to pixel
-        space, including the polynomial frequency response
-        for multi-channel params.
+        space, in addition to possible transformation
+        over frequency.
 
         Parameters
         ----------
@@ -483,12 +486,15 @@ class YlmResponse(PixelResponse):
             pixelized beam on the sky
             of shape (Npol, Npol, Nmodel, Nfreqs, Npix)
         """
-        # get polynomial A matrix wrt freq
-        Ndeg = self.params.shape[3]
-        A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype, device=self.device)
+        if self.freq_mode == 'channel':
+            p = self.params
+        elif self.freq_mode == 'poly':
+            # get polynomial A matrix wrt freq
+            Ndeg = self.params.shape[3]
+            A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype, device=self.device)
 
-        # first do fast dot product along Ndeg axis
-        p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)
+            # first do fast dot product along Ndeg axis
+            p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)
 
         # generate Y matrix
         Ylm = self.get_Ylm(zen, az)

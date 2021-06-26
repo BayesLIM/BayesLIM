@@ -190,7 +190,7 @@ class PointSourceResponse:
     Frequency parameterization of point sources at
     fixed locations but variable flux wrt frequency
     options include
-        - direct : vary all frequency channels
+        - channel : vary all frequency channels
         - poly : fit a low-order polynomial across freqs
         - powerlaw : fit an amplitude and exponent across freqs
     """
@@ -204,9 +204,9 @@ class PointSourceResponse:
         freqs : tensor
             Frequency array [Hz]
         mode : str, optional
-            options = ['direct', 'poly', 'powerlaw']
+            options = ['channel', 'poly', 'powerlaw']
             Frequency parameterization mode. Choose between
-            direct - each frequency is a parameter
+            channel - each frequency is a parameter
             poly - polynomial basis of Ndeg
             powerlaw - amplitude and powerlaw basis anchored at f0
         f0 : float, optional
@@ -235,7 +235,7 @@ class PointSourceResponse:
             self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=device)
 
     def __call__(self, params):
-        if self.mode == 'direct':
+        if self.mode == 'channel':
             return params
         elif self.mode == 'poly':
             return self.A @ params
@@ -342,18 +342,18 @@ class PixelModelResponse:
     Spatial and frequency parameterization for PixelModel
 
     options for spatial parameterization include
-        - 'direct' : sky pixel
+        - 'pixel' : sky pixel
         - 'alm' : spherical harmonic
 
     options for frequency parameterization include
-        - 'direct' : frequency channels
+        - 'channel' : frequency channels
         - 'poly' : low-order polynomials
         - 'powerlaw' : power law model
         - 'bessel' : spherical bessel j_l (for spatial mode 'alm')
             For this mode, the all elements in params must be
             from a single l mode
     """
-    def __init__(self, theta, phi, freqs, spatial_mode='direct', freq_mode='direct',
+    def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
                  device=None, transform_order=0, dtype=torch.float32,
                  lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None,
                  method='samushia', kbin_file=None):
@@ -366,9 +366,9 @@ class PixelModelResponse:
         freqs : ndarray
             Frequency bins [Hz]
         spatial_mode : str, optional
-            Choose the spatial parameterization (default is direct)
+            Choose the spatial parameterization (default is pixel)
         freq_mode : str, optional
-            Choose the freq parameterization (default is direct)
+            Choose the freq parameterization (default is channel)
         device : str, optional
             Device to put model on
         transform_order : int, optional
@@ -450,7 +450,7 @@ class PixelModelResponse:
         tensor
             Sky model of shape (Npol, Npol, Ndeg, Npix)
         """
-        if self.spatial_mode == 'direct':
+        if self.spatial_mode == 'pixel':
             return params
         elif self.spatial_mode == 'alm':
             return params @ self.Ylm.transpose(-1, -2)
@@ -472,7 +472,7 @@ class PixelModelResponse:
         tensor
             Sky model of shape (Npol, Npol, Nfreqs, Ncoeff)
         """
-        if self.freq_mode == 'direct':
+        if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':
             return self.A @ params
