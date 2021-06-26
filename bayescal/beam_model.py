@@ -376,7 +376,7 @@ class YlmResponse(PixelResponse):
         beam = R(zen, az, freqs)
 
     """ 
-    def __init__(self, params, l, m, nside, mode='generate', interp_angs=None,
+    def __init__(self, params, l, m, mode='generate', interp_angs=None,
                  powerbeam=True, dtype=torch.complex64, device=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -392,7 +392,7 @@ class YlmResponse(PixelResponse):
             Nmodel is the number of unique antenna models.
         l, m : ndarrays
             The l and m modes of params.
-        nside : int
+        npix : int
             Nside integer of original healpix map. Note that this may be equal
             to Ncoeff, but it may not, as you can truncate the l and m modes
             as desired.
@@ -412,8 +412,8 @@ class YlmResponse(PixelResponse):
         Y_cache : a cache for Y_lm matrices (Npix, Ncoeff)
         ang_cache : a cache for (zen, az) arrays [deg]
         """
-        super(YlmResponse, self).__init__(params, 'healpix')
-        self.npix = utils.healpy.nside2npix(nside)
+        self.npix = interp_angs[0].shape[-1] if interp_angs is not None else None
+        super(YlmResponse, self).__init__(params, 'healpix', self.npix)
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
         self.dtype = dtype

@@ -468,13 +468,20 @@ class RIME(torch.nn.Module):
         self.ant2model = ant2model
         self.array = array
         self.bls = bls
+        self.Nbls = len(bls)
+        self.bl_group = bls
         self.obs_jds = obs_jds
         self.Ntimes = len(obs_jds)
         self.vis_dtype = vis_dtype
         self.device = device
-        self.Nbls = len(self.bls)
         self.freqs = freqs
         self.Nfreqs = len(freqs)
+
+    def set_bl_group(self, bls):
+        """
+        Set active bl_group to iterate over in forward()
+        """
+        self.bl_group = bls
 
     def forward(self, sky_components):
         """
@@ -496,12 +503,13 @@ class RIME(torch.nn.Module):
         Returns
         -------
         vis : tensor
-            Measured visibilities, shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
+            Measured visibilities, shape (Npol, Npol, Nbl_group, Ntimes, Nfreqs)
         """
         assert isinstance(sky_components, list)
         # initialize visibility tensor
         Npol = self.beam.Npol
-        vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
+        Nblg = len(self.bl_group)
+        vis = torch.zeros((Npol, Npol, Nblg, self.Ntimes, self.Nfreqs),
                           dtype=self.vis_dtype, device=self.device)
 
         # clear pre-computed beam for YlmResponse type
@@ -512,7 +520,7 @@ class RIME(torch.nn.Module):
         for i, sky_comp in enumerate(sky_components):
 
             # setup visibility for this sky component
-            sky_vis = torch.zeros((Npol, Npol, self.Nbls, self.Ntimes, self.Nfreqs),
+            sky_vis = torch.zeros((Npol, Npol, Nblg, self.Ntimes, self.Nfreqs),
                                   dtype=self.vis_dtype, device=self.device)
 
             kind = sky_comp['kind']
@@ -536,7 +544,7 @@ class RIME(torch.nn.Module):
                     raise NotImplementedError
 
                 # iterate over baselines
-                for k, (ant1, ant2) in enumerate(self.bls):
+                for k, (ant1, ant2) in enumerate(self.bl_group):
                     self._prod_and_sum(self.beam, ant_beams, cut_sky, ant1, ant2,
                                        kind, zen, az, sky_vis, k, j)
 
