@@ -707,7 +707,7 @@ def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
         Polynomial design matrix
     """
     dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
-    A = torch.tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype, device=device).T
+    A = torch.as_tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype, device=device).T
     return A
 
 

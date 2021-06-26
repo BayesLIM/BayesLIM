@@ -500,10 +500,7 @@ class YlmResponse(PixelResponse):
         Ylm = self.get_Ylm(zen, az)
 
         # next do slower dot product over Ncoeff
-        if not torch.is_complex(p):
-            beam = p @ Ylm.transpose(-1, -2).real + 1j * (p @ Ylm.transpose(-1, -2).imag)
-        else:
-            beam = p @ Ylm.transpose(-1, -2)
+        beam = p @ Ylm.transpose(-1, -2)
 
         if self.powerbeam:
             if torch.is_complex(beam):
