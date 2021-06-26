@@ -467,7 +467,7 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     torch_type = type(dtype) == torch.dtype
 
     if torch_type:
-        Y = torch.zeros(len(theta), len(l), dtype=dtype)
+        Y = torch.zeros(len(theta), len(l), dtype=dtype, device=device)
     else:
         Y = np.zeros((len(theta), len(l)), dtype=dtype)
 
