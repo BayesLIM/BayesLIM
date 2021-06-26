@@ -375,6 +375,10 @@ class YlmResponse(PixelResponse):
         R = YlmResponse(params, l, m, **kwargs)
         beam = R(zen, az, freqs)
 
+    Warning: if mode = 'interpolate' and parameter = True,
+    you need to clear_beam() after every backwards call,
+    otherwise the graph of the cached beam is freed
+    and you get a RunTimeError.
     """ 
     def __init__(self, params, l, m, mode='generate', interp_angs=None,
                  powerbeam=True, freq_mode='channel', dtype=torch.complex64, device=None):
@@ -382,6 +386,11 @@ class YlmResponse(PixelResponse):
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
         calls of (zen, az) that may or not be of healpix ordering.
+
+        Warning: if mode = 'interpolate' and parameter = True,
+        you need to clear_beam() after every backwards call,
+        otherwise the graph of the cached beam is freed
+        and you get a RunTimeError.
 
         Parameters
         ----------
@@ -398,7 +407,8 @@ class YlmResponse(PixelResponse):
             as desired.
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm given zen, az for each call
-            interpolate - interpolate existing beam onto zen, az
+            interpolate - interpolate existing beam onto zen, az. See warning
+            in docstring above.
         interp_angs : 2-tuple
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future

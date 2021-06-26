@@ -213,7 +213,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             # iterate over bls
             k = 0
             for bl in bls:
-                blvec = utils.tensor2numpy(self.antpos[bl[1]] - self.antpos[bl[0]])
+                blvec = utils.tensor2numpy(self.get_antpos(bl[1]) - self.get_antpos(bl[0]))
                 # check if this is a unique bl
                 rgroup = None
                 for i, blv in enumerate(rvec):
@@ -572,6 +572,9 @@ class RIME(torch.nn.Module):
 
         # apply beam-weighted fringe to sky
         psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
+
+        ## TODO: either compute (fringe * beam) * sky or (fringe * sky) * beam
+        # depending on whether beam and/or sky are parameters
 
         # sum across sky
         sky_vis[:, :, bl_ind, obs_ind, :] = torch.sum(psky, axis=-1)

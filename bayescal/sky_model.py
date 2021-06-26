@@ -356,7 +356,7 @@ class PixelModelResponse:
     def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
                  device=None, transform_order=0, dtype=torch.float32,
                  lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None,
-                 method='samushia', kbin_file=None):
+                 radial_method='samushia', kbin_file=None):
         """
         Parameters
         ----------
@@ -382,7 +382,7 @@ class PixelModelResponse:
             The wavevector bins used in the spherical bessel transform
         cosmo : Cosmology object
             Cosmology object for computing conversions
-        method : str, optional
+        radial_method : str, optional
             If freq_mode is 'bessel', this is the radial basis method
         kbin_file : str, optional
             If freq_mode is 'bessel', this is a filepath to a csv of
@@ -390,7 +390,7 @@ class PixelModelResponse:
         """
         self.theta, self.phi = theta, phi
         self.freqs = freqs
-        self.spatial_mode = spatial_model
+        self.spatial_mode = spatial_mode
         self.freq_mode = freq_mode
         self.device = device
         self.transform_order = transform_order
@@ -402,7 +402,7 @@ class PixelModelResponse:
         self.decimate = decimate
         self.cosmo = cosmo
         self.dtype = dtype
-        self.method = method
+        self.radial_method = radial_method
         self.kbin_file = kbin_file
 
         # freq setup
@@ -417,7 +417,8 @@ class PixelModelResponse:
             jl, kbins = utils.gen_bessel2freq(self.l, freqs, cosmo,
                                               Nk=Nk, decimate=decimate,
                                               device=device, dtype=dtype,
-                                              method=method, kbin_file=kbin_file)
+                                              method=radial_method,
+                                              kbin_file=kbin_file)
             self.jl = jl[list(jl.keys())[0]]
             self.kbins = kbins[list(kbins.keys())[0]]
 
