@@ -3,7 +3,7 @@ Module for torch sky models and relevant functions
 """
 import torch
 import numpy as np
-from scipy import special
+from scipy import special, interpolate
 
 from . import utils
 
@@ -112,7 +112,7 @@ class PointSourceModel(SkyBase):
                     U - iV & I - Q \end{array}
                 \right)
 
-            See bayescal.sky.stokes2linear() for details.
+            See bayescal.sky_model.stokes2linear() for details.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -240,7 +240,7 @@ class PointSourceResponse:
         elif self.mode == 'poly':
             return self.A @ params
         elif self.mode == 'powerlaw':
-            return params[..., 0, :] * (self.freqs / self.f0)**params[..., 1, :]
+            return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
 
 
 class PixelModel(SkyBase):
@@ -283,7 +283,7 @@ class PixelModel(SkyBase):
                     U - iV & I - Q \end{array}
                 \right)
 
-            See bayescal.sky.stokes2linear() for details.
+            See bayescal.sky_model.stokes2linear() for details.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -394,7 +394,7 @@ class PixelModelResponse:
         self.freq_mode = freq_mode
         self.device = device
         self.transform_order = transform_order
-        self.l, self.m = lms
+        self.l, self.m = lms if lms is not None else (None, None)
         self.f0 = f0
         self.dfreqs = (freqs - freqs[0]) / 1e6
         self.Ndeg = Ndeg
@@ -597,22 +597,96 @@ class CompositeModel(torch.nn.Module):
         return output
 
 
-def stokes2linear(stokes):
+def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
+                    parameter=False, freq_interp='linear'):
+    """
+    Read a point source catalogue YAML file.
+    See bayescal.data.DATA_PATH for examples.
+
+    Parameters
+    ----------
+    catfile : str
+        Path to a YAML point source catalogue file
+    freqs : tensor
+        Frequencies to evaluate model [Hz].
+        If catalogue is 'channel' along the frequency
+        axis, then it is interpolated with freq_interp
+        onto freqs bins.
+
+    Returns
+    -------
+    tensor
+        PointSourceModel object
+    """
+    import yaml
+    with open(catfile) as f:
+        d = yaml.load(f, Loader=yaml.FullLoader)
+
+    # ensure frequencies are float
+    if hasattr(d, 'freqs'):
+        d['freqs'] = torch.as_tensor(np.array(d['freqs'], dtype=float), dtype=dtype)
+
+    # load point positions
+    sources = d['sources']
+    angs = torch.tensor([np.array(sources['ra']),
+                         np.array(sources['dec'])], dtype=dtype)
+
+    if d['mode'] == 'channel':
+        # collect Stokes I fluxes at specified frequencies
+        S = np.array([sources['freq{}'.format(i)] for i in range(len(d['freqs']))])
+
+        # interpolate onto freqs
+        interp = interpolate.interp1d(d['freqs'], S, kind=freq_interp, axis=0,
+                                      fill_value='extrapolate')
+        params = torch.tensor(interp(freqs), dtype=dtype)[None, None, :, :]
+
+    elif d['mode'] == 'powerlaw':
+        # ensure frequencies are float
+        d['mode_kwargs']['f0'] = float(d['mode_kwargs']['f0'])
+
+        # collect parameters
+        params = torch.tensor([np.array(sources['amp']), np.array(sources['alpha'])])[None, None, :, :]
+
+    else:
+        raise NotImplementedError
+
+    R = PointSourceResponse(freqs, mode=d['mode'], device=device, **d['mode_kwargs'])
+    sky = PointSourceModel(params, angs, freqs, R=R, parameter=parameter)
+
+    if hasattr(d, 'polarization'):
+        # still under development
+        Nsources = params.shape[-1]
+        sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
+        stokes = StokesModel(sparams, parameter=parameter)
+        sky = torch.nn.Sequential(sky, stokes)
+
+    return sky
+
+
+def stokes2linear(S, dtype=torch.complex64):
     """
     Convert Stokes parameters to coherency matrix
     for xyz cartesian (aka linear) feed basis.
     This can be included at the beginning of
     the response matrix (R) of any of the sky model
     objects in order to properly account for Stokes
-    Q, U, V parameters in your sky model.
+    Q, U, V parameters in a sky model.
+
+    .. math::
+
+        S = \left(
+            \begin{array}{c}I\\ Q\\ U\\ V\end{array}
+        \right)
 
     Parameters
     ----------
-    stokes : tensor
-        Holds the Stokes parameter of your generalized
+    S : tensor
+        Holds the Stokes parameter of a generalized
         sky model parameterization, of shape (4, ...)
         with the zeroth axis holding the Stokes parameters
         in the order of [I, Q, U, V].
+    device : str, optional
+        Device to put output onto
 
     Returns
     -------
@@ -627,38 +701,112 @@ def stokes2linear(stokes):
                 U - iV & I - Q \end{array}
             \right)
     """
-    B = torch.zeros(2, 2, stokes.shape[1:])
-    B[0, 0] = stokes[0] + stokes[1]
-    B[0, 1] = stokes[2] + 1j * stokes[3]
-    B[1, 0] = stokes[2] - 1j * stokes[3]
-    B[1, 1] = stokes[0] - stokes[1]
+    device = S.device
+    if len(S) == 1:
+        # assume Stokes I was fed
+        B = torch.zeros(1, 1, *S.shape[1:], dtype=dtype, device=device)
+        B[0, 0] = S[0]
+    elif len(S) == 3:
+        # assume fractional Q, U, V was fed.
+        B = torch.zeros(2, 2, *S.shape[1:], dtype=dtype, device=device)
+        B[0, 0] = 1 + S[0]
+        B[0, 1] = S[1] + 1j * S[2]
+        B[1, 0] = S[1] - 1j * S[2]
+        B[1, 1] = 1 - S[0]
+    elif len(S) == 4:
+        # assume 4-Stokes was fed
+        B = torch.zeros(2, 2, *S.shape[1:], dtype=dtype, device=device)
+        B[0, 0] = S[0] + S[1]
+        B[0, 1] = S[2] + 1j * S[3]
+        B[1, 0] = S[2] - 1j * S[3]
+        B[1, 1] = S[0] - S[1]
 
     return B
 
 
-def parse_catalogue(catfile, parameter=False):
+class StokesModel(torch.nn.Module):
     """
-    Read a point source catalogue YAML file.
-    See bayescal.data.DATA_PATH for examples.
+    A model for Stokes parameters of a SkyBase object
 
-    Parameters
-    ----------
-    catfile : str
-        Path to a YAML point source catalogue file
+    The output of a Stokes I-only sky model can be pushed
+    through this to become a full-Stokes sky model, with
+    parameters dictating the relationship between
+    Stokes I and Stokes Q, U, V.
 
-    Returns
-    -------
-    tensor
-        PointSourceModel object
-    """
-    import yaml
-    with open(catfile) as f:
-        d = yaml.load(d, Loader=yaml.FullLoader)
+    .. math::
 
-    raise NotImplementedError
+            \left(
+                \begin{array}{cc}I + Q & U + iV \\
+                U - iV & I - Q \end{array}
+            \right) = 
+            \left(
+                \begin{array}{cc}1 + f_Q & f_U + i*f_V \\
+                f_U - i*f_V & 1 - f_Q \end{array}
+            \right)\cdot I
+
+    Note: the fractional stokes parameters should not
+    sum in quadrature to more than 1, i.e.
+
+    .. math::
+
+        f_Q^2 + f_U^2 + f_V^2 \le 1
+
+    which should be enforced by setting a prior
+    on their quadrature sum.
     """
-    R = PointSourceResponse(d['freqs'], mode=f['mode'])
-    S = PointSoureModel(params, angs, freqs, R=R, parameter=parameter)
-    """
-    return S
+    def __init__(self, params, parameter=True):
+        """
+        Parameters
+        ----------
+        params : tensor
+            The fractional relationship between
+            Stokes I and Stokes Q, U, V, i.e.
+            f_Q, f_U, f_V, of shape
+            (3, Nfreqs, Nsources), where both
+            Nfreqs and Nsources can be 1 to
+            reduce degrees of freedom and then
+            be broadcasted on the sky model.
+        parameter : bool, optional
+            Treat params as tunable parameters,
+            or leave them fixed as is.
+        """
+        super().__init__()
+        self.params = params
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
+
+    def push(self, device):
+        """
+        Parameters
+        ----------
+        device : str
+            Device to push to, e.g. 'cpu', 'cuda:0'
+        """
+        self.params = utils.push(self.params, device)
+
+    def forward(self, sky_comp):
+        """
+        Forward model polarization state onto Stokes I basis
+
+        Parameters
+        ----------
+        sky_comp : dict or tensor
+            A sky component dictionary output from
+            a SkyBase subclass, or a sky parameter tensor
+            of shape (1, 1, Nfreqs, Nsources). To reduce
+            dimensionality, one can set Nfreqs or Nsources = 1
+            and will broadcast the parameter across the sky model.
+
+        Returns
+        -------
+        dict or tensor
+            Polarized coherency matrix of shape (2, 2, Nfreqs, Nsources)
+        """
+        if isinstance(sky_comp, dict):
+            sky_comp['sky'] = self.forward(sky_comp['sky'])
+            return sky_comp
+
+        # get fractional polarized coherency matrix
+        B = stokes2linear(self.params)
+        return B * sky_comp
 

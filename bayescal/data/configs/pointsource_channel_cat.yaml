@@ -1,0 +1,27 @@
+# A bayescal point source catalogue
+# with mode = 'channel'
+
+# -- Model Representation --
+# See bayescal.sky_model.PointSourceResponse
+freqs : [100e6, 110e6, 120e6, 130e6]
+mode : 'channel'  # ['channel', 'poly', 'powerlaw']
+mode_kwargs : 
+  f0 : None       # anchor freq [Hz]
+
+# -- Sources --
+# This should be consistent with 'mode' above
+sources :
+  name : ['gleam0', 'gleam1', 'gleam2']
+  ra : [100.2, 20.5, 30.0]  # J2000 [deg]
+  dec : [30.3, -20.0, -10.1]  # J2000 [deg]
+  freq0 : [20.5, 15.2, 14.5]  # Jy
+  freq1 : [19.1, 14.8, 12.2]  # Jy
+  freq2 : [18.3, 13.5, 11.0]  # Jy
+  freq3 : [17.3, 12.5, 10.0]  # Jy
+
+# -- Polarization --
+# This is under development
+#polarization:
+#  Qfrac : [.1, .1, .1]
+#  Ufrac : [.1, .1, .1]
+#  Vfrac : [0, 0, 0]

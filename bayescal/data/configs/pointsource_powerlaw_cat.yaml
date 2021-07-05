@@ -1,0 +1,25 @@
+# A bayescal point source catalogue
+# with mode = 'powerlaw'
+# data from Bernardi et al. 2013, and Hurley-Walker et al. 2017
+
+# -- Model Representation --
+# See bayescal.sky_model.PointSourceResponse
+mode : 'powerlaw'  # ['channel', 'poly', 'powerlaw']
+mode_kwargs : 
+  f0 : 200e6       # anchor freq [Hz]
+
+# -- Sources --
+# This should be consistent with 'mode' above
+sources :
+  name : ['FornaxA_W', 'FornaxA_E', 'HydraA', 'PictorA', 'HerculesA', 'VirgoA', 'Crab', 'CygnusA', 'CassA']
+  ra : [50.375, 51.000, 139.525, 79.9583, 252.7833, 187.7042, 83.6333, 299.8681, 350.8500]  # J2000 [deg]
+  dec : [-37.167, -37.167, -12.0956, -45.7789, 4.9925, 12.3911, 22.0144, 40.7339, 58.8117]  # J2000 [deg]
+  amp : [395, 99, 280, 390, 377, 861, 1340, 7920, 11900]  # Jy at f0
+  alpha : [-0.88, -0.88, -0.96, -0.99, -1.07, -0.86, -0.22, -0.78, -0.41]  # spix
+
+# -- Polarization --
+# This is under development
+#polarization:
+#  Qfrac : [.1, .1, .1]
+#  Ufrac : [.1, .1, .1]
+#  Vfrac : [0, 0, 0]

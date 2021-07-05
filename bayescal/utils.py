@@ -1178,7 +1178,7 @@ def push(tensor, device):
     else:
         return tensor.to(device)
 
-def tensor2numpy(tensor):
+def tensor2numpy(tensor, clone=True):
     """
     Convert a tensor (on any device)
     to a numpy ndarray on the cpu
@@ -1187,6 +1187,9 @@ def tensor2numpy(tensor):
     ----------
     tensor : tensor
         A pytorch tensor on any device
+    clone : bool, optional
+        If True, clone tensor, i.e. output
+        has different memory address.
 
     Returns
     -------
@@ -1197,6 +1200,8 @@ def tensor2numpy(tensor):
         tensor = tensor.detach()
         if tensor.device != 'cpu':
             tensor = tensor.cpu()
+        if clone:
+            tensor = tensor.clone()
         return tensor.numpy()
     return tensor
 
@@ -1236,3 +1241,24 @@ def get_zeros(x, y):
             
     return roots
 
+
+def _make_hex(N, D=15):
+    x, y, ants = [], [], []
+    ant = 0
+    k = 0
+    start = 0
+    for i in range(2*N - 1):
+        for j in range(N + k):
+            x.append(j + start)
+            y.append(i)
+            ants.append(ant)
+            ant += 1
+        if i < N-1:
+            k += 1
+            start -= .5
+        else:
+            k -= 1
+            start += .5
+    x = np.array(x) - np.mean(x)
+    y = np.array(y) - np.mean(y)
+    return ants, np.vstack([x, y]).T * D
