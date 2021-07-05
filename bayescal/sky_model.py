@@ -623,7 +623,7 @@ def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
         d = yaml.load(f, Loader=yaml.FullLoader)
 
     # ensure frequencies are float
-    if hasattr(d, 'freqs'):
+    if 'freqs' in d:
         d['freqs'] = torch.as_tensor(np.array(d['freqs'], dtype=float), dtype=dtype)
 
     # load point positions
@@ -653,7 +653,7 @@ def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
     R = PointSourceResponse(freqs, mode=d['mode'], device=device, **d['mode_kwargs'])
     sky = PointSourceModel(params, angs, freqs, R=R, parameter=parameter)
 
-    if hasattr(d, 'polarization'):
+    if 'polarizaton' in d:
         # still under development
         Nsources = params.shape[-1]
         sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
