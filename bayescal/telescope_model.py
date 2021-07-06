@@ -175,9 +175,6 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             evaluate the fringe at and then cache.
         interp_mode : str, optional
             If cache_f, this is the interpolation mode ['nearest', 'bilinear']
-        build_reds : bool, optional
-            Build library of baseline redundancies given antpos. Only 
-            if parameter = False
         redtol : float, optional
             If parameter is False, then redundant baseline groups
             are built. This is the bl vector redundancy tolerance [m]
@@ -229,7 +226,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
                 else:
                     # this falls into an existing redundant group
                     reds[rgroup].append(bl)
-                    bl2red[bl] = i
+                    bl2red[bl] = rgroup
 
             # solve for red group attributes
             lens, angs, tags = [], [], []
@@ -405,179 +402,6 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         self.antpos = utils.push(self.antpos, device)
         self.freqs = self.freqs.to(device)
         self.device = device
-
-
-class RIME(torch.nn.Module):
-    """
-    Performs the sky integral of the radio interferometric
-    measurement equation (RIME) to produce the interferometric
-    visibilities between antennas p and q.
-
-    .. math::
-
-        V_{jk} = \int_{4\pi}d \Omega\ A_p(\hat{s})
-                  I(\hat{s}) A_q^\dagger K_{pq}
-
-    where K is the interferometric fringe term.
-    """
-    def __init__(self, telescope, beam, ant2model, array, bls, obs_jds, freqs,
-                 vis_dtype=torch.cfloat, device=None):
-        """
-        RIME object. Takes as input a model
-        of the sky brightness, passes it through
-        a primary beam model (optional) and a
-        fringe model, and then sums
-        across the sky to produce the visibilities.
-
-        If this is being used only for a forward model (i.e. no gradient
-        calculation) you can reduce the memory load by either
-        ensuring all params have parameter=False, or by running
-        the forward() call in a torch.no_grad() context.
-
-        Parameters
-        ----------
-        telescope : TelesscopeModel object
-            Used to set the telescope location.
-        beam : BeamModel object, optional
-            A model of the directional and frequency response of the
-            antenna primary beam. Default is a tophat response.
-        ant2model : dict
-            Dict of integers that map each antenna number in array.ants
-            to a particular index in the beam model output from beam.
-            E.g. {10: 0, 1: 0, 12: 0} for 3-antennas [10, 11, 12] with
-            1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
-            [10, 11, 12] with different 3 beam models.
-        array : ArrayModel object
-            A model of the telescope location and antenna positions
-        bls : list of 2-tuples
-            A list of baseline tuples, or antenna-pair tuples,
-            whose elements correspond to the participating antenna
-            numbers in array.ants for each baseline.
-            If array.ants = [1, 3, 5], then bls could be, for e.g.,
-            bls = [(1, 3), (1, 5), (3, 5)]
-        obs_jds : tensor
-            Array of observational times in Julian Date
-        freqs : tensor
-            Array of observational frequencies [Hz]
-        vis_dtype : torch dtype, optional
-            Data type of output visibilities.
-        """
-        super().__init__()
-        self.telescope = telescope
-        self.beam = beam
-        self.ant2model = ant2model
-        self.array = array
-        self.bls = bls
-        self.Nbls = len(bls)
-        self.bl_group = bls
-        self.obs_jds = obs_jds
-        self.Ntimes = len(obs_jds)
-        self.vis_dtype = vis_dtype
-        self.device = device
-        self.freqs = freqs
-        self.Nfreqs = len(freqs)
-
-    def set_bl_group(self, bls):
-        """
-        Set active bl_group to iterate over in forward()
-        """
-        self.bl_group = bls
-
-    def forward(self, sky_components):
-        """
-        Forward pass sky components through the beam,
-        the fringes, and then integrate to
-        get the visibilities.
-
-        Parameters
-        ----------
-        sky_components : list of sky component dictionaries
-            Each dictionary is an output from a
-            SkyBase subclass, containing:
-                'kind' : str, kind of sky model
-                'sky' : tensor, sky representation
-                Extra kwargs given 'kind', including possibly
-                    'angs' : tensor, optional, RA and Dec [deg] of pixels
-                    'lms' : tensor, optional, l and m modes of a_lm coeffs
-
-        Returns
-        -------
-        vis : tensor
-            Measured visibilities, shape (Npol, Npol, Nbl_group, Ntimes, Nfreqs)
-        """
-        assert isinstance(sky_components, list)
-        # initialize visibility tensor
-        Npol = self.beam.Npol
-        Nblg = len(self.bl_group)
-        vis = torch.zeros((Npol, Npol, Nblg, self.Ntimes, self.Nfreqs),
-                          dtype=self.vis_dtype, device=self.device)
-
-        # clear pre-computed beam for YlmResponse type
-        if self.beam.R.__class__ == beam_model.YlmResponse:
-            self.beam.R.clear_beam()
-
-        # iterate over sky components
-        for i, sky_comp in enumerate(sky_components):
-
-            # setup visibility for this sky component
-            sky_vis = torch.zeros((Npol, Npol, Nblg, self.Ntimes, self.Nfreqs),
-                                  dtype=self.vis_dtype, device=self.device)
-
-            kind = sky_comp['kind']
-            sky = sky_comp['sky']
-
-            # iterate over observation times
-            for j, obs_jd in enumerate(self.obs_jds):
-
-                # get beam tensor
-                if kind in ['pixel', 'point']:
-                    # convert sky pixels from ra/dec to alt/az
-                    ra, dec = sky_comp['angs']
-                    alt, az = self.telescope.eq2top(obs_jd, ra, dec, sky=kind, store=True)
-
-                    # evaluate beam response
-                    zen = utils.colat2lat(alt, deg=True)
-                    ant_beams, cut, zen, az = self.beam.gen_beam(zen, az)
-                    cut_sky = sky[..., cut]
-
-                elif kind == 'alm':
-                    raise NotImplementedError
-
-                # iterate over baselines
-                for k, (ant1, ant2) in enumerate(self.bl_group):
-                    self._prod_and_sum(self.beam, ant_beams, cut_sky, ant1, ant2,
-                                       kind, zen, az, sky_vis, k, j)
-
-            # explicit add needed for pytorch graph
-            vis = vis + sky_vis
-
-        return vis
-
-    def _prod_and_sum(self, beam, ant_beams, cut_sky, ant1, ant2,
-                      kind, zen, az, sky_vis, bl_ind, obs_ind):
-        """
-        Sky product and sum into sky_vis inplace
-        """
-        # get beam of each antenna
-        beam1 = ant_beams[:, :, self.ant2model[ant1]]
-        beam2 = ant_beams[:, :, self.ant2model[ant2]]
-
-        # generate fringe
-        fringe = self.array.gen_fringe((ant1, ant2), zen, az)
-
-        # apply fringe to beam1
-        # note: this is done to reduces memory footprint for autograd
-        # also, this is possible b/c fringe term is a scalar matrix
-        beam1 = self.array.apply_fringe(fringe, beam1, kind)
-
-        # apply beam-weighted fringe to sky
-        psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
-
-        ## TODO: either compute (fringe * beam) * sky or (fringe * sky) * beam
-        # depending on whether beam and/or sky are parameters
-
-        # sum across sky
-        sky_vis[:, :, bl_ind, obs_ind, :] = torch.sum(psky, axis=-1)
 
 
 def eq2top(location, obs_jd, ra, dec):

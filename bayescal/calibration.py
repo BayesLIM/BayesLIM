@@ -30,31 +30,24 @@ class JonesModel(torch.nn.Module):
     For 2-pol mode it is diagonal of shape (2, 2),
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
-
-    Notes
-    -----
-    2-real form means that the complex tensor of shape (3,)
-        [1 + 0j, 2 + 1j, 1 - 2j]
-    is stored as the real-valued tensor of shape (3, 2)
-        [[1, 0], [2, 1], [1, -2]]
-    which has an extra dimension along its last axis.
-    See torch.view_as_complex() and torch.view_as_real().
     """
-    def __init__(self, jones, vis2ants, R=None, parameter=True):
+    def __init__(self, jones, ants, bls, R=None, parameter=True,
+                 polmode='1pol'):
         """
         Antenna-based Jones model.
 
         Parameters
         ----------
         jones : tensor
-            A 2-real tensor of the initial Jones parameters
-            of shape (Npol, Npol, Nantenna, ..., 2).
-            Npol=1 in 1-pol mode, or 2 for 2-pol or 4-pol mode.
-        vis2ants : list of 2-tuples
-            This is a list of length Nvis, whose elements index the
-            0th axis of V_m, which is the input to self.forward().
-            Each 2-tuple indexes the Nant axis of jones, and pick out
-            the two antennas participating in this visibility.
+            A tensor of the Jones parameters
+            of shape (Npol, Npol, Nantenna, Ntimes, Nfreqs),
+            where Nfreqs and Ntimes can be replaced by
+            Nfreq_coeff and Ntime_coeff for sparse parameterization.
+        ants : list
+            List of antenna numbers associated with an ArrayModel object
+        bls : list
+            List of ant-pair tuples that hold the baselines of the
+            input visibilities.
         R : callable, optional
             An arbitrary response function for the Jones parameters.
             This is a function that takes the jones tensor and maps it
@@ -67,26 +60,33 @@ class JonesModel(torch.nn.Module):
         parameter : bool, optional
             If True, treat jones as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
+        polmode : str, ['1pol', '2pol', '4pol'], optional
+            Polarization mode. params must conform to polmode.
+            1pol : single linear polarization (default)
+            2pol : two linear polarizations (diag of Jones)
+            4pol : four linear and cross pol (2x2 Jones)
 
         Examples
         --------
-        1. Let V_m be of shape (1, 1, Nvis, Nfreq, 2), and jones be of
-        shape (1, 1, Nant, Nfreq, 2), where Nvis is the number of
-        visibilities, and we are only using 1 feed polarization.
+        1. Let V_m be of shape (1, 1, Nbl, Ntimes, Nfreq), and jones be of
+        shape (1, 1, Nant, Ntimes, Nfreq), where Nbl is the number of
+        baselines, and we are only using 1 feed polarization.
         Assume we have 3 antennas, [0, 1, 2], and three ant-pair
         visibility combinations [(0, 1), (1, 2), (0, 2)] in that order.
         Then vis2ants is simply [(0, 1), (1, 2), (0, 2)]
-
         """
         super().__init__()
         self.jones = jones
         if parameter:
             self.jones = torch.nn.Parameter(self.jones)
-        self.vis2ants = vis2ants
         if R is None:
             # dummy function eval
             R = lambda x: x
         self.R = R
+        self.polmode = polmode
+        self.ants = ants
+        self.bls = bls
+        self._vis2ants = {bl: (ants.index(bl[0]), ants.index(bl[1])) for bl in bls}
 
     def forward(self, V_m, jones=None, undo=False):
         """
@@ -95,13 +95,13 @@ class JonesModel(torch.nn.Module):
         Parameters
         ----------
         V_m : tensor
-            Model visibilities in 2-real form of
-            shape (Npol, Npol, Nvis, ..., 2).
+            Model visibilities of
+            shape (Npol, Npol, Nbl, Nfreq, Ntime)
         jones : tensor, optional
             If not None, use these jones parameters instead of
             self.jones in the forward model. Default is None.
         undo : bool, optional
-            If True, invert jones and apply to V_m.
+            If True, invert jones and apply to V_m. 
 
         Returns
         -------
@@ -114,29 +114,30 @@ class JonesModel(torch.nn.Module):
 
         # choose fed jones or attached jones
         if jones is None:
-            _j = self.jones
-        else:
-            _j = jones
+            jones = self.jones
+
+        # push through reponse function
+        jones = self.R(jones)
+
+        # invert jones if necessary
+        if undo:
+            invjones = torch.zeros_like(jones)
+            for i in range(jones.shape[2]):
+                if self.polmode in ['1pol', '2pol']:
+                    invjones[:, :, i] = utils.diag_inv(jones[:, :, i])
+                else:
+                    invjones[:, :, i] = torch.pinv(jones[:, :, i])
+            jones = invjones
 
         # iterate through visibility and apply Jones terms
-        for i in range(V_p.shape[2]):
-            # push parameter through response
-            j1 = self.R(_j[:, :, self.vis2ants[i][0]])
-            j2 = self.R(_j[:, :, self.vis2ants[i][1]])
+        for i, bl in enumerate(self.bls):
+            j1 = jones[:, :, self._vis2ants[bl][0]]
+            j2 = jones[:, :, self._vis2ants[bl][1]]
 
-            # apply gains to input
-            if not undo:
-                #V_p[i] = utils.ceinsum("ij...,jk...,kl...->il...", j1, V_m[:, :, i],
-                #                      torch.transpose(utils.cconj(j2), 0, 1))
-                V_p[:, :, i] = utils.cmatmul(utils.cmatmul(j1, V_m[:, :, i]),
-                                       torch.transpose(utils.cconj(j2), 0, 1))
+            if self.polmode in ['1pol', '2pol']:
+                V_p[:, :, i] = utils.diag_matmul(utils.diag_matmul(j1, V_m[:, :, i]), j2.conj())
             else:
-                j1inv = utils.cinv(j1)
-                j2inv = utils.cinv(j2)
-                #V_p[i] = utils.ceinsum("ij...,jk...,kl...->il...", j1inv, V_m[:, :, i],
-                #                      torch.transpose(utils.cconj(j2inv), 0, 1))
-                V_p[:, :, i] = utils.cmatmul(utils.cmatmul(j1inv, V_m[:, :, i]),
-                                       torch.transpose(utils.cconj(j2inv), 0, 1))
+                V_p[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m[:, :, i], j2.conj())
 
         return V_p
 
@@ -152,40 +153,40 @@ class RedVisModel(torch.nn.Module):
         V^{d}_{jk} = V^{r} + V^{m}_{jk}
 
     """
-    def __init__(self, red, vis2red, R=None, parameter=True):
+    def __init__(self, params, vis2red, R=None, parameter=True):
         """
         Redundant visibility model
 
         Parameters
         ----------
-        red : tensor
-            Initial redundant visibility tensor in 2-real form,
-            of shape (Npol, Npol, Nredvis, ..., 2) where Nredvis
+        params : tensor
+            Initial redundant visibility tensor
+            of shape (Npol, Npol, Nredvis, Ntimes, Nfreqs) where Nredvis
             is the number of unique baseline types.
         vis2red : list of int
             A list of length Nvis--the length of V_m input to
             self.forward()--whose elements index red.
         R : callable, optional
             An arbitrary response function for the redundant
-            visibility model, mapping the self.red parameters
+            visibility model, mapping the parameters
             to the space of V_m (input to self.forward).
             Default (None) is unit response.
             Note this must use torch functions.
         parameter : bool, optional
-            If True, treat red as a parameter to be fitted,
+            If True, treat params as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
         """
         super().__init__()
-        self.red = red
+        self.params = params
         if parameter:
-            self.red = torch.nn.Parameter(self.red)
+            self.params = torch.nn.Parameter(self.params)
         self.vis2red = vis2red
         if R is None:
             # dummy function eval
             R = lambda x: x
         self.R = R
 
-    def forward(self, V_m, red=None, undo=False):
+    def forward(self, V_m, undo=False):
         """
         Forward pass V_m through redundant
         model term.
@@ -193,16 +194,13 @@ class RedVisModel(torch.nn.Module):
         Parameters
         ----------
         V_m : tensor
-            Starting model visibilities in 2-real form of
-            shape (Npol, Npol, Nvis, ..., 2). In the general case,
+            Starting model visibilities of
+            shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a unit matrix so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
             them into V_m.
-        red : tensor, optional
-            If not None, use this as the redundant visibility model
-            instead of self.red. Default is None.
         undo : bool, optional
             If True, push V_m backwards through the model.
 
@@ -210,25 +208,19 @@ class RedVisModel(torch.nn.Module):
         -------
         V_p : tensor
             The predicted visibilities, having pushed V_m through
-            the redundant visibility model in self.red.
+            the redundant visibility model
         """
         # setup predicted visibility
         V_p = torch.zeros_like(V_m)
 
-        # apply fed r or attr r
-        if red is None:
-            _r = self.red
-        else:
-            _r = red
+        params = self.R(self.params)
 
         # iterate through vis and apply redundant model
         for i in range(V_p.shape[2]):
             if not undo:
-                #V_p[i] = utils.cmult(V_m[i], _r[self.vis2red[i]])
-                V_p[:, :, i] = V_m[:, :, i] + _r[:, :, self.vis2red[i]]
+                V_p[:, :, i] = V_m[:, :, i] + params[:, :, self.vis2red[i]]
             else:
-                #V_p[i] = utils.cdiv(V_m[i], _r[self.vis2red[i]])
-                V_p[:, :, i] = V_m[:, :, i] - _r[:, :, self.vis2red[i]]
+                V_p[:, :, i] = V_m[:, :, i] - params[:, :, self.vis2red[i]]
 
         return V_p
 
@@ -244,19 +236,19 @@ class VisModel(torch.nn.Module):
         V^{d}_{jk} = V^{v}_{jk} + V^{m}_{jk} 
 
     """
-    def __init__(self, vis, R=None, parameter=True):
+    def __init__(self, params, R=None, parameter=True):
         """
         Visibility model
 
         Parameters
         ----------
-        vis : tensor
-            Initial visibility tensor in 2-real form,
-            of shape (Nvis, ..., 2). Ordering should
+        params : tensor
+            Visibility model parameter of shape
+            (Npol, Npol, Nbl, Ntimes, Nfreqs). Ordering should
             match ordering of V_m input to self.forward.
         R : callable, optional
             An arbitrary response function for the
-            visibility model, mapping the self.vis parameters
+            visibility model, mapping the parameters
             to the space of V_m (input to self.forward).
             Default (None) is unit response.
             Note this must use torch functions.
@@ -265,15 +257,15 @@ class VisModel(torch.nn.Module):
             otherwise treat it as fixed to its input value.
         """
         super().__init__()
-        self.vis = vis
+        self.params = params
         if parameter:
-            self.vis = torch.nn.Parameter(self.vis)
+            self.params = torch.nn.Parameter(self.params)
         if R is None:
             # dummy function eval
             R = lambda x: x
         self.R = R
 
-    def forward(self, V_m, vis=None, undo=False):
+    def forward(self, V_m, undo=False):
         """
         Forward pass V_m through visibility
         model term.
@@ -281,16 +273,13 @@ class VisModel(torch.nn.Module):
         Parameters
         ----------
         V_m : tensor
-            Starting model visibilities in 2-real form
-            of shape (Nvis, ..., 2). In the general case,
-            this should be a unit matrix so that the
+            Starting model visibilities
+            of shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
+            this should be a zero tensor so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
             them into V_m.
-        vis : tensor, optional
-            If not None, use this as the visibility model
-            instead of self.vis. Default is None.
         undo : bool, optional
             If True, push V_m backwards through the model.
 
@@ -300,21 +289,8 @@ class VisModel(torch.nn.Module):
             The predicted visibilities, having pushed V_m through
             the visibility model.
         """
-        # setup predicted visibility
-        V_p = torch.zeros_like(V_m)
-
-        # apply fed r or attr r
-        if vis is None:
-            _v = self.vis
+        params = self.R(self.params)
+        if not undo:
+            return V_m + params
         else:
-            _v = vis
-
-        # iterate through vis and apply model
-        for i in range(len(V_p.shape[2])):
-            if not undo:
-                V_p[:, :, i] = V_m[:, :, i] + _v[:, :, i]
-            else:
-                V_p[:, :, i] = V_m[i] - _v[:, :, i]
-
-        return V_p
-
+            return V_m - params

@@ -190,6 +190,35 @@ def diag_matmul(a, b):
         raise ValueError("only 1x1 or 2x2 tensors")
 
 
+def diag_inv(a):
+    """
+    Invert a diagonal 1x1 or 2x2 matrix manually.
+    This is only beneficial for 2x2 matrices where
+    you want to drop the off-diagonal terms.
+
+    Parameters
+    ----------
+    a : tensor
+        of shape (Nax, Nax, ...), where Nax = 1 or 2
+
+    Returns
+    -------
+    c : tensor
+        of shape (Nax, Nax, ...)
+    """
+    if a.shape[0] == 1:
+        # 1x1: trivial
+        return 1 / a
+    elif a.shape[0] == 2:
+        # 2x2
+        c = torch.zeros_like(a)
+        c[0, 0] = 1 / a[0, 0]
+        c[1, 1] = 1 / a[1, 1]
+        return c
+    else:
+        raise ValueError("only 1x1 or 2x2 tensors")
+
+
 def angle(z):
     """
     Compute phase of the 2-real tensor z
@@ -1261,4 +1290,4 @@ def _make_hex(N, D=15):
             start += .5
     x = np.array(x) - np.mean(x)
     y = np.array(y) - np.mean(y)
-    return ants, np.vstack([x, y]).T * D
+    return ants, np.vstack([x, y, np.zeros_like(x)]).T * D
