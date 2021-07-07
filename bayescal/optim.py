@@ -312,6 +312,15 @@ class ParamDict:
             for k in self.keys:
                 self.params[k] /= other
 
+    def __truediv__(self, other):
+        return self.__div__(other)
+
+    def __rtruediv__(self, other):
+        return self.__rdiv__(other)
+
+    def __itruediv__(self, other):
+        return self.__idiv__(other)
+
     def __add__(self, other):
         if isinstance(other, ParamDict):
             return ParamDict({k: self.params[k] + other.params[k] for k in self.keys})
@@ -330,22 +339,52 @@ class ParamDict:
                 self.params[k] += other
         return self
 
+    def __sub__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: self.params[k] - other.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: self.params[k] - other for k in self.keys})
+
+    def __rsub__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: other.params[k] - self.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: other - self.params[k] for k in self.keys})
+
+    def __isub__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys:
+                self.params[k] -= other.params[k]
+        else:
+            for k in self.keys:
+                self.params[k] -= other
+        return self
+
+    def __neg__(self):
+        return ParamDict({k: -self.params[k] for k in self.keys})
+
+    def __pow__(self, alpha):
+        return ParamDict({k: self.params[k]**alpha for k in self.keys})
+
     def __iter__(self):
         return (p for p in self.params)
 
     def clone(self):
         """clone object"""
-        return ParamList({k: self.params[k].clone() for k in self.keys})
+        return ParamDict({k: self.params[k].clone() for k in self.keys})
 
     def copy(self):
         """copy object"""
-        return ParamList({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys})
+        return ParamDict({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys})
 
     def detach(self):
         """detach object"""
-        return ParamList({k: self.params[k].detach() for k in self.keys})
+        return ParamDict({k: self.params[k].detach() for k in self.keys})
 
     def __getitem__(self, key):
         return self.params[key]
+
+    def __repr__(self):
+        return self.params.__repr__()
 
 
