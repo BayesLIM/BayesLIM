@@ -7,33 +7,42 @@ import torch
 from . import utils
 
 
-class LogGaussLikelihood(torch.nn.modules.loss._Loss):
+class LogGaussLikelihood(torch.nn.Module):
     """
-    Un-normalized negative log Gaussian
-    likelihood wrapper around torch _Loss object
+    Negative log Gaussian likelihood
+
+    .. math::
+
+        -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d-\mu)\\
+                &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi) 
     """
-    def __init__(self, cov=None, device=None):
+    def __init__(self, target, cov, sparse_cov=True, parameter=False, device=None):
         """
         Parameters
         ----------
+        target : tensor
+            Data tensor
         cov : tensor
             Covariance of target data.
             Can be an nD tensor with the same
             shape as target, in which case
             this is just the diagonal of the cov mat
-            reshaped as the target.
+            reshaped as the target (sparse_cov=True)
             Can also be a 2D tensor holding the on and
             off diagonal covariances, in which case
-            target must be a flat column tensor.
+            target must be a flat column tensor (sparse_cov=False)
+        parameter : bool, optional
+            If fed a covariance, this makes the inverse covariance
+            a parameter in the fit.
         device : str, optional
             Set the device for this object
         """
-        super(LogGaussLikelihood, self).__init__()
-        self.cov = None
-        self.icov = None
+        super().__init__()
+        self.target = target
+        self.parameter = parameter
         self.device = device
-        if cov is not None:
-            self.set_icov(cov)
+        self.sparse_cov = sparse_cov
+        self.set_icov(cov)
 
     def set_icov(self, cov):
         """
@@ -46,19 +55,25 @@ class LogGaussLikelihood(torch.nn.modules.loss._Loss):
             Can be an nD tensor with the same
             shape as target, in which case
             this is just the diagonal of the cov mat
-            reshaped as the target.
+            reshaped as the target (sparse_cov=True)
             Can also be a 2D tensor holding the on and
             off diagonal covariances, in which case
-            target must be a flat column tensor.
+            target must be a flat column tensor (sparse_cov=False)
         """
-        self.cov = cov.to(self.device)
-        self.cov_mat = cov.ndim > 1
-        if self.cov_mat:
-            self.icov = torch.linalg.pinv(cov)
-        else:
+        self.cov = utils.push(cov, self.device)
+        if self.sparse_cov:
             self.icov = 1 / self.cov
+            self.logdet = torch.sum(torch.log(self.cov))
+            self.ndim = sum(self.cov.shape)
+        else:
+            self.icov = torch.linalg.pinv(self.cov)
+            self.logdet = torch.slogdet(self.cov)
+            self.ndim = len(self.cov)
+        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+        if self.parameter:
+            self.icov = torch.nn.Parameter(self.icov.detach().clone())
 
-    def forward(self, prediction, target, cov=None):
+    def forward(self, prediction):
         """
         Compute negative log likelihood given prediction
 
@@ -70,140 +85,267 @@ class LogGaussLikelihood(torch.nn.modules.loss._Loss):
             prediction must have shape (Ndim, Nfeatures),
             where the cov mat is Ndim x Ndim, and Nfeatures
             is to be summed over after forming chi-square.
-        target : tensor
-            Data tensor
-        cov : tensor, optional
-            Dynamically assigned covariance of target, which
-            recomputes self.icov. This is used for when
-            the cov is a parameter to be fitted.
-            Default is to use self.icov.
         """
-        # if passed a new covariance, compute icov
-        if cov is not None:
-            # this is for when covariance is a parameter
-            self.set_icov(cov)
-
+        ## TODO: allow for kwarg dynamic cov for cosmic variance
         # compute residual
-        res = prediction - target
+        res = torch.abs(prediction - self.target)
 
         # get negative log likelihood
-        if self.cov_mat:
-            return 0.5 * torch.sum(res.T @ self.icov @ res)
+        if self.sparse_cov:
+            chisq = 0.5 * torch.sum(res**2 * self.icov)
         else:
-            return 0.5 * torch.sum(res**2 * self.icov)
+            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+
+        return chisq + self.norm
 
 
-class LogUniformPrior(torch.nn.modules.loss._Loss):
+class LogPrior(torch.nn.Module):
     """
-    Log uniform prior wrapper around torch _Loss object
+    Negative log prior. See LogUniformPrior and LogGaussPrior
+    for examples of prior callables.
     """
-    def __init__(self, param_bounds):
+    def __init__(self, model, params, priors):
         """
+        To set an unbounded prior (i.e. no prior)
+        pass params as an empty list.
 
         Parameters
         ----------
-        param_bounds : list of tensors
-            List of tensors of shape (2, Nparam) holding the 
-            min and max of the allowed parameter value.
-            Each tensor in the list corresponds to a params
-            tensor in the input list to forward(param_list).
+        model : nn.Module or rime.Sequential
+            The forward model object
+        params : list
+            List of parameter strings conforming
+            to model.named_parameters() syntax
+        priors : dict
+            Dictionary of logprior callables
+            with keys matching params and values
+            as logprior functions.
         """
-        self.bounds = param_bounds
+        super().__init__()
+        self.model = model
+        self.params = params
+        self.priors = priors
 
-    def forward(self, param_list):
+    def forward(self):
         """
-        Evalute uniform logprior on a parameter list
-        that matches the ordering of param_bounds.
-
-        Parameters
-        ----------
-        param_list : list of tensors
-            List of tensors holding parameter
-            values
+        Extract current parameter values from model,
+        evaluate their logpriors and sum
         """
-        logprior = torch.tensor(0)
-        for i, p in enumerate(param_list):
-            # out of bounds if sign of res is equal
-            sign = torch.sign(self.bounds[i] - p)
-            # aka if sum(abs(sign)) == 2
-            out = torch.sum(torch.abs(sign), axis=0) == 2
-            if out.any():
-                logprior += np.inf
-                break
+        logprior = 0
+        for p in self.params:
+            param = self.model.get_parameter(p)
+            logprior += self.priors[p](param)
 
         return logprior
 
-
-class LogGaussPrior(torch.nn.modules.loss._Loss):
-    """
-    Negative log Gaussian prior
-    """
-    def __init__(self, param_means, param_sigs):
-        """
-        Parameters
-        ----------
-        param_means : list of tensors
-            List of Gaussian mean tensors matching
-            shape of elements in param_list
-        param_sigs : list of tensors
-            List of Gaussian stand. dev. tensors
-            matching shape of elements in param_list
-        """
-        self.means = param_means
-        self.sigs = param_sigs
-
-    def forward(self, param_list):
-        """
-        Evaluate negative log Gaussian prior
-
-        Parameters
-        ----------
-        param_list : list of tensors
-            List of parameter tensors matching
-            ordering of means and sigs
-        """
-        logprior = torch.tensor(0)
-        for i, p in enumerate(param_list):
-            logprior += torch.sum(0.5 * (p - self.means[i])**2 / self.sigs[i]**2)
-
-        return logprior
+    def __call__(self):
+        return self.forward()
 
 
-class LogProb(torch.nn.modules.loss._Loss):
+class LogProb(torch.nn.Module):
     """
     The log probabilty density of the likelihood times the prior,
     which is proportional to the log posterior up to a constant.
     """
-
-    def __init__(self, loglike, logprior):
+    def __init__(self, target, loglike, logprior):
         """
         Parameters
         ----------
-        loglike : LogLikelihood object
+        loglike : LogGaussLikelihood object
         logprior : LogPrior object
         """
+        super().__init__()
+        self.target = target
         self.loglike = loglike
         self.logprior = logprior
 
-    def forward(self, prediction, target, param_list, cov=None):
+    def forward(self, prediction):
         """
         Evaluate the negative log likelihood and prior
 
         Parameters
         ----------
         prediction : tensor
-            Model mean prediction
-        target : tensor
-            Data vector
-        param_list : list of tensors
-            List of parameter tensors, matching
-            ordering of the distributions parameters
-            in loglike and logprior
-        cov : tensor
-            Data covariance if it is parameter dependent
+            Model prediction to evaluate in likelihood
         """
-        return self.loglike.forward(prediction, target, cov=cov) \
-               + self.logprior(param_list)
+        return self.loglike(prediction) + self.logprior()
 
+
+class LogUniformPrior:
+    """
+    Negative log uniform prior
+    """
+    def __init__(self, lower_bound, upper_bound):
+        """
+        Parameters
+        ----------
+        lower_bound, upper_bound : tensors
+            Tensors holding the min and max of the allowed
+            parameter value. Tensors should match input params
+            in shape.
+        """
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.norm = torch.sum(torch.log(1/(upper_bound - lower_bound)))
+
+    def forward(self, params):
+        """
+        Evalute uniform logprior on a parameter tensor.
+
+        Parameters
+        ----------
+        params : tensor
+            Parameter tensor to evaluate prior on.
+        """
+        # out of bounds if sign of residual is equal
+        lower_sign = torch.sign(self.lower_bound - params)
+        upper_sign = torch.sign(self.upper_bound - params)
+        # aka if sum(abs(sign)) == 2
+        out = torch.abs(lower_sign + upper_sign) == 2
+        if out.any():
+            return np.inf
+        return self.norm
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogGaussPrior:
+    """
+    Negative log Gaussian prior
+    """
+    def __init__(self, mean, cov, sparse_cov=True):
+        """
+        mean and cov must match shape of params, unless
+        sparse_cov == False, in which case cov is 2D matrix
+        dotted into params.ravel()
+
+        Parameters
+        ----------
+        mean : tensor
+            Parameter mean tensor, matching param
+        cov : tensor
+            Parameter covariance tensor
+        sparse_cov : bool, optional
+            If True, cov is the diagonal of the covariance
+            else ,cov is a 2D matrix dotted into params.ravel()
+        """
+        self.mean = mean
+        self.cov = cov
+        self.sparse_cov = sparse_cov
+        if self.sparse_cov:
+            self.icov = 1 / self.cov
+            self.logdet = torch.sum(torch.log(cov))
+            self.ndim = sum(cov.shape)
+        else:
+            self.icov = torch.linalg.pinv(cov)
+            self.logdet = torch.slogdet(cov)
+            self.ndim = len(cov)
+        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+
+    def forward(self, params):
+        """
+        Evaluate negative log Gaussian prior
+
+        Parameters
+        ----------
+        params : tensor
+            Parameter tensor
+        """
+        res = params - self.mean
+        if self.sparse_cov:
+            chisq = 0.5 * torch.sum(res**2 * self.icov)
+        else:
+            res = res.ravel()
+            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+
+        return chisq + self.norm
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class ParamDict:
+    """
+    An object holding a dictionary of model parameters.
+    """
+    def __init__(self, params):
+        self.params = params
+        self.keys = list(self.params.keys())
+
+    def __mul__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: self.params[k] * other.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: self.params[k] * other for k in self.keys})
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __imul__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys:
+                self.params[k] *= other.params[k]
+        else:
+            for k in self.keys:
+                self.params[k] *= other
+        return self
+
+    def __div__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: self.params[k] / other.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: self.params[k] / other for k in self.keys})
+
+    def __rdiv__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: other.params[k] / self.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: other / self.params[k] for k in self.keys})
+        return self
+
+    def __idiv__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys:
+                self.params[k] /= other.params[k]
+        else:
+            for k in self.keys:
+                self.params[k] /= other
+
+    def __add__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: self.params[k] + other.params[k] for k in self.keys})
+        else:
+            return ParamDict({k: self.params[k] + other for k in self.keys})
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __iadd__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys:
+                self.params[k] += other.params[k]
+        else:
+            for k in self.keys:
+                self.params[k] += other
+        return self
+
+    def __iter__(self):
+        return (p for p in self.params)
+
+    def clone(self):
+        """clone object"""
+        return ParamList({k: self.params[k].clone() for k in self.keys})
+
+    def copy(self):
+        """copy object"""
+        return ParamList({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys})
+
+    def detach(self):
+        """detach object"""
+        return ParamList({k: self.params[k].detach() for k in self.keys})
+
+    def __getitem__(self, key):
+        return self.params[key]
 
 

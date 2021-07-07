@@ -540,7 +540,9 @@ class SphHarmModel(SkyBase):
 
 class CompositeModel(torch.nn.Module):
     """
-    Multiple sky models, possibly on different devices
+    Multiple sky models, possibly on different devices.
+    To keep graph memory as small as possible, place
+    sky models that don't have parameters first in "models"
     """
     def __init__(self, models, sum_output=False, device=None):
         """
@@ -549,8 +551,8 @@ class CompositeModel(torch.nn.Module):
 
         Parameters
         ----------
-        models : list
-            List of sky model objects
+        models : OrderedDict
+            Dictionary of SkyBase objects to evaluate
         sum_output : bool, optional
             If True, sum output sky model from
             each model before returning. This only
@@ -558,41 +560,40 @@ class CompositeModel(torch.nn.Module):
             same kind, and if they have the same
             shape.
         device : str, optional
-            Device to move output to before summing
+            Device to move all outputs to before summing
             if sum_output
         """
-        self.models = models
+        super().__init__()
+        self.models = list(models.keys())
+        for k in models:
+            setattr(self, k, models[k])
         self.sum_output = sum_output
         self.device = device
 
-    def forward(self, models=None):
+    def forward(self, *args):
         """
         Forward pass sky models and append in a list
-
-        Parameters
-        ----------
-        models : list
-            List of sky models to use instead of self.models
-
-        Returns
-        -------
-        list
-            List of each sky model output or their sum
+        or sum the sky maps and return a sky_component
+        dictionary
         """
-        if models is not None:
-            models = self.models
-
-        sky_models = [mod.forward() for mod in models]
+        # forward the models
+        sky_components = [getattr(self, mod).forward() for mod in self.models]
         if self.sum_output:
             # assert only one kind of sky models
-            assert len(set([mod['kind'] for mod in models])) == 1
-            output = sky_models[0]
-            output['sky'] = torch.sum([utils.push(mode['sky'], self.device) for mode in sky_models], axis=0)
+            assert len(set([comp['kind'] for comp in sky_components])) == 1
+            # use first sky_component as placeholder
+            output = sky_components[0]
+            sky = torch.zeros_like(output['sky'], device=self.device)
+            for comp in sky_components:
+                sky += comp['sky'].to(self.device)
+            output['sky'] = sky
             # make sure other keys are on the same device
             for k in output:
                 if isinstance(output[k], torch.Tensor):
                     if output[k].device.type != self.device:
                         output[k] = output[k].to(self.device)
+        else:
+            output = sky_components
 
         return output
 

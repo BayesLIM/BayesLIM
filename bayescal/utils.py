@@ -1184,7 +1184,7 @@ def ang_hash(zen):
                  len(zen)))
 
 
-def push(tensor, device):
+def push(tensor, device, parameter=False):
     """
     Push a tensor to a new device. If the tensor
     is a parameter, it instantiates the parameter
@@ -1196,13 +1196,16 @@ def push(tensor, device):
         A pytorch tensor, optionally a pytorch Parameter
     device : str
         The device to push it to
+    parameter : bool, optional
+        Make new tensor a parameter. This is done
+        by default if input is a Parameter
 
     Returns
     -------
     tensor
         The tensor on device
     """
-    if isinstance(tensor, torch.nn.Parameter):
+    if parameter or isinstance(tensor, torch.nn.Parameter):
         return torch.nn.Parameter(tensor.to(device))
     else:
         return tensor.to(device)
