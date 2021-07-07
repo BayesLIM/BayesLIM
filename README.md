@@ -1,4 +1,4 @@
-# bayescal
+# *BayesCal*
 
-## Bayesian Interferometric Calibration and Imaging for 21 cm Intensity Mapping
+### Bayesian Interferometric Calibration, Imaging, and Signal Extraction for Line Intensity Mapping
 
