@@ -147,7 +147,7 @@ class LogProb(torch.nn.Module):
     The log probabilty density of the likelihood times the prior,
     which is proportional to the log posterior up to a constant.
     """
-    def __init__(self, target, loglike, logprior):
+    def __init__(self, target, loglike, logprior=None):
         """
         Parameters
         ----------
@@ -168,7 +168,10 @@ class LogProb(torch.nn.Module):
         prediction : tensor
             Model prediction to evaluate in likelihood
         """
-        return self.loglike(prediction) + self.logprior()
+        logprob = self.loglike(prediction)
+        if self.logprior is not None:
+            logprob += self.logprior()
+        return  logprob
 
 
 class LogUniformPrior:
@@ -383,6 +386,9 @@ class ParamDict:
 
     def __getitem__(self, key):
         return self.params[key]
+
+    def __setitem__(self, key, val):
+        self.params[key] = val
 
     def __repr__(self):
         return self.params.__repr__()

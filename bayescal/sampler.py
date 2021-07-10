@@ -80,7 +80,7 @@ class HMC(SamplerBase):
     """
     Hamiltonian Monte Carlo sampler
     """
-    def __init__(self, potential_fn, x0, eps, mass, Nstep=10):
+    def __init__(self, potential_fn, x0, eps, mass, sparse_mass=True, Nstep=10):
         """
         Parameters
         ----------
@@ -93,7 +93,12 @@ class HMC(SamplerBase):
         eps : ParamDict
             Size of position step in units of x
         mass : ParamDict
-            Diagonal of mass matrix for sampling the momentum
+            Mass matrix
+        sparse_mass : bool, optional
+            If True, mass represents the diagonal
+            of the mass matrix. Otherwise, it is
+            a 2D tensor for each param.ravel()
+            in x0.
         Nstep : int, optional
             Number of leapfrog updates per step
         """
@@ -101,10 +106,17 @@ class HMC(SamplerBase):
         self.potential_fn = potential_fn
         self.fn_evals = 0
         self.Nstep = Nstep
+        self.sparse_mass = sparse_mass
         if isinstance(mass, torch.Tensor):
             mass = ParamDict({k: mass for k in x0})
         self.mass = mass
-        self.invmass = 1 / mass
+        invmass = {}
+        for k in mass:
+            if sparse_mass:
+                invmass[k] = 1 / mass[k]
+            else:
+                invmass[k] = torch.pinverse(mass[k])
+        self.invmass = ParamDict(invmass)
         if isinstance(eps, torch.Tensor):
             eps = ParamDict({k: eps for k in x0})
         self.eps = eps
@@ -119,8 +131,16 @@ class HMC(SamplerBase):
         p : tensor
             Momentum tensor
         """
-        K = p**2 * (self.invmass / 2)
-        return sum([sum(K[k]) for k in K])
+        if self.sparse_mass:
+            K = p**2 * (self.invmass / 2)
+            K = sum([sum(K[k]) for k in K])
+        else:
+            K = 0
+            for k in p:
+                prav = p[k].ravel()
+                K += prav @ self.invmass[k] @ prav / 2
+
+        return K
 
     def dUdx(self, x):
         """
@@ -136,10 +156,17 @@ class HMC(SamplerBase):
         """
         Draw a mean-zero random momentum vector from the mass matrix
         """
-        invmass = self.invmass
-        p = ParamDict({k: torch.randn(self.x[k].shape) * torch.sqrt(invmass[k]) for k in invmass.keys})
-
-        return p
+        mn = torch.distributions.multivariate_normal.MultivariateNormal
+        invm = self.invmass
+        p = {}
+        for k in invm:
+            x = self.x[k]
+            if self.sparse_mass:
+                p[k] = torch.randn(x.shape, device=x.device) * torch.sqrt(invm[k])
+            else:
+                N = x.shape.numel()
+                p[k] = mn(torch.zeros(N, dtype=x.dtype), invm[k]).sample().reshape(x.shape).to(x.device)
+        return ParamDict(p)
 
     def step(self):
         """
@@ -153,7 +180,7 @@ class HMC(SamplerBase):
 
         # run leapfrog steps from current position
         q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep,
-                                invmass=self.invmass)
+                                invmass=self.invmass, sparse_mass=self.sparse_mass)
 
         # evaluate metropolis acceptance
         H_new = self.K(p_new) + self._U
@@ -166,16 +193,44 @@ class HMC(SamplerBase):
 
         return accept
 
-    def optimize_mass(self):
+    def optimize_mass(self, Nback=None, sparse_mass=True, robust=False):
         """
         Optimize the mass matrix given
-        sampling history in self.chain
+        sampling history in self.chain.
+        Note that currently mass matrix is diagonal.
 
         Parameters
         ----------
-
+        Nback : int, optional
+            Number of samples starting
+            from the back of the chain
+            to use. Default is all samples.
+        sparse_mass : bool, optional
+            Compute diagonal (True) or full covariance (False)
+            of mass matrix
+        robust : bool, optional
+            Use robust measure of the variance.
         """
-        raise NotImplementedError
+        self.sparse_mass = sparse_mass
+        for k, chain in self.chain.items():
+            if Nback is None:
+                Nback = len(chain) 
+            device = self.x[k].device
+            dtype = self.x[k].dtype
+            c = np.array(chain)[-Nback:].T
+            if sparse_mass:
+                if robust:
+                    invm = torch.tensor(np.median(np.abs(c - np.median(c, axis=1)), axis=1),
+                                        dtype=dtype, device=device)
+                    ivnm = (invm * 1.42)**2
+                else:
+                    invm = torch.tensor(np.var(c, axis=1), dtype=dtype, device=device)
+                m = 1 / invm
+            else:
+                invm = torch.tensor(np.cov(c), dtype=dtype, device=device)
+                m = torch.pinverse(invm)
+            self.mass[k] = m
+            self.invmass[k] = invm
 
     def from_file(self, fname):
         """
@@ -201,6 +256,38 @@ class NUTS(HMC):
     """
     def __init__(self, ):
         raise NotImplementedError
+
+
+    def build_tree(self, ):
+        pass
+
+
+    def step(self):
+        """
+        Make a HMC step with metropolis update
+        """
+        # sample momentum vector
+        p = self.draw_momentum()
+
+        # copy temporary position tensor
+        q = self.x.copy()
+
+        # run leapfrog steps from current position
+        q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep,
+                                invmass=self.invmass, sparse_mass=self.sparse_mass)
+
+        # evaluate metropolis acceptance
+        H_new = self.K(p_new) + self._U
+        prob = torch.exp(self._H - H_new)
+        accept = np.random.rand() < prob
+
+        if accept:
+            self._H = H_new.detach()
+            self.x = q_new
+
+        return accept
+
+
 
 
 class Potential:
@@ -251,7 +338,7 @@ class Potential:
         return self.forward(x)
 
 
-def leapfrog(q, p, dUdq, eps, N, invmass=1):
+def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=False):
     """
     Perform N leapfrog steps for position and momentum
     states.
@@ -273,6 +360,9 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1):
     invmass : tensor or scalar, optional
         scalar or diagonal of inverse mass matrix
         if a tensor, must be on q device
+    sparse_mass : bool, optional
+        If True, invmass is inverse of cov diagonal
+        else, invmass is full inv cov
 
     Returns
     -------
@@ -289,7 +379,12 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1):
     for i in range(N):
         with torch.no_grad():
             # position full step
-            q += p * (eps * invmass)
+            if sparse_mass:
+                q += (eps * invmass) * p
+            else:
+                for k in q:
+                    q[k] += eps[k] * (invmass[k] @ p[k].ravel()).reshape(p[k].shape)
+
         if i != (N - 1):
             # momentum full step
             p -= dUdq(q) * eps

@@ -309,7 +309,7 @@ class PixelResponse(utils.PixInterp):
             Device to place object on
         """
         super().__init__(pixtype, npix, interp_mode=interp_mode,
-                         dtype=params.dtype, device=device)
+                         device=device)
         self.params = params
 
     def push(self, device):
@@ -381,7 +381,7 @@ class YlmResponse(PixelResponse):
     and you get a RunTimeError.
     """ 
     def __init__(self, params, l, m, mode='generate', interp_angs=None,
-                 powerbeam=True, freq_mode='channel', dtype=torch.complex64, device=None):
+                 powerbeam=True, freq_mode='channel', device=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -428,7 +428,6 @@ class YlmResponse(PixelResponse):
         super(YlmResponse, self).__init__(params, 'healpix', self.npix)
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
-        self.dtype = dtype
         self.powerbeam = powerbeam
         self.Ylm_cache = {}
         self.ang_cache = {}
@@ -462,7 +461,7 @@ class YlmResponse(PixelResponse):
             # generate it, may take a while
             # generate exact Y_lm
             Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m, device=self.device,
-                                    real_field=self.powerbeam, dtype=self.dtype)
+                                    real_field=self.powerbeam)
             if self.powerbeam and not self.neg_m:
                 Ylm[:, self.m > 0] *= 2
             # store it
@@ -501,7 +500,7 @@ class YlmResponse(PixelResponse):
         elif self.freq_mode == 'poly':
             # get polynomial A matrix wrt freq
             Ndeg = self.params.shape[3]
-            A = utils.gen_poly_A(freqs, Ndeg, dtype=self.params.dtype, device=self.device)
+            A = utils.gen_poly_A(freqs, Ndeg, device=self.device)
 
             # first do fast dot product along Ndeg axis
             p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)

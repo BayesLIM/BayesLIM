@@ -10,6 +10,7 @@ import copy
 import itertools
 
 from . import utils, beam_model
+from .utils import _float, _cfloat
 
 
 D2R = utils.D2R
@@ -134,7 +135,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
     2. caching the fringe on the sky
         This interpolates an existing fringe
     """
-    def __init__(self, antpos, freqs, parameter=False, dtype=torch.float32, device=None,
+    def __init__(self, antpos, freqs, parameter=False, device=None,
                  cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest',
                  redtol=0.1):
         """
@@ -153,10 +154,6 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         parameter : bool, optional
             If True, antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
-        dtype : torch dtype
-            Data type of baseline vectors in the fringe term
-            The complex fringe is 2x the baseline dtype
-            i.e. bl_vec [float32] -> fringe [complex64]
         device : str, optional
             device to hold baseline vector and fringe term
             none is cpu.
@@ -183,17 +180,18 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         super(utils.PixInterp, self).__init__()
         npix = cache_f_angs.shape[-1] if cache_f else None
         super().__init__('healpix', npix, interp_mode=interp_mode,
-                         dtype=dtype, device=device)
+                         device=device)
         # set location metadata
         self.ants = sorted(antpos.keys())
-        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=dtype, device=device)
-        self.freqs = torch.as_tensor(freqs, dtype=dtype, device=device)
+        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device=device)
+        self.freqs = torch.as_tensor(freqs, dtype=_float(), device=device)
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
         self.cache = {}
         self.parameter = parameter
         self.redtol = redtol
+        self.device = device
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
@@ -295,6 +293,11 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
 
         return ang, match
 
+    def reset_freqs(self, freqs):
+        """reset frequency array"""
+        self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
+        self.interp_cache = {}
+
     def _fringe(self, bl, zen, az):
         """compute fringe term"""
         # check for pointing-vec s caching
@@ -303,7 +306,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             # compute the pointing vector at each sky location
             zen = zen * D2R
             az = az * D2R
-            s = torch.zeros(3, len(zen), dtype=self.dtype, device=self.device)
+            s = torch.zeros(3, len(zen), dtype=_float(), device=self.device)
             # az is East of North
             s[0] = torch.sin(zen) * torch.sin(az)  # x
             s[1] = torch.sin(zen) * torch.cos(az)  # y

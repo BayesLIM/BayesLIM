@@ -12,4 +12,7 @@ from . import rime
 from . import cosmo
 from . import sampler
 
+from .optim import ParamDict
+
+
 __version__ = "0.0.1"

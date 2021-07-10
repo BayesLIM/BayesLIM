@@ -27,19 +27,6 @@ if not import_healpy:
         warnings.warn("could not import healpy")
 
 
-def set_dtype(real_dtype):
-    """
-    Set the global torch data type.
-    The complex dtype is 2 x real_dtype
-
-    Parameters
-    ----------
-    real_dtype : torch.dtype
-        The default dtype for real tensors
-    """
-    pass
-
-
 ########################################
 ######### Linear Algebra Tools #########
 ########################################
@@ -47,6 +34,39 @@ def set_dtype(real_dtype):
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
 D2R = np.pi / 180
+
+
+def _float(numpy=False):
+    """Manipulate with torch.set_default_dtype()"""
+    float_type = torch.get_default_dtype()
+    if not numpy:
+        return float_type
+    else:
+        if float_type == torch.float16:
+            return np.float16
+        elif float_type == torch.float32:
+            return np.float32
+        elif float_type == torch.float64:
+            return np.float64
+
+
+def _cfloat(numpy=False):
+    """Manipulate with torch.set_default_dtype()"""
+    float_type = torch.get_default_dtype()
+    if not numpy:
+        if float_type == torch.float64:
+            return torch.complex128
+        elif float_type == torch.float32:
+            return torch.complex64
+        elif float_type == torch.float16:
+            return torch.complex32
+    else:
+        if float_type == torch.float64:
+            return np.complex128
+        elif float_type == torch.float32:
+            return np.complex64
+        elif float_type == torch.float16:
+            return np.complex32
 
 
 def cmult(a, b):
@@ -459,7 +479,7 @@ def gen_lm(lmax, real_field=True):
 
 
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
-                dtype=torch.complex64, device=None):
+                device=None):
     """
     Generate spherical harmonic forward model matrix.
     Note for lmax > 50, this can begin to take >= minutes to run.
@@ -482,8 +502,6 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
         so truncate negative m values (used for lmax).
     device : str, optional
         Device to push Ylm to.
-    dtype : dtype, optional
-        Data type of output matrix.
 
     Returns
     -------
@@ -493,25 +511,20 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     """
     if lmax is not None:
         l, m = gen_lm(lmax, real_field=real_field)
-    torch_type = type(dtype) == torch.dtype
 
-    if torch_type:
-        Y = torch.zeros(len(theta), len(l), dtype=dtype, device=device)
-    else:
-        Y = np.zeros((len(theta), len(l)), dtype=dtype)
+    Y = torch.zeros(len(theta), len(l), dtype=dtype, device=device)
 
     # iterate over coefficients
     for i, (_l, _m) in enumerate(zip(l, m)):
         y = special.sph_harm(_m, _l, phi, theta)
-        if torch_type:
-            y = torch.as_tensor(y, dtype=dtype, device=device)
+        y = torch.as_tensor(y, dtype=dtype, device=device)
         Y[:, i] = y
 
     return Y
 
 
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
-                    decimate=True, dtype=torch.float32, device=None):
+                    decimate=True, device=None):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k j_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -567,14 +580,14 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         # get basis function
-        j = sph_bessel_func(_l, k, r, method=method, dtype=dtype, device=device)
+        j = sph_bessel_func(_l, k, r, method=method, dtype=_float(), device=device)
         jl[_l] = np.sqrt(2 / np.pi) * k[:, None] * j
         kbins[_l] = k
 
     return jl, kbins
 
 def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
-                    dtype=torch.float32, device=None):
+                    device=None):
     """
     Generate a spherical bessel radial basis function
 
@@ -599,11 +612,8 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     r_min, r_max : float, optional
         r_min and r_max of LIM survey. If None, will use
         min and max of r.
-    dtype : dtype, optional
-        torch or numpy dtype object that specifies
-        the data type of the output matrices
     device : str, optional
-        Device to place matrices on, if torch dtype
+        Device to place matrices on
 
     Returns
     -------
@@ -611,16 +621,13 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
         basis functions of shape (Nk, Nr)
     """
     # configure 
-    torch_type = type(dtype) == torch.dtype
     Nk = len(k)
     if r_min is None:
         r_min = r.min()
     if r_max is None:
         r_max = r.max()
-    if torch_type:
-        j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
-    else:
-        j = np.zeros((Nk, len(r)), dtype=dtype)
+
+    j = torch.zeros(Nk, len(r), dtype=_float(), device=device)
     # loop over kbins and fill j matrix
     for i, _k in enumerate(k):
         if method == 'default':
@@ -635,10 +642,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
         elif method == 'gebhardt':
             raise NotImplementedError
 
-        if torch_type:
-            j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
-        else:
-            j[i] = j_i
+        j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
 
     return j
 
@@ -712,7 +716,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     return np.asarray(k[:Nk])
 
 
-def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
+def gen_poly_A(freqs, Ndeg, device=None):
     """
     Generate design matrix (A) for polynomial of Ndeg across freqs,
     with coefficient ordering
@@ -735,8 +739,14 @@ def gen_poly_A(freqs, Ndeg, dtype=torch.float32, device=None):
     torch tensor
         Polynomial design matrix
     """
-    dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
-    A = torch.as_tensor([dfreqs**i for i in range(Ndeg)], dtype=dtype, device=device).T
+    ## TODO: implement this?
+    #from emupy.linear import setup_polynomial
+    #dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
+    #A = setup_polynomial(dfreqs[:, None], Ndeg-1, basis=basis)[0]
+    #A = torch.as_tensor(A, dtype=dtype, device=device)
+    dfreqs = (freqs - freqs.mean()) / 1e6  # In MHz
+    A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
+                        dtype=_float(), device=device).T
     return A
 
 
@@ -1066,7 +1076,7 @@ class PixInterp:
     Sky pixel spatial interpolation object
     """
     def __init__(self, pixtype, npix, interp_mode='nearest',
-                 dtype=torch.float32, device=None):
+                 device=None):
         """
         Parameters
         ----------
@@ -1076,8 +1086,6 @@ class PixInterp:
             Number of sky pixels in the beam
         interp_mode : str, optional
             Spatial interpolation method. ['nearest', 'bilinear']
-        dtype : torch dtype, optional
-            Data type to store weights as
         device : str, optional
             Device to place object on
         """
@@ -1087,7 +1095,6 @@ class PixInterp:
         self.npix = npix
         self.interp_cache = {}
         self.interp_mode = interp_mode
-        self.dtype = dtype
         self.device = device
 
     def get_interp(self, zen, az):
@@ -1128,7 +1135,7 @@ class PixInterp:
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
-                      torch.as_tensor(wgts, dtype=self.dtype, device=self.device))
+                      torch.as_tensor(wgts, dtype=_float(), device=self.device))
             self.interp_cache[h] = interp
 
         return interp
@@ -1155,6 +1162,53 @@ class PixInterp:
             nearest = m[..., inds.T]
             # multiply by weights and sum
             return torch.sum(nearest * wgts.T, axis=-1)
+
+
+def freq_interp(params, param_freqs, freqs, kind, axis,
+                fill_value='extrapolate'):
+    """
+    Interpolate the params tensor onto a new frequency basis
+
+    Parameters
+    ----------
+    params : tensor
+        A tensor to interpolate along axis
+    param_freqs : tensor
+        The frequencies [Hz] of params
+    freqs : tensor
+        Frequencies to interpolate onto [Hz]
+    kind : str
+        Kind of interpolation, 'nearest', linear', 'quadratic', ...
+    axis : int
+        Axis of params to interpolate
+    fill_value : str, optional
+        If nan, raise error if freqs is out of param_freqs
+        otherwise extrapolate
+
+    Returns
+    -------
+    tensor
+        Interpolated params
+    """
+    with torch.no_grad():
+        # determine if interpolation is necessary
+        match = [np.isclose(f, param_freqs, atol=1) for f in freqs]
+        if np.all(match):
+            indices = [np.argmin(param_freqs - f) for f in freqs]
+            index = [slice(None) for i in range(params.ndim)]
+            index[axis] - indices
+            return params[index]
+
+        from scipy.interpolate import interp1d
+        param = tensor2numpy(params, clone=True)
+        param_freqs = tensor2numpy(param_freqs)
+        freqs = tensor2numpy(freqs)
+
+        interp = interp1d(param_freqs, param, kind=kind, axis=axis,
+                          fill_value=fill_value)
+        interp_param = interp(freqs)
+
+        return torch.tensor(interp_param, device=params.device, dtype=params.dtype)
 
 
 #################################

@@ -5,6 +5,7 @@ import torch
 import numpy as np
 
 from . import telescope_model, calibration, beam_model, sky_model, utils
+from .utils import _float, _cfloat
 
 
 class RIME(torch.nn.Module):
@@ -21,8 +22,7 @@ class RIME(torch.nn.Module):
     where K is the interferometric fringe term.
     """
     def __init__(self, sky, telescope, beam, ant2beam, array, sim_bls,
-                 obs_jds, freqs, data_bls=None, vis_dtype=torch.cfloat,
-                 device=None):
+                 obs_jds, freqs, data_bls=None, device=None):
         """
         RIME object. Takes a model
         of the sky brightness, passes it through
@@ -71,8 +71,6 @@ class RIME(torch.nn.Module):
             redundant bl in sim_bls will be copied over to data_bls
             appropriately. Note this will not work if array.antpos
             is a parameter.
-        vis_dtype : torch dtype, optional
-            Data type of output visibilities.
         """
         super().__init__()
         self.sky = sky
@@ -82,7 +80,6 @@ class RIME(torch.nn.Module):
         self.array = array
         self.obs_jds = obs_jds
         self.Ntimes = len(obs_jds)
-        self.vis_dtype = vis_dtype
         self.device = device
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -163,7 +160,7 @@ class RIME(torch.nn.Module):
         # initialize visibility tensor
         Npol = self.beam.Npol
         vis = torch.zeros((Npol, Npol, self.Ndata_bls, self.Ntimes, self.Nfreqs),
-                          dtype=self.vis_dtype, device=self.device)
+                          dtype=_cfloat(), device=self.device)
 
         # clear pre-computed beam for YlmResponse type
         if self.beam.R.__class__ == beam_model.YlmResponse:

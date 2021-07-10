@@ -6,6 +6,7 @@ import numpy as np
 from scipy import special, interpolate
 
 from . import utils
+from .utils import _float, _cfloat
 
 
 class SkyBase(torch.nn.Module):
@@ -65,6 +66,15 @@ class SkyBase(torch.nn.Module):
             self.angs = self.angs.to(device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
+
+#    def freq_interp(self, freqs):
+#        """
+#        Interpolate sky model onto frequencies
+#        """
+#        # TODO: implement
+#        # interpolate params if necessary
+#        # set new frequency array
+#        self.freqs = torch.as_tensor(freqs, dtype=_float())
 
 
 class DefaultResponse:
@@ -194,7 +204,7 @@ class PointSourceResponse:
         - poly : fit a low-order polynomial across freqs
         - powerlaw : fit an amplitude and exponent across freqs
     """
-    def __init__(self, freqs, mode='poly', f0=None, dtype=torch.float32,
+    def __init__(self, freqs, mode='poly', f0=None,
                  device=None, Ndeg=None):
         """
         Choose a frequency parameterization for PointSourceModel
@@ -211,8 +221,6 @@ class PointSourceResponse:
             powerlaw - amplitude and powerlaw basis anchored at f0
         f0 : float, optional
             Fiducial frequency [Hz]. Used for poly and powerlaw.
-        dtype : torch dtype, optional
-            Tensor data type of point source params
         device : str, optional
             Device of point source params
         Ndeg : int, optional
@@ -229,6 +237,7 @@ class PointSourceResponse:
         self.dfreqs = (freqs - freqs[0]) / 1e6  # MHz
         self.mode = mode
         self.Ndeg = Ndeg
+        self.device = device
 
         # setup
         if self.mode == 'poly':
@@ -354,7 +363,7 @@ class PixelModelResponse:
             from a single l mode
     """
     def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
-                 device=None, transform_order=0, dtype=torch.float32,
+                 device=None, transform_order=0,
                  lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None,
                  radial_method='samushia', kbin_file=None):
         """
@@ -401,7 +410,6 @@ class PixelModelResponse:
         self.Nk = Nk
         self.decimate = decimate
         self.cosmo = cosmo
-        self.dtype = dtype
         self.radial_method = radial_method
         self.kbin_file = kbin_file
 
@@ -416,7 +424,7 @@ class PixelModelResponse:
             self.dr = self.r = self.r.min()
             jl, kbins = utils.gen_bessel2freq(self.l, freqs, cosmo,
                                               Nk=Nk, decimate=decimate,
-                                              device=device, dtype=dtype,
+                                              device=device,
                                               method=radial_method,
                                               kbin_file=kbin_file)
             self.jl = jl[list(jl.keys())[0]]
@@ -426,7 +434,7 @@ class PixelModelResponse:
         self.Ylm = None
         if self.spatial_mode == 'alm':
             self.Ylm = utils.gen_sph2pix(theta, phi, self.l, self.m, device=self.device,
-                                         real_field=True, dtype=self.dtype)
+                                         real_field=True)
 
         # assertions
         if self.freq_mode == 'bessel':
@@ -598,7 +606,7 @@ class CompositeModel(torch.nn.Module):
         return output
 
 
-def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
+def parse_catalogue(catfile, freqs, device=None,
                     parameter=False, freq_interp='linear'):
     """
     Read a point source catalogue YAML file.
@@ -625,12 +633,12 @@ def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
 
     # ensure frequencies are float
     if 'freqs' in d:
-        d['freqs'] = torch.as_tensor(np.array(d['freqs'], dtype=float), dtype=dtype)
+        d['freqs'] = torch.as_tensor(np.array(d['freqs'], dtype=float), dtype=_float())
 
     # load point positions
     sources = d['sources']
     angs = torch.tensor([np.array(sources['ra']),
-                         np.array(sources['dec'])], dtype=dtype)
+                         np.array(sources['dec'])], dtype=_float())
 
     if d['mode'] == 'channel':
         # collect Stokes I fluxes at specified frequencies
@@ -639,7 +647,7 @@ def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
         # interpolate onto freqs
         interp = interpolate.interp1d(d['freqs'], S, kind=freq_interp, axis=0,
                                       fill_value='extrapolate')
-        params = torch.tensor(interp(freqs), dtype=dtype)[None, None, :, :]
+        params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, :]
 
     elif d['mode'] == 'powerlaw':
         # ensure frequencies are float
@@ -664,7 +672,7 @@ def parse_catalogue(catfile, freqs, dtype=torch.float32, device=None,
     return sky
 
 
-def stokes2linear(S, dtype=torch.complex64):
+def stokes2linear(S):
     """
     Convert Stokes parameters to coherency matrix
     for xyz cartesian (aka linear) feed basis.
@@ -705,18 +713,18 @@ def stokes2linear(S, dtype=torch.complex64):
     device = S.device
     if len(S) == 1:
         # assume Stokes I was fed
-        B = torch.zeros(1, 1, *S.shape[1:], dtype=dtype, device=device)
+        B = torch.zeros(1, 1, *S.shape[1:], dtype=_float(), device=device)
         B[0, 0] = S[0]
     elif len(S) == 3:
         # assume fractional Q, U, V was fed.
-        B = torch.zeros(2, 2, *S.shape[1:], dtype=dtype, device=device)
+        B = torch.zeros(2, 2, *S.shape[1:], dtype=_float(), device=device)
         B[0, 0] = 1 + S[0]
         B[0, 1] = S[1] + 1j * S[2]
         B[1, 0] = S[1] - 1j * S[2]
         B[1, 1] = 1 - S[0]
     elif len(S) == 4:
         # assume 4-Stokes was fed
-        B = torch.zeros(2, 2, *S.shape[1:], dtype=dtype, device=device)
+        B = torch.zeros(2, 2, *S.shape[1:], dtype=_float(), device=device)
         B[0, 0] = S[0] + S[1]
         B[0, 1] = S[2] + 1j * S[3]
         B[1, 0] = S[2] - 1j * S[3]
