@@ -56,11 +56,12 @@ class SamplerBase:
     def get_chain(self):
         return {k: torch.as_tensor(self.chain[k]) for k in self.chain.keys()}
 
-    def _checkpoint(self, attrs=[], overwrite=False):
+    def _checkpoint(self, attrs=[], outfile=None, overwrite=False):
         """
         Save the current state of the chain, parameters,
         and forward model to self.outdir as mcmc_run00.npz
         """
+        raise NotImplementedError
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
 
@@ -70,7 +71,8 @@ class SamplerBase:
             run_ind = 0
         else:
             run_ind = int(cfiles[-1].split('_')[-1][3:5]) + 1
-        outfile = self.outdir + "/mcmc_run{:02d}.npz".format(run_ind)
+        if outfile is None:
+            outfile = self.outdir + "/mcmc_run{:02d}.npz".format(run_ind)
         kwargs = {attr: getattr(self, attr) for attr in attrs}
         np.savez(outfile, chain=chain, accept_ratio=self.accept_ratio,
                  _acceptances=self._acceptances, x=self.x, outdir=self.outdir, **kwargs)
@@ -257,10 +259,8 @@ class NUTS(HMC):
     def __init__(self, ):
         raise NotImplementedError
 
-
     def build_tree(self, ):
         pass
-
 
     def step(self):
         """
@@ -286,8 +286,6 @@ class NUTS(HMC):
             self.x = q_new
 
         return accept
-
-
 
 
 class Potential:
