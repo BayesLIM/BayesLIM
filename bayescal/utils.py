@@ -526,7 +526,7 @@ def legendre(l, m, z):
     array
         Legendre function at z
     """
-    norm = 1 / special.gamma(1 - m) * ((z + 1) / (z - 1))**(m/2)
+    norm = ((z + 1) / (z - 1))**(m/2)
     return norm * special.hyp2f1(-l, l+1, 1-m, (1-z)/2)
 
 
