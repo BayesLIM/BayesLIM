@@ -478,6 +478,58 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
+def sph_harm(l, m, theta, phi):
+    """
+    Spherical harmonic
+
+    .. math::
+
+        Y_{lm}(\theta,\phi) = \sqrt{\frac{2l+1}{4\pi}\frac{(l-m)!}{(l+m)!}}
+                                e^{im\phi}P_{lm}(\cos(\theta))
+
+    Parameters
+    ----------
+    l, m : array
+        Degree l and order m of the spherical harmonic.
+        Non integer values can be supplied
+    theta, phi : array
+        co-latitude [0, pi] and azimuth [0, 2pi] arrays
+        in radians
+
+    Returns
+    -------
+    array
+        Ylm harmonic of len Npix
+    """
+    norm = np.sqrt((2*l+1) / (4*np.pi) * special.factorial(l - m) / special.factorial(l + m))
+    return norm * np.exp(1j*m*phi) * legendre(l, m, np.cos(theta))
+
+
+def legendre(l, m, z):
+    """
+    Associated Legendre function of the first kind
+    in hypergeometric form, aka Ferrers function
+
+    .. math::
+
+        P_{lm}(z) = \frac{1}{\Gamma(1-m)}\left(\frac{z+1}{z-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-z)/2)
+
+    Parameters
+    ----------
+    l, m : array_like
+        Degree and order of the associated Legendre function
+    z : array_like
+        Argument of Legendre function, bounded by |z|<1
+
+    Returns
+    -------
+    array
+        Legendre function at z
+    """
+    norm = 1 / special.gamma(1 - m) * ((z + 1) / (z - 1))**(m/2)
+    return norm * special.hyp2f1(-l, l+1, 1-m, (1-z)/2)
+
+
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
                 theta_max=None, device=None):
     """
