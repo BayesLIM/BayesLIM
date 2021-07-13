@@ -479,7 +479,7 @@ def gen_lm(lmax, real_field=True):
 
 
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
-                device=None):
+                theta_max=None, device=None):
     """
     Generate spherical harmonic forward model matrix.
     Note for lmax > 50, this can begin to take >= minutes to run.
@@ -500,6 +500,11 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     real_field : bool, optional
         If True, treat sky as real-valued
         so truncate negative m values (used for lmax).
+    theta_max : float, optional
+        If None, compute standard spherical harmonics.
+        If fed, this is the maximum colatitude of a polar
+        cap angular mask [deg], in which case compute the
+        # modified spherical harmonics of Samushia2019.
     device : str, optional
         Device to push Ylm to.
 
@@ -512,12 +517,12 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
     if lmax is not None:
         l, m = gen_lm(lmax, real_field=real_field)
 
-    Y = torch.zeros(len(theta), len(l), dtype=dtype, device=device)
+    Y = torch.zeros(len(theta), len(l), dtype=_cfloat(), device=device)
 
     # iterate over coefficients
     for i, (_l, _m) in enumerate(zip(l, m)):
         y = special.sph_harm(_m, _l, phi, theta)
-        y = torch.as_tensor(y, dtype=dtype, device=device)
+        y = torch.as_tensor(y, dtype=_cfloat(), device=device)
         Y[:, i] = y
 
     return Y
@@ -593,7 +598,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
 
     Parameters
     ----------
-    l : int
+    l : int or float
         Integer angular l mode
     k : array_like
         k modes [cMpc^-1]
