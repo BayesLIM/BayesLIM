@@ -620,8 +620,9 @@ def gen_sph_cap_l(theta_max, lmax, theta_min=0):
     array
         Array of float degrees l that satisfy BC
     """
+    raise NotImplementedError
     l = np.linspace(0, lmax, 1000000)
-    y = 
+    #y = 
 
 
 
