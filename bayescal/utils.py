@@ -502,14 +502,14 @@ def sph_harm(l, m, theta, phi):
         Ylm harmonic of len Npix
     """
     norm = np.sqrt((2*l+1) / (4*np.pi) * special.factorial(l - m) / special.factorial(l + m))
-    return norm * np.exp(1j*m*phi) * legendre(l, m, np.cos(theta))
+    return norm * np.exp(1j*m*phi) * Plm(l, m, np.cos(theta))
 
 
-def legendre(l, m, z):
+def Plm(l, m, z, deriv=False):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.1
+    DLMF 14.3.1 with interval -1 < z < 1
 
     .. math::
 
@@ -523,14 +523,57 @@ def legendre(l, m, z):
         Order of the associated Legendre function
     z : array_like
         Argument of Legendre function, bounded by |z|<1
+    deriv : bool, optional
+        If True return derivative wrt z
 
     Returns
     -------
     array
-        Legendre function at z
+        Legendre function of first kind at z
     """
-    norm = np.abs((z + 1) / (z - 1))**(m/2)
-    return norm * hypF(-l, l+1, 1-m, (1-z)/2)
+    if not deriv:
+        norm = np.abs((z + 1) / (z - 1))**(m/2)
+        P = norm * hypF(-l, l+1, 1-m, (1-z)/2)
+        return P
+    else:
+        norm = 1 / (1 - z**2)
+        dPdz = norm * ((m - l - 1) * Plm(l+1, m, z) + (l+1) * z * Plm(l, m, z))
+        return dPdz
+
+
+def Qlm(l, m, z, deriv=False):
+    """
+    Associated Legendre function of the second kind
+    in hypergeometric form, aka Ferrers function
+    DLMF 14.3.12 with interval -1 < z < 1
+
+    Parameters
+    ----------
+    l : float or array
+        Degree of the associated Legendre function
+    m : int or array
+        Order of the associated Legendre function
+    z : array_like
+        Argument of Legendre function, bounded by |z|<1
+    deriv : bool, optional
+        If True return derivative wrt z
+
+    Returns
+    -------
+    array
+        Legendre function of second kind at z
+    """
+    if not deriv:
+        w1 = 2**m * special.gamma((l+m+1)/2) / special.gamma((l-m+2)/2) \
+             * (1-z**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z**2)
+        w2 = 2**m * special.gamma((l+m+2)/2) / special.gamma((l-m+1)/2) \
+             * z * (1-z**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z**2)
+        Q = .5*np.pi*(-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
+        return Q
+    else:
+        norm = 1 / (1 - z**2)
+        dQdz = norm * ((m - l - 1) * Qlm(l+1, m, z) + (l+1) * z * Qlm(l, m, z))
+        return dQdz
 
 
 def hypF(a, b, c, z):
@@ -557,8 +600,33 @@ def hypF(a, b, c, z):
         return special.hyp2f1(a, b, c, z) / special.gamma(c)
 
 
+def gen_sph_cap_l(theta_max, lmax, theta_min=0):
+    """
+    Compute associated Legendre function degrees l on
+    the spherical cap or ring given boundary condition
+    that d P_lm(theta) d_theta = 0 at theta_min and max
+
+    Parameters
+    ----------
+    theta_max : float
+        Maximum co-latitude of cap [rad]
+    lmax : int
+        Maximum l mode to compute out to
+    theta_min : float
+        Minimum co-latitude of ringed-cap
+
+    Returns
+    -------
+    array
+        Array of float degrees l that satisfy BC
+    """
+    l = np.linspace(0, lmax, 1000000)
+    y = 
+
+
+
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
-                theta_max=None, device=None):
+                device=None):
     """
     Generate spherical harmonic forward model matrix.
     Note for lmax > 50, this can begin to take >= minutes to run.
@@ -600,7 +668,7 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
 
     # iterate over coefficients
     for i, (_l, _m) in enumerate(zip(l, m)):
-        y = special.sph_harm(_m, _l, phi, theta)
+        y = sph_harm(_l, _m, theta, phi)
         y = torch.as_tensor(y, dtype=_cfloat(), device=device)
         Y[:, i] = y
 
