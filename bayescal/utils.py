@@ -549,7 +549,7 @@ def hypF(a, b, c, z):
     c : int
     z : float
     """
-    if c < 0:
+    if c <= 0:
         n = -c
         norm = special.poch(a, n+1) * special.poch(b, n+1) / special.factorial(n+1) * z**(n+1)
         return norm * special.hyp2f1(a+n+1, b+n+1, n+2, z)
