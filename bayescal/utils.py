@@ -505,19 +505,45 @@ def sph_harm(l, m, theta, phi):
     return norm * np.exp(1j*m*phi) * legendre(l, m, np.cos(theta))
 
 
+def hypF(a, b, c, z):
+    """
+    Gauss hypergeometric function.
+    Catches the case where c is < 0
+    DLMF 15.2.3_5
+
+    .. math::
+
+        F = \frac{_2F_1(a, b, c, z)}{\Gamma(c)} 
+
+    Parameters
+    ----------
+    a, b : float
+    c : int
+    z : float
+    """
+    if c < 0:
+        n = -c
+        norm = special.poch(a, n+1) * special.poch(b, n+1) / special.factorial(n+1) * z**(n+1)
+        return norm * special.hyp2f1(a+n+1, b+n+1, n+2, z)
+    else:
+        return special.hyp2f1(a, b, c, z) / special.gamma(c)
+
 def legendre(l, m, z):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
+    DLMF 14.3.1
 
     .. math::
 
-        P_{lm}(z) = \frac{1}{\Gamma(1-m)}\left(\frac{z+1}{z-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-z)/2)
+        P_{lm}(z) = \left(\frac{z+1}{z-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-z)/2)
 
     Parameters
     ----------
-    l, m : array_like
-        Degree and order of the associated Legendre function
+    l : float or array
+        Degree of the associated Legendre function
+    m : int or array
+        Order of the associated Legendre function
     z : array_like
         Argument of Legendre function, bounded by |z|<1
 
@@ -527,7 +553,7 @@ def legendre(l, m, z):
         Legendre function at z
     """
     norm = ((z + 1) / (z - 1))**(m/2)
-    return norm * special.hyp2f1(-l, l+1, 1-m, (1-z)/2)
+    return norm * hypF(-l, l+1, 1-m, (1-z)/2)
 
 
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
