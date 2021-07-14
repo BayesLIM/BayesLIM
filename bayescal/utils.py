@@ -505,29 +505,6 @@ def sph_harm(l, m, theta, phi):
     return norm * np.exp(1j*m*phi) * legendre(l, m, np.cos(theta))
 
 
-def hypF(a, b, c, z):
-    """
-    Gauss hypergeometric function.
-    Catches the case where c is < 0
-    DLMF 15.2.3_5
-
-    .. math::
-
-        F = \frac{_2F_1(a, b, c, z)}{\Gamma(c)} 
-
-    Parameters
-    ----------
-    a, b : float
-    c : int
-    z : float
-    """
-    if c < 0:
-        n = -c
-        norm = special.poch(a, n+1) * special.poch(b, n+1) / special.factorial(n+1) * z**(n+1)
-        return norm * special.hyp2f1(a+n+1, b+n+1, n+2, z)
-    else:
-        return special.hyp2f1(a, b, c, z) / special.gamma(c)
-
 def legendre(l, m, z):
     """
     Associated Legendre function of the first kind
@@ -552,8 +529,32 @@ def legendre(l, m, z):
     array
         Legendre function at z
     """
-    norm = ((z + 1) / (z - 1))**(m/2)
+    norm = np.abs((z + 1) / (z - 1))**(m/2)
     return norm * hypF(-l, l+1, 1-m, (1-z)/2)
+
+
+def hypF(a, b, c, z):
+    """
+    Gauss hypergeometric function.
+    Catches the case where c is < 0
+    DLMF 15.2.3_5
+
+    .. math::
+
+        F = \frac{_2F_1(a, b, c, z)}{\Gamma(c)} 
+
+    Parameters
+    ----------
+    a, b : float
+    c : int
+    z : float
+    """
+    if c < 0:
+        n = -c
+        norm = special.poch(a, n+1) * special.poch(b, n+1) / special.factorial(n+1) * z**(n+1)
+        return norm * special.hyp2f1(a+n+1, b+n+1, n+2, z)
+    else:
+        return special.hyp2f1(a, b, c, z) / special.gamma(c)
 
 
 def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
