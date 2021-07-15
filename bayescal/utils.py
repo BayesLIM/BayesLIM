@@ -489,7 +489,7 @@ def sph_harm(l, m, theta, phi):
 
     Parameters
     ----------
-    l, m : array
+    l, m : float
         Degree l and order m of the spherical harmonic.
         Non integer values can be supplied
     theta, phi : array
@@ -517,9 +517,9 @@ def Plm(l, m, z, deriv=False):
 
     Parameters
     ----------
-    l : float or array
+    l : float
         Degree of the associated Legendre function
-    m : int or array
+    m : int
         Order of the associated Legendre function
     z : array_like
         Argument of Legendre function, bounded by |z|<1
@@ -531,13 +531,30 @@ def Plm(l, m, z, deriv=False):
     array
         Legendre function of first kind at z
     """
+    # if z is a scalar, convert to flat array
+    scalar = isinstance(z, (int, float))
+    if not scalar:
+        z = np.atleast_1d(z)
+    # compute Plm
     if not deriv:
-        norm = np.abs((z + 1) / (z - 1))**(m/2)
-        P = norm * hypF(-l, l+1, 1-m, (1-z)/2)
+        P = np.zeros_like(z)
+        # pick out non-singularities
+        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
+        # compute Plm for non singular points
+        norm = np.abs((z[s] + 1) / (z[s] - 1))**(m/2)
+        P[s] = norm * hypF(-l, l+1, 1-m, (1-z[s])/2)
+        if scalar:
+            P = P[0]
         return P
+    # compute derivative
     else:
-        norm = 1 / (1 - z**2)
-        dPdz = norm * ((m - l - 1) * Plm(l+1, m, z) + (l+1) * z * Plm(l, m, z))
+        dPdz = np.zeros_like(z)
+        # pick out non-singularities
+        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
+        norm = 1 / (1 - z[s]**2)
+        dPdz[s] = norm * ((m - l - 1) * Plm(l+1, m, z[s]) + (l+1) * z[s] * Plm(l, m, z[s]))
+        if scalar:
+            dPdz = dPdz[0]
         return dPdz
 
 
@@ -549,9 +566,9 @@ def Qlm(l, m, z, deriv=False):
 
     Parameters
     ----------
-    l : float or array
+    l : float
         Degree of the associated Legendre function
-    m : int or array
+    m : int
         Order of the associated Legendre function
     z : array_like
         Argument of Legendre function, bounded by |z|<1
@@ -563,16 +580,27 @@ def Qlm(l, m, z, deriv=False):
     array
         Legendre function of second kind at z
     """
+    # if z is a scalar, convert to flat array
+    scalar = isinstance(z, (int, float))
+    if not scalar:
+        z = np.atleast_1d(z)
+    # compute Qlm
     if not deriv:
+        Q = np.zeros_like(z)
+        # pick out non-singularities
+        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
         w1 = 2**m * special.gamma((l+m+1)/2) / special.gamma((l-m+2)/2) \
-             * (1-z**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z**2)
+             * (1-z[s]**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z**2)
         w2 = 2**m * special.gamma((l+m+2)/2) / special.gamma((l-m+1)/2) \
-             * z * (1-z**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z**2)
-        Q = .5*np.pi*(-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
+             * z[s] * (1-z[s]**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z[s]**2)
+        Q[s] = .5*np.pi*(-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
         return Q
     else:
-        norm = 1 / (1 - z**2)
-        dQdz = norm * ((m - l - 1) * Qlm(l+1, m, z) + (l+1) * z * Qlm(l, m, z))
+        dQdz = np.zeros_like(z)
+        # pick out non-singularities
+        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
+        norm = 1 / (1 - z[s]**2)
+        dQdz[s] = norm * ((m - l - 1) * Qlm(l+1, m, z[s]) + (l+1) * z[s] * Qlm(l, m, z[s]))
         return dQdz
 
 
