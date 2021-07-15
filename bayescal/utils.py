@@ -533,7 +533,7 @@ def Plm(l, m, z, deriv=False):
     """
     # if z is a scalar, convert to flat array
     scalar = isinstance(z, (int, float))
-    if not scalar:
+    if scalar:
         z = np.atleast_1d(z)
     # compute Plm
     if not deriv:
@@ -582,7 +582,7 @@ def Qlm(l, m, z, deriv=False):
     """
     # if z is a scalar, convert to flat array
     scalar = isinstance(z, (int, float))
-    if not scalar:
+    if scalar:
         z = np.atleast_1d(z)
     # compute Qlm
     if not deriv:
@@ -590,7 +590,7 @@ def Qlm(l, m, z, deriv=False):
         # pick out non-singularities
         s = ~np.isclose(np.abs(z), 1, atol=1e-10)
         w1 = 2**m * special.gamma((l+m+1)/2) / special.gamma((l-m+2)/2) \
-             * (1-z[s]**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z**2)
+             * (1-z[s]**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z[s]**2)
         w2 = 2**m * special.gamma((l+m+2)/2) / special.gamma((l-m+1)/2) \
              * z[s] * (1-z[s]**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z[s]**2)
         Q[s] = .5*np.pi*(-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
