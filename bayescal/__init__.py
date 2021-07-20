@@ -11,6 +11,7 @@ from . import telescope_model
 from . import rime
 from . import cosmo
 from . import sampler
+from . import special
 
 from .optim import ParamDict
 

@@ -4,3 +4,18 @@
 
 
 ![flowchart](https://github.com/nkern/bayescal/blob/main/docs/source/_static/img/flowchart.png)
+
+
+
+# Dependencies
+
+`pytorch`
+`numpy`
+`scipy`
+`astropy`
+
+## Optional Dependencies
+
+`mpmath`
+`healpy`
+`pyuvdata`

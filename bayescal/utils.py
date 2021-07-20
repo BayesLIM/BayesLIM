@@ -3,12 +3,12 @@ Utility module
 """
 import numpy as np
 import torch
-from scipy import special
-from scipy.special import spherical_jn as jn
-from scipy.special import spherical_yn as yn
+from scipy.special import spherical_jn as jn, spherical_yn as yn, voigt_profile
+from scipy.integrate import quad
 import copy
 import warnings
 
+from . import special
 from .data import DATA_PATH
 
 # try to import healpy
@@ -478,187 +478,72 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
-def sph_harm(l, m, theta, phi):
+def sph_stripe_degrees(m, theta_min, theta_max, lmax, dl=0.1):
     """
-    Spherical harmonic
+    Compute associated Legendre function degrees l on
+    the spherical cap or stripe given boundary conditions.
+
+    theta_min == 0 and theta_max < pi:
+        This is a spherical cap, with boundary conditions
+            P_lm(theta_max) = 0 and
+            m == 0: d P_lm(theta_min) / d theta = 0
+            m  > 0: P_lm(theta_min) = 0
+    theta_min > 0 and theta_max < pi:
+        This is a spherical stripe with BC
+            P_lm(theta_min) = 0 and
+            P_lm(theta_max) = 0
+
+    Parameters
+    ----------
+    m : int or array
+        unique integer order m
+    theta_min : float
+        Minimum co-latitude of stripe [rad]
+    theta_max : float
+        Maximum co-latitude of stripe [rad]
+    lmax : int
+        Maximum degree l to compute for each m
+    dl : float, optional
+        Sampling density in l from m to lmax
+
+    Returns
+    -------
+    dict
+        Dictionary of float l values for each input
+        m integer
+    """
+    assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
+    ls = {}
+    z_min, z_max = np.cos(theta_min), np.cos(theta_max)
+    m = np.atleast_1d(m)
+    for _m in m:
+        l = _m + np.arange(0, (lmax - _m)//dl + 1) * dl
+        if np.isclose(theta_min, 0):
+            # spherical cap
+            y = 1#np.array([Plm(_l, _m, t_min) * Qlm(_l, _m, t_max) - Plm(_l, _m, t_max) * Qlm(_l, _m, t_min) for _l in l])
+
+        else:
+            # spherical stripe
+            y = special.Plm(l, _m, z_min) * special.Qlm(l, _m, z_max) \
+                          - special.Plm(l, _m, z_max) * special.Qlm(l, _m, z_min)
+
+        ls[_m] = get_zeros(l, y)
+
+    return ls
+
+
+def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
+                lmax=None, real_field=True, device=None):
+    """
+    Generate spherical harmonic forward model matrix.
+    Note for lmax > 50, this can begin to take >= minutes to run.
+
+    The onormalized spherical harmonic are
 
     .. math::
 
         Y_{lm}(\theta,\phi) = \sqrt{\frac{2l+1}{4\pi}\frac{(l-m)!}{(l+m)!}}
-                                e^{im\phi}P_{lm}(\cos(\theta))
-
-    Parameters
-    ----------
-    l, m : float
-        Degree l and order m of the spherical harmonic.
-        Non integer values can be supplied
-    theta, phi : array
-        co-latitude [0, pi] and azimuth [0, 2pi] arrays
-        in radians
-
-    Returns
-    -------
-    array
-        Ylm harmonic of len Npix
-    """
-    norm = np.sqrt((2*l+1) / (4*np.pi) * special.factorial(l - m) / special.factorial(l + m))
-    return norm * np.exp(1j*m*phi) * Plm(l, m, np.cos(theta))
-
-
-def Plm(l, m, z, deriv=False):
-    """
-    Associated Legendre function of the first kind
-    in hypergeometric form, aka Ferrers function
-    DLMF 14.3.1 with interval -1 < z < 1
-
-    .. math::
-
-        P_{lm}(z) = \left(\frac{z+1}{z-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-z)/2)
-
-    Parameters
-    ----------
-    l : float
-        Degree of the associated Legendre function
-    m : int
-        Order of the associated Legendre function
-    z : array_like
-        Argument of Legendre function, bounded by |z|<1
-    deriv : bool, optional
-        If True return derivative wrt z
-
-    Returns
-    -------
-    array
-        Legendre function of first kind at z
-    """
-    # if z is a scalar, convert to flat array
-    scalar = isinstance(z, (int, float))
-    if scalar:
-        z = np.atleast_1d(z)
-    # compute Plm
-    if not deriv:
-        P = np.zeros_like(z)
-        # pick out non-singularities
-        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
-        # compute Plm for non singular points
-        norm = np.abs((z[s] + 1) / (z[s] - 1))**(m/2)
-        P[s] = norm * hypF(-l, l+1, 1-m, (1-z[s])/2)
-        if scalar:
-            P = P[0]
-        return P
-    # compute derivative
-    else:
-        dPdz = np.zeros_like(z)
-        # pick out non-singularities
-        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
-        norm = 1 / (1 - z[s]**2)
-        dPdz[s] = norm * ((m - l - 1) * Plm(l+1, m, z[s]) + (l+1) * z[s] * Plm(l, m, z[s]))
-        if scalar:
-            dPdz = dPdz[0]
-        return dPdz
-
-
-def Qlm(l, m, z, deriv=False):
-    """
-    Associated Legendre function of the second kind
-    in hypergeometric form, aka Ferrers function
-    DLMF 14.3.12 with interval -1 < z < 1
-
-    Parameters
-    ----------
-    l : float
-        Degree of the associated Legendre function
-    m : int
-        Order of the associated Legendre function
-    z : array_like
-        Argument of Legendre function, bounded by |z|<1
-    deriv : bool, optional
-        If True return derivative wrt z
-
-    Returns
-    -------
-    array
-        Legendre function of second kind at z
-    """
-    # if z is a scalar, convert to flat array
-    scalar = isinstance(z, (int, float))
-    if scalar:
-        z = np.atleast_1d(z)
-    # compute Qlm
-    if not deriv:
-        Q = np.zeros_like(z)
-        # pick out non-singularities
-        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
-        w1 = 2**m * special.gamma((l+m+1)/2) / special.gamma((l-m+2)/2) \
-             * (1-z[s]**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z[s]**2)
-        w2 = 2**m * special.gamma((l+m+2)/2) / special.gamma((l-m+1)/2) \
-             * z[s] * (1-z[s]**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z[s]**2)
-        Q[s] = .5*np.pi*(-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
-        return Q
-    else:
-        dQdz = np.zeros_like(z)
-        # pick out non-singularities
-        s = ~np.isclose(np.abs(z), 1, atol=1e-10)
-        norm = 1 / (1 - z[s]**2)
-        dQdz[s] = norm * ((m - l - 1) * Qlm(l+1, m, z[s]) + (l+1) * z[s] * Qlm(l, m, z[s]))
-        return dQdz
-
-
-def hypF(a, b, c, z):
-    """
-    Gauss hypergeometric function.
-    Catches the case where c is < 0
-    DLMF 15.2.3_5
-
-    .. math::
-
-        F = \frac{_2F_1(a, b, c, z)}{\Gamma(c)} 
-
-    Parameters
-    ----------
-    a, b : float
-    c : int
-    z : float
-    """
-    if c <= 0:
-        n = -c
-        norm = special.poch(a, n+1) * special.poch(b, n+1) / special.factorial(n+1) * z**(n+1)
-        return norm * special.hyp2f1(a+n+1, b+n+1, n+2, z)
-    else:
-        return special.hyp2f1(a, b, c, z) / special.gamma(c)
-
-
-def gen_sph_cap_l(theta_max, lmax, theta_min=0):
-    """
-    Compute associated Legendre function degrees l on
-    the spherical cap or ring given boundary condition
-    that d P_lm(theta) d_theta = 0 at theta_min and max
-
-    Parameters
-    ----------
-    theta_max : float
-        Maximum co-latitude of cap [rad]
-    lmax : int
-        Maximum l mode to compute out to
-    theta_min : float
-        Minimum co-latitude of ringed-cap
-
-    Returns
-    -------
-    array
-        Array of float degrees l that satisfy BC
-    """
-    raise NotImplementedError
-    l = np.linspace(0, lmax, 1000000)
-    #y = 
-
-
-
-def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
-                device=None):
-    """
-    Generate spherical harmonic forward model matrix.
-    Note for lmax > 50, this can begin to take >= minutes to run.
+                                e^{im\phi}(P_{lm} + A_{lm}Q_{lm})(\cos(\theta))
 
     Parameters
     ----------
@@ -666,40 +551,56 @@ def gen_sph2pix(theta, phi, l=None, m=None, lmax=None, real_field=True,
         Co-latitude (i.e. zenith angle) [rad]
     phi : array_like
         Longitude (i.e. azimuth) [rad]
+    method : str, optional
+        Spherical harmonic mode ['sphere', 'stripe', 'cap']
+        For 'sphere', l modes are integer
+        For 'stripe' or 'cap', l modes are float
+    theta_min : float, optional
+        For method == 'stripe', this is the minimum theta
+        boundary [radians] of the mask.
     l : array_like, optional
-        Integer array of spherical harmonic l modes
+        Integer or float array of spherical harmonic l modes
     m : array_like, optional
         Integer array of spherical harmonic m modes
     lmax : int, optional
-        If l, m are None, this generates l and m
+        If l, m are None, this generates integer l and m
         arrays
     real_field : bool, optional
         If True, treat sky as real-valued
         so truncate negative m values (used for lmax).
-    theta_max : float, optional
-        If None, compute standard spherical harmonics.
-        If fed, this is the maximum colatitude of a polar
-        cap angular mask [deg], in which case compute the
-        # modified spherical harmonics of Samushia2019.
     device : str, optional
         Device to push Ylm to.
 
     Returns
     -------
     Ylm : array_like
-        An Npix x Ncoeff matrix encoding a spherical
+        An (Npix x Ncoeff) matrix encoding a spherical
         harmonic transform from a_lm -> map
     """
+    ## TODO: need to multiprocess this
     if lmax is not None:
+        assert method == 'sphere'
         l, m = gen_lm(lmax, real_field=real_field)
 
-    Y = torch.zeros(len(theta), len(l), dtype=_cfloat(), device=device)
+    l = l[:, None]
+    m = m[:, None]
 
-    # iterate over coefficients
-    for i, (_l, _m) in enumerate(zip(l, m)):
-        y = sph_harm(_l, _m, theta, phi)
-        y = torch.as_tensor(y, dtype=_cfloat(), device=device)
-        Y[:, i] = y
+    # compute assoc. legendre: orthonorm is already in Plm and Qlm
+    z = np.cos(theta)
+    P = special.Plm(l, m, z)
+    Phi = np.exp(1j * m * phi)
+
+    if method == 'stripe':
+        assert theta_min is not None
+        # compute Qlms
+        Q = special.Qlm(l, m, z)
+        # compute coefficients
+        z_min = np.cos(theta_min)
+        A = -special.Plm(l, m, z_min) / special.Qlm(l, m, z_min)
+        Y = torch.as_tensor((P + A[:, None] * Q) * Phi, dtype=_cfloat(), device=device)
+
+    else:
+        Y = torch.as_tensor(P * Phi, dtype=_cfloat(), device=device)
 
     return Y
 
@@ -766,6 +667,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         kbins[_l] = k
 
     return jl, kbins
+
 
 def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
                     device=None):
@@ -897,6 +799,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     return np.asarray(k[:Nk])
 
 
+
 def gen_poly_A(freqs, Ndeg, device=None):
     """
     Generate design matrix (A) for polynomial of Ndeg across freqs,
@@ -952,7 +855,7 @@ def voigt_beam(nside, sigma, gamma):
         co-latitude and longitude of HEALpix map [rad]
     """
     theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
-    beam = special.voigt_profile(theta, sigma, gamma)
+    beam = voigt_profile(theta, sigma, gamma)
     beam /= beam.max()
 
     return beam, theta, phi
@@ -1164,7 +1067,7 @@ def nside_binning(zen, ra, zen_sigma=5, zen_gamma=15, ra_sigma=5, ra_gamma=15,
         The nside of each pixel on the sky
     """
     # get zen component of voigt profile
-    curve = special.voigt_profile(zen, zen_sigma, zen_gamma)
+    curve = voigt_profile(zen, zen_sigma, zen_gamma)
     curve -= curve.min()
     curve /= curve.max()
 
@@ -1173,14 +1076,14 @@ def nside_binning(zen, ra, zen_sigma=5, zen_gamma=15, ra_sigma=5, ra_gamma=15,
         # enact a nside res decay for ra less than min ra
         assert ra_min_max[0] > ra.min()
         ra_low = ra < ra_min_max[0]
-        ra_low_curve = special.voigt_profile(ra[ra_low] - ra_min_max[0], ra_sigma, ra_gamma)
+        ra_low_curve = voigt_profile(ra[ra_low] - ra_min_max[0], ra_sigma, ra_gamma)
         ra_low_curve -= ra_low_curve.min()
         ra_low_curve /= ra_low_curve.max()
         curve[ra_low] *= ra_low_curve
         # enact a nside res decay for ra greater than max ra
         ra_hi = ra > ra_min_max[1]
         assert ra_min_max[1] < ra.max()
-        ra_hi_curve = special.voigt_profile(ra[ra_hi] - ra_min_max[1], ra_sigma, ra_gamma)
+        ra_hi_curve = voigt_profile(ra[ra_hi] - ra_min_max[1], ra_sigma, ra_gamma)
         ra_hi_curve -= ra_hi_curve.min()
         ra_hi_curve /= ra_hi_curve.max()
         curve[ra_hi] *= ra_hi_curve
@@ -1491,7 +1394,7 @@ def get_zeros(x, y):
         if i == 0:
             prev = np.sign(y[i])
             continue
-        # get current signt
+        # get current sign
         curr = np.sign(y[i])
         # check for zero crossing: abs(y) condition avoids y jitters around zero
         if (curr != prev) and (np.abs(y[i]) > 1e-40) and (curr != 0.0) and np.isfinite(prev):
@@ -1501,8 +1404,9 @@ def get_zeros(x, y):
                 prev = curr
                 continue
 
-            # get 3 nn points and fit quadratic for root
-            nn = np.argsort(np.abs(y)[i-3:i+3])[:3] + (i - 3)
+            # this is zero crossing: get 3 nn points and fit quadratic for root
+            start = max([i-3, 0])
+            nn = np.argsort(np.abs(y)[start:i+3])[:3] + start
             roots.append(fit_zero(x[nn], y[nn]))
             prev = curr
             
