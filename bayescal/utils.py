@@ -519,15 +519,19 @@ def sph_stripe_degrees(m, theta_min, theta_max, lmax, dl=0.1):
     for _m in m:
         l = _m + np.arange(0, (lmax - _m)//dl + 1) * dl
         if np.isclose(theta_min, 0):
-            # spherical cap
-            y = 1#np.array([Plm(_l, _m, t_min) * Qlm(_l, _m, t_max) - Plm(_l, _m, t_max) * Qlm(_l, _m, t_min) for _l in l])
+            # spherical cap: BC acts on derivative for m == 0
+            y = special.Plm(l, _m, z_max, deriv=_m==0)
 
         else:
             # spherical stripe
             y = special.Plm(l, _m, z_min) * special.Qlm(l, _m, z_max) \
                           - special.Plm(l, _m, z_max) * special.Qlm(l, _m, z_min)
 
-        ls[_m] = get_zeros(l, y)
+        zeros = get_zeros(l, y)
+        if _m == 0:
+            # add monopole term
+            zeros = [0] + zeros
+        ls[_m] = np.asarray(zeros)
 
     return ls
 
