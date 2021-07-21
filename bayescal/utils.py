@@ -626,16 +626,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
             Njobs = np.floor(Njobs) + 1
         Njobs = int(Njobs)
         jobs = {i: (l[i*Ntask:(i+1)*Ntask], m[i*Ntask:(i+1)*Ntask]) for i in range(Njobs)}
-        def multiproc_run(i, theta=theta, phi=phi, method=method,
-                          theta_min=theta_min, jobs=jobs):
-            l, m = jobs[i]
-            Y = bayescal.utils.gen_sph2pix(theta, phi, method=method, theta_min=theta_min,
-                                           l=l, m=m)
-            Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
-            return Ydict
 
         # run jobs
-        output = pool.map(multiproc_run, range(Nproc))
+        output = pool.map(_gen_sph2pix_multiproc, range(Nproc))
         pool.close()
 
         # combine
@@ -669,6 +662,14 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         Y = torch.as_tensor(P * Phi, dtype=_cfloat(), device=device)
 
     return Y
+
+
+def _gen_sph2pix_multiproc(i, theta=theta, phi=phi, method=method,
+                           theta_min=theta_min, jobs=jobs):
+    l, m = jobs[i]
+    Y = gen_sph2pix(theta, phi, method=method, theta_min=theta_min, l=l, m=m)
+    Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
+    return Ydict
 
 
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
