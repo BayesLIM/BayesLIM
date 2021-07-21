@@ -520,7 +520,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
     """
     # solve for m modes
     spacing = 2 * np.pi / phi_max
-    m = np.arange(0, mmax + .1, spacing)
+    m = np.arange(0, mmax + 1.1, spacing)
 
     # solve for l modes
     assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
@@ -553,7 +553,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
 
 
 def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
-                lmax=None, real_field=True, Nproc=None, device=None):
+                lmax=None, real_field=True, Nproc=None, Ntask=10, device=None):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -595,6 +595,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     Nproc : int, optional
         If not None, this starts multiprocessing mode, and
         specifies the number of independent processes.
+    Ntask : int, optional
+        This is the number of tasks (i.e. modes) computed
+        per process.
     device : str, optional
         Device to push Ylm to.
 
@@ -603,6 +606,10 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     Ylm : array_like
         An (Npix x Ncoeff) matrix encoding a spherical
         harmonic transform from a_lm -> map
+
+    Notes
+    -----
+    The output dtype can be set using torch.set_default_dtype
     """
     # setup l modes
     if lmax is not None:
@@ -611,25 +618,34 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     # run multiproc mode
     if Nproc is not None:
-        pool = multiprocessing.pool.Pool(Nproc)
-        Njobs = len(l) // Nproc
-        if Njobs % 1 > 0: Njobs += 1
-        jobs = {i: (l[i*Njobs:(i+1)*Njobs], m[i*Njobs:(i+1)*Njobs]) for i in range(Nproc)}
-        def multiproc_run(i, theta=theta, phi=phi, method=method,
+        # setup multiprocessing
+        pool = multiprocessing.Pool(Nproc)
+        Njobs = len(l) / Ntask
+        if Njobs % 1 > 0:
+            Njobs = np.floor(Njobs) + 1
+        Njobs = int(Njobs)
+        jobs = {i: (l[i*Ntask:(i+1)*Ntask], m[i*Ntask:(i+1)*Ntask]) for i in range(Njobs)}
+        def multiproc_run(i, theta=theta_cut, phi=phi_cut, method=method,
                           theta_min=theta_min, jobs=jobs):
             l, m = jobs[i]
-            Y = gen_sph2pix(theta, phi, method=method, theta_min=theta_min,
-                            l=l, m=m).detach().numpy()
+            Y = bayescal.utils.gen_sph2pix(theta, phi, method=method, theta_min=theta_min,
+                                           l=l, m=m)
             Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
             return Ydict
 
-        output = pool.map(multiproc_run, range(Njobs))
-        Ydict = {}
-        for out in Ydict:
-            Ydict.update(out)
+        # run jobs
+        output = pool.map(multiproc_run, range(Nproc))
+        pool.close()
 
-        Y = torch.as_tensor((P + A[:, None] * Q) * Phi, dtype=_cfloat(), device=device)
+        # combine
+        Y = torch.zeros((len(theta), len(l)), dtype=_cfloat(), device=device)
+        for Ydict in output:
+            for k in Ydict:
+                _l, _m = k
+                index = np.where((l == _l) & (m == _m))[0][0]
+                Y[:, index] = Ydict[k].to(device)
 
+        return Y
 
     l = l[:, None]
     m = m[:, None]
