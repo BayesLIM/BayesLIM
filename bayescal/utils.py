@@ -627,8 +627,14 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         Njobs = int(Njobs)
         jobs = {i: (l[i*Ntask:(i+1)*Ntask], m[i*Ntask:(i+1)*Ntask]) for i in range(Njobs)}
 
+        jobs = []
+        for i in range(Njobs):
+            _l = l[i*Ntask:(i+1)*Ntask]
+            _m = m[i*Ntask:(i+1)*Ntask]
+            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min, l=_l, m=_m)])
+
         # run jobs
-        output = pool.map(_gen_sph2pix_multiproc, range(Nproc))
+        output = pool.map(_gen_sph2pix_multiproc, jobs)
         pool.close()
 
         # combine
@@ -664,10 +670,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     return Y
 
 
-def _gen_sph2pix_multiproc(i, theta=theta, phi=phi, method=method,
-                           theta_min=theta_min, jobs=jobs):
-    l, m = jobs[i]
-    Y = gen_sph2pix(theta, phi, method=method, theta_min=theta_min, l=l, m=m)
+def _gen_sph2pix_multiproc(job):
+    (l, m), args, kwargs = job
+    Y = gen_sph2pix(*args, **kwargs)
     Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
     return Ydict
 
