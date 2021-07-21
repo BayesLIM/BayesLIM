@@ -478,25 +478,32 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
-def sph_stripe_degrees(m, theta_min, theta_max, lmax, dl=0.1):
+def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
     """
     Compute associated Legendre function degrees l on
     the spherical cap or stripe given boundary conditions.
 
-    theta_min == 0 and theta_max < pi:
-        This is a spherical cap, with boundary conditions
-            P_lm(theta_max) = 0 and
-            m == 0: d P_lm(theta_min) / d theta = 0
-            m  > 0: P_lm(theta_min) = 0
-    theta_min > 0 and theta_max < pi:
-        This is a spherical stripe with BC
-            P_lm(theta_min) = 0 and
-            P_lm(theta_max) = 0
+    theta BC:
+        theta_min == 0 and theta_max < pi:
+            This is a spherical cap, with boundary conditions
+                P_lm(theta_max) = 0 and
+                m == 0: d P_lm(theta_min) / d theta = 0
+                m  > 0: P_lm(theta_min) = 0
+        theta_min > 0 and theta_max < pi:
+            This is a spherical stripe with BC
+                P_lm(theta_min) = 0 and
+                P_lm(theta_max) = 0
+
+    phi BC:
+        Phi(0) = Phi(phi_max), assuming
+        mask extends from phi = 0 to phi = phi_max
 
     Parameters
     ----------
-    m : int or array
-        unique integer order m
+    phi_max : float
+        Maximum extent of mask in azimuth [rad]
+    mmax : int
+        Maximum m mode to compute
     theta_min : float
         Minimum co-latitude of stripe [rad]
     theta_max : float
@@ -508,10 +515,14 @@ def sph_stripe_degrees(m, theta_min, theta_max, lmax, dl=0.1):
 
     Returns
     -------
-    dict
-        Dictionary of float l values for each input
-        m integer
+    l, m
+        Array of l and m values
     """
+    # solve for m modes
+    spacing = 2 * np.pi / phi_max
+    m = np.arange(0, mmax + .1, spacing)
+
+    # solve for l modes
     assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
     ls = {}
     z_min, z_max = np.cos(theta_min), np.cos(theta_max)
@@ -533,16 +544,25 @@ def sph_stripe_degrees(m, theta_min, theta_max, lmax, dl=0.1):
             zeros = [0] + zeros
         ls[_m] = np.asarray(zeros)
 
-    return ls
+    larr, marr = [], []
+    for _m in ls:
+        larr.extend(ls[_m])
+        marr.extend([_m] * len(ls[_m]))
+
+    return np.array(larr), np.array(marr)
 
 
 def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
-                lmax=None, real_field=True, device=None):
+                lmax=None, real_field=True, Nproc=None, device=None):
     """
     Generate spherical harmonic forward model matrix.
-    Note for lmax > 50, this can begin to take >= minutes to run.
 
-    The onormalized spherical harmonic are
+    Note, this can take a *long* time, and is limited by the
+    internal high precision computation of the Legendre functions
+    that enable stable evaluation of large, non-integer degree
+    harmonics. It is advised to compute these once and store them.
+
+    The orthonormalized spherical harmonic are
 
     .. math::
 
@@ -572,6 +592,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     real_field : bool, optional
         If True, treat sky as real-valued
         so truncate negative m values (used for lmax).
+    Nproc : int, optional
+        If not None, this starts multiprocessing mode, and
+        specifies the number of independent processes.
     device : str, optional
         Device to push Ylm to.
 
@@ -581,10 +604,32 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         An (Npix x Ncoeff) matrix encoding a spherical
         harmonic transform from a_lm -> map
     """
-    ## TODO: need to multiprocess this
+    # setup l modes
     if lmax is not None:
         assert method == 'sphere'
         l, m = gen_lm(lmax, real_field=real_field)
+
+    # run multiproc mode
+    if Nproc is not None:
+        pool = multiprocessing.pool.Pool(Nproc)
+        Njobs = len(l) // Nproc
+        if Njobs % 1 > 0: Njobs += 1
+        jobs = {i: (l[i*Njobs:(i+1)*Njobs], m[i*Njobs:(i+1)*Njobs]) for i in range(Nproc)}
+        def multiproc_run(i, theta=theta, phi=phi, method=method,
+                          theta_min=theta_min, jobs=jobs):
+            l, m = jobs[i]
+            Y = gen_sph2pix(theta, phi, method=method, theta_min=theta_min,
+                            l=l, m=m).detach().numpy()
+            Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
+            return Ydict
+
+        output = pool.map(multiproc_run, range(Njobs))
+        Ydict = {}
+        for out in Ydict:
+            Ydict.update(out)
+
+        Y = torch.as_tensor((P + A[:, None] * Q) * Phi, dtype=_cfloat(), device=device)
+
 
     l = l[:, None]
     m = m[:, None]
