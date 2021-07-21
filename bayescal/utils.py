@@ -626,7 +626,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
             Njobs = np.floor(Njobs) + 1
         Njobs = int(Njobs)
         jobs = {i: (l[i*Ntask:(i+1)*Ntask], m[i*Ntask:(i+1)*Ntask]) for i in range(Njobs)}
-        def multiproc_run(i, theta=theta_cut, phi=phi_cut, method=method,
+        def multiproc_run(i, theta=theta, phi=phi, method=method,
                           theta_min=theta_min, jobs=jobs):
             l, m = jobs[i]
             Y = bayescal.utils.gen_sph2pix(theta, phi, method=method, theta_min=theta_min,
