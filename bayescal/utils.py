@@ -619,6 +619,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     # run multiproc mode
     if Nproc is not None:
         # setup multiprocessing
+        import multiprocessing
         pool = multiprocessing.Pool(Nproc)
         Njobs = len(l) / Ntask
         if Njobs % 1 > 0:
