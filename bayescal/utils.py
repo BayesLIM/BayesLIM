@@ -553,6 +553,13 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
     return np.array(larr), np.array(marr)
 
 
+def _gen_sph2pix_multiproc(job):
+    (l, m), args, kwargs = job
+    Y = gen_sph2pix(*args, **kwargs)
+    Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
+    return Ydict
+
+
 def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
                 lmax=None, real_field=True, Nproc=None, Ntask=10, device=None):
     """
@@ -628,8 +635,6 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
         Njobs = int(Njobs)
-        jobs = {i: (l[i*Ntask:(i+1)*Ntask], m[i*Ntask:(i+1)*Ntask]) for i in range(Njobs)}
-
         jobs = []
         for i in range(Njobs):
             _l = l[i*Ntask:(i+1)*Ntask]
@@ -654,6 +659,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
         return Y
 
+    # run single proc mode
     l = l[:, None]
     m = m[:, None]
 
@@ -677,15 +683,13 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     return Y
 
 
-def _gen_sph2pix_multiproc(job):
-    (l, m), args, kwargs = job
-    Y = gen_sph2pix(*args, **kwargs)
-    Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
-    return Ydict
+def _gen_bessel2freq_multiproc(job):
+    args, kwargs = job
+    return gen_bessel2freq(*args, **kwargs)
 
 
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
-                    decimate=True, device=None):
+                    decimate=True, device=None, Nproc=None, Ntask=10):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k j_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -717,10 +721,14 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         Use every other j_l(z) zero as k bins (i.e. DFT convention)
     device : str, optional
         Device to push j_l(kr) to.
+    Nproc : int, optional
+        If not None, enable multiprocessing mode with Nproc processes
+    Ntask : int, optional
+        Number of modes to compute per process
 
     Returns
     -------
-    jl : dict
+    gln : dict
         A dictionary holding a series of Nk x Nfreqs
         spherical Fourier Bessel transform matrices,
         one for each unique l mode.
@@ -731,19 +739,50 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
     r_max, r_min = r.max(), r.min()
-    # setup dicts
+    ul = np.unique(l)
+
+    # multiproc mode
+    if Nproc is not None:
+        import multiprocessing
+        Njobs = len(ul) / Ntask
+        if Njobs % 1 > 0:
+            Njobs = np.floor(Njobs) + 1
+        Njobs = int(Njobs)
+        jobs = []
+        for i in range(Njobs):
+            _l = ul[i*Ntask:(i+1)*Ntask]
+            jobs.append([(_l, freqs, cosmo), dict(Nk=Nk, method=method, decimate=decimate, device=device)])
+
+        # run jobs
+        try:
+            pool = multiprocessing.Pool(Nproc)
+            output = pool.map(_gen_bessel2freq_multiproc, jobs)
+        finally:
+            pool.close()
+            pool.join()
+
+        # collect output
+        jl, kbins = {}, {}
+        for out in output:
+            jl.update(out[0])
+            kbins.update(out[1])
+
+        return jl, kbins
+
+
+    # run single proc mode
     jl = {}
     kbins = {}
     if Nk is None:
         Nk = len(r) // 2 
-    for _l in np.unique(l):
+    for _l in ul:
         # get k bins for this l mode
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         # get basis function
-        k = torch.as_tensor(k, device=device, dtype=_float())
         j = sph_bessel_func(_l, k, r, method=method, device=device)
-        jl[_l] = np.sqrt(2 / np.pi) * j * torch.as_tensor(k, device=device, dtype=_float())[:, None]
+        kt = torch.as_tensor(k, device=device, dtype=_float())
+        jl[_l] = np.sqrt(2 / np.pi) * j * kt[:, None]
         kbins[_l] = k
 
     return jl, kbins
