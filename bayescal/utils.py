@@ -741,7 +741,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         # get basis function
-        j = sph_bessel_func(_l, k, r, method=method, dtype=_float(), device=device)
+        j = sph_bessel_func(_l, k, r, method=method, device=device)
         jl[_l] = np.sqrt(2 / np.pi) * k[:, None] * j
         kbins[_l] = k
 
