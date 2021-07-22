@@ -3,7 +3,7 @@ Utility module
 """
 import numpy as np
 import torch
-from scipy.special import spherical_jn as jn, spherical_yn as yn, voigt_profile
+from scipy.special import voigt_profile
 from scipy.integrate import quad
 import copy
 import warnings
@@ -529,14 +529,15 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
     m = np.atleast_1d(m)
     for _m in m:
         l = _m + np.arange(0, (lmax - _m)//dl + 1) * dl
+        deriv = _m == 0
         if np.isclose(theta_min, 0):
             # spherical cap: BC acts on derivative for m == 0
-            y = special.Plm(l, _m, z_max, deriv=_m==0)
+            y = special.Plm(l, _m, z_max, deriv=deriv)
 
         else:
             # spherical stripe
-            y = special.Plm(l, _m, z_min) * special.Qlm(l, _m, z_max) \
-                          - special.Plm(l, _m, z_max) * special.Qlm(l, _m, z_min)
+            y = special.Plm(l, _m, z_min, deriv=deriv) * special.Qlm(l, _m, z_max, deriv=deriv) \
+                          - special.Plm(l, _m, z_max, deriv=deriv) * special.Qlm(l, _m, z_min, deriv=deriv)
 
         zeros = get_zeros(l, y)
         if _m == 0:
@@ -557,10 +558,13 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     """
     Generate spherical harmonic forward model matrix.
 
-    Note, this can take a *long* time, and is limited by the
-    internal high precision computation of the Legendre functions
-    that enable stable evaluation of large, non-integer degree
-    harmonics. It is advised to compute these once and store them.
+    Note, this can take a _long_ time: dozens of minutes for a few hundred
+    lm at tens of thousands of theta, phi points even with Nproc of 20.
+    The code is limited by the internal high precision computation of the
+    Legendre functions via mpmath, which enables stable evaluation of
+    large, non-integer degree harmonics.
+    It is advised to compute these once and store them.
+    Also, pip installing the "gmpy" module can offer modest speed up.
 
     The orthonormalized spherical harmonic are
 
@@ -620,7 +624,6 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     if Nproc is not None:
         # setup multiprocessing
         import multiprocessing
-        pool = multiprocessing.Pool(Nproc)
         Njobs = len(l) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -634,8 +637,12 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
             jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min, l=_l, m=_m)])
 
         # run jobs
-        output = pool.map(_gen_sph2pix_multiproc, jobs)
-        pool.close()
+        try:
+            pool = multiprocessing.Pool(Nproc)
+            output = pool.map(_gen_sph2pix_multiproc, jobs)
+        finally:
+            pool.close()
+            pool.join()
 
         # combine
         Y = torch.zeros((len(theta), len(l)), dtype=_cfloat(), device=device)
@@ -787,12 +794,12 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     for i, _k in enumerate(k):
         if method == 'default':
             # just j_l(kr)
-            j_i = jn(l, _k * r)
+            j_i = special.jl(l, _k * r)
 
         elif method == 'samushia':
             # j_l(kr) + A y_l(kr)
-            A = -jn(l, _k * r_min) / yn(l, _k * r_min).clip(-1e50, np.inf)
-            j_i = jn(l, _k * r) + A * yn(l, _k * r).clip(-1e50, np.inf)
+            A = -special.jl(l, _k * r_min) / special.yl(l, _k * r_min).clip(-1e50, np.inf)
+            j_i = special.jl(l, _k * r) + A * special.yl(l, _k * r).clip(-1e50, np.inf)
 
         elif method == 'gebhardt':
             raise NotImplementedError
@@ -857,8 +864,8 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
             kmin = 2 * np.pi / (r_max - r_min)
             dk = kmin / 500
             k_arr = dk + np.arange(0, 30000) * dk
-            y = (jn(l, k_arr * r_min) * yn(l, k_arr * r_max).clip(-1e50, np.inf) \
-                 - jn(l, k_arr * r_max) * yn(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
+            y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
+                 - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
             k = get_zeros(k_arr, y)
 
         elif method == 'gebhardt':
