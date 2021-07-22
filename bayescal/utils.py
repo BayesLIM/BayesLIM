@@ -741,8 +741,9 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
                           method=method, filepath=kbin_file)
         # get basis function
+        k = torch.as_tensor(k, device=device, dtype=_float())
         j = sph_bessel_func(_l, k, r, method=method, device=device)
-        jl[_l] = np.sqrt(2 / np.pi) * k[:, None] * j
+        jl[_l] = np.sqrt(2 / np.pi) * j * torch.as_tensor(k, device=device, dtype=_float())[:, None]
         kbins[_l] = k
 
     return jl, kbins
@@ -876,7 +877,6 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
         k = k[1::2]
 
     return np.asarray(k[:Nk])
-
 
 
 def gen_poly_A(freqs, Ndeg, device=None):
