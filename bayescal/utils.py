@@ -804,7 +804,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
         elif method == 'gebhardt':
             raise NotImplementedError
 
-        j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
+        j[i] = torch.as_tensor(j_i, dtype=_float(), device=device)
 
     return j
 
