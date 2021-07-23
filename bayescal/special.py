@@ -203,8 +203,8 @@ def hypF(a, b, c, z):
             out = pochln(inp, n+1)
             sign *= out[0]
             norm += out[1]
-        # divide by (n+1)! and divide by 1/gamma(|c|+1), which are the same thing
-        norm -= 2 * gammaln(n+1)
+        # divide by (n+1)! and divide by gamma(|c|+1)
+        norm -= gammaln(n+2) + gammaln(n+1)
         # compute hypergeometric
         f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a)), 4, 1)(A+n+1, B+n+1, n+2, z), dtype=float)
         # get the sign of f21 in real space
