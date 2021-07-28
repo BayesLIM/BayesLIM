@@ -478,7 +478,8 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
-def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
+def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
+                  high_prec=True):
     """
     Compute associated Legendre function degrees l on
     the spherical cap or stripe given boundary conditions.
@@ -512,6 +513,10 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
         Maximum degree l to compute for each m
     dl : float, optional
         Sampling density in l from m to lmax
+    high_prec : bool, optional
+        If True, use precise mpmath for hypergeometric
+        calls, else use faster but less accurate scipy.
+        Matters mostly for non-integer degree
 
     Returns
     -------
@@ -525,23 +530,30 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1):
     # solve for l modes
     assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
     ls = {}
-    z_min, z_max = np.cos(theta_min), np.cos(theta_max)
+    x_min, x_max = np.cos(theta_min), np.cos(theta_max)
     m = np.atleast_1d(m)
     for _m in m:
-        l = _m + np.arange(0, (lmax - _m)//dl + 1) * dl
+        # construct array of test l's, skip l == m
+        l = _m + np.arange(1, (lmax - _m)//dl + 1) * dl
+        if len(l) < 1:
+            continue
+        # boundary condition is derivative is zero for m == 0
         deriv = _m == 0
         if np.isclose(theta_min, 0):
-            # spherical cap: BC acts on derivative for m == 0
-            y = special.Plm(l, _m, z_max, deriv=deriv)
+            # spherical cap
+            y = special.Plm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         else:
             # spherical stripe
-            y = special.Plm(l, _m, z_min, deriv=deriv) * special.Qlm(l, _m, z_max, deriv=deriv) \
-                          - special.Plm(l, _m, z_max, deriv=deriv) * special.Qlm(l, _m, z_min, deriv=deriv)
+            y = special.Plm(l, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                - special.Plm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(l, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
 
+        y = y.ravel()
         zeros = get_zeros(l, y)
+        # add monopole
         if _m == 0:
-            # add monopole term
             zeros = [0] + zeros
         ls[_m] = np.asarray(zeros)
 
@@ -561,7 +573,8 @@ def _gen_sph2pix_multiproc(job):
 
 
 def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
-                lmax=None, real_field=True, Nproc=None, Ntask=10, device=None):
+                lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
+                high_prec=True, renorm=False, pixarea=None):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -572,8 +585,10 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     large, non-integer degree harmonics.
     It is advised to compute these once and store them.
     Also, pip installing the "gmpy" module can offer modest speed up.
+    For computing integer degree spherical harmonics, high_prec is
+    likely not needed.
 
-    The orthonormalized spherical harmonic are
+    The orthonormalized, full-sky spherical harmonics are
 
     .. math::
 
@@ -611,6 +626,20 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         per process.
     device : str, optional
         Device to push Ylm to.
+    high_prec : bool, optional
+        If True, use precise mpmath for hypergeometric
+        calls, else use faster but less accurate scipy.
+        Matters mostly for non-integer degree
+    renorm : bool, optional
+        Re-normalize the spherical harmonics such that their
+        norm is 1 over the cut-sky. This is done using the sampled
+        theta, phi points as a numerical inner product approx.
+        Note this assumes that the theta, phi are drawn from
+        part of a HEALpix grid of pixarea, with a pixelization
+        density enough to resolve the fastest spatial frequency
+    pixarea : float, optional
+        If renorm, this is the HEALpix pixel area [str] of
+        each pixel.
 
     Returns
     -------
@@ -639,7 +668,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         for i in range(Njobs):
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min, l=_l, m=_m)])
+            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min,
+                                                      l=_l, m=_m, high_prec=high_prec,
+                                                      renorm=renorm, pixarea=pixarea)])
 
         # run jobs
         try:
@@ -650,35 +681,57 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
             pool.join()
 
         # combine
-        Y = torch.zeros((len(theta), len(l)), dtype=_cfloat(), device=device)
+        Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
         for Ydict in output:
             for k in Ydict:
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
-                Y[:, index] = Ydict[k].to(device)
+                Y[index] = Ydict[k].to(device)
 
         return Y
 
     # run single proc mode
+    if isinstance(l, (int, float)):
+        l = np.array([l])
+    if isinstance(m, (int, float)):
+        m = np.array([m])
     l = l[:, None]
     m = m[:, None]
+    theta = np.atleast_1d(theta)
+    phi = np.atleast_1d(phi)
 
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    z = np.cos(theta)
-    P = special.Plm(l, m, z)
+    x = np.cos(theta)
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
     Phi = np.exp(1j * m * phi)
 
     if method == 'stripe':
+        # spherical stripe: uses Plm and Qlm
         assert theta_min is not None
         # compute Qlms
-        Q = special.Qlm(l, m, z)
-        # compute coefficients
-        z_min = np.cos(theta_min)
-        A = -special.Plm(l, m, z_min) / special.Qlm(l, m, z_min)
-        Y = torch.as_tensor((P + A[:, None] * Q) * Phi, dtype=_cfloat(), device=device)
+        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
+        # compute A coefficients
+        x_min = np.cos(theta_min)
+        A = -special.Plm(l, m, x_min, high_prec=high_prec, keepdims=True) \
+            / special.Qlm(l, m, x_min, high_prec=high_prec, keepdims=True)
+        # Use deriv = True for m == 0
+        if 0 in m:
+            mzero = np.ravel(m) == 0
+            A[mzero] = -special.Plm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True) \
+                       / special.Qlm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True)
+        # construct Y
+        Y = torch.as_tensor((P + A * Q) * Phi, dtype=_cfloat(), device=device)
 
     else:
+        # spherical cap or full sky: uses Plm
         Y = torch.as_tensor(P * Phi, dtype=_cfloat(), device=device)
+
+    # renormalize
+    if renorm:
+        # Note: theta and phi must be part of a HEALpix grid
+        assert pixarea is not None
+        norm = torch.sqrt(torch.sum(torch.abs(Y)**2, axis=1) * pixarea)
+        Y /= norm[:, None]
 
     return Y
 

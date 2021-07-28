@@ -3,25 +3,22 @@ Module for special functions
 """
 import numpy as np
 from scipy.special import jv, jvp, yv, yvp, factorialk, gamma, gammaln
-from mpmath import hyp2f1
 from scipy.integrate import quad
 import copy
 import warnings
 
 
-def Plm(l, m, z, deriv=False, keepdims=False):
+def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.1 with interval -1 < z < 1.
-    Note 1: this is numerically continued to |z| = 1
-    Note 2: stable to integer l = m ~ 800, for all z
-    Note 3: stable to float l = m ~ 200, for |z| < .9
-    Note 4: the normalization C is actually put into F() for numerical ease
+    DLMF 14.3.1 with interval -1 < x < 1.
+    Note 1: this is numerically continued to |x| = 1
+    Note 2: stable to integer l = m ~ 800, for all x
 
     .. math::
 
-        P_{lm}(z) &= C\left(\frac{z+1}{z-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-z)/2) \\
+        P_{lm}(x) &= C\left(\frac{x+1}{x-1}\right)^{m/2}F(-l, l+1, 1-\mu, (1-x)/2) \\
         C &= \sqrt{\frac{2l+1}{4\pi}{(l-m)!}{(l+m)!}}
 
     Parameters
@@ -30,18 +27,22 @@ def Plm(l, m, z, deriv=False, keepdims=False):
         Degree of the associated Legendre function
     m : int or array_like
         Order of the associated Legendre function
-    z : float or array_like
-        Argument of Legendre function, bounded by |z|<1
+    x : float or array_like
+        Argument of Legendre function, bounded by |x|<1
     deriv : bool, optional
-        If True return derivative wrt z
+        If True return derivative wrt x
     keepdims : bool, optional
-        If False and (l,m) or z is len 1
+        If False and (l,m) or x is len 1
         then ravel the output
+    high_prec : bool, optional
+        If True, use precise mpmath for hypergeometric
+        calls, else use faster but less accurate scipy.
+        Matters mostly for non-integer degree
 
     Returns
     -------
     array
-        Legendre function of first kind at z
+        Legendre function of first kind at x
     """
     # reshape if needed
     l = np.atleast_1d(l)
@@ -51,23 +52,23 @@ def Plm(l, m, z, deriv=False, keepdims=False):
     if m.ndim == 1:
         m = m[:, None]
     # avoid singularity
-    z = np.atleast_1d(z).copy()
-    s = np.isclose(np.abs(z), 1, rtol=1e-10)
+    x = np.atleast_1d(x).copy()
+    s = np.isclose(np.abs(x), 1, rtol=1e-10)
     if np.any(s):
-        dz = 1e-8
-        z[s] *= (1 - dz)
+        dx = 1e-8
+        x[s] *= (1 - dx)
     # compute Plm
     if not deriv:
         # compute hyper-geometric
-        norm = np.abs((1 + z) / (1 - z))**(m/2)
-        a, b, c = -l, l+1, 1-m
-        P = norm * hypF(a, b, c, (1-z)/2)
+        norm = ((1 + x) / (1 - x))**(m/2)
+        a, b, c = l+1, -l, 1-m
+        P = norm * hypF(a, b, c, (1-x)/2, high_prec=high_prec)
         # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
-        C = 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
+        C = _log_legendre_norm(l, m)
         P *= np.exp(C + gammaln(np.abs(c)+1))
         # handle singularity: 1st order Euler
         if np.any(s):
-            P[:, s] += Plm(l, m, z[s], deriv=True, keepdims=True) * dz
+            P[:, s] += Plm(l, m, x[s], deriv=True, keepdims=True) * dx
         if not keepdims:
             if 1 in P.shape:
                 P = P.ravel()
@@ -76,27 +77,29 @@ def Plm(l, m, z, deriv=False, keepdims=False):
         return P
     # compute derivative
     else:
-        norm = 1 / (1 - z**2)
-        dPdz = norm * ((m - l - 1) * Plm(l+1, m, z, keepdims=True) + (l+1) * z * Plm(l, m, z, keepdims=True))
+        norm = 1 / (1 - x**2)
+        term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True)
+        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        term2 = (l+1) * x * Plm(l, m, x, keepdims=True)
+        dPdx = norm * (term1 + term2)
         # handle singularity: 1st order Euler
         if np.any(s):
-            dPdz[:, s] += (dPdz[:, s] - Plm(l, m, z[s] * (1 - dz), deriv=True, keepdims=True))
+            dPdx[:, s] += (dPdx[:, s] - Plm(l, m, x[s] * (1 - dx), deriv=True, keepdims=True))
         if not keepdims:
-            if 1 in dPdz.shape:
-                dPdz = dPdz.ravel()
-            if dPdz.size == 1:
-                dPdz = dPdz[0]
-        return dPdz
+            if 1 in dPdx.shape:
+                dPdx = dPdx.ravel()
+            if dPdx.size == 1:
+                dPdx = dPdx[0]
+        return dPdx
 
 
-def Qlm(l, m, z, deriv=False, keepdims=False):
+def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     """
     Associated Legendre function of the second kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.12 with interval -1 < z < 1.
-    Note 1: this will return infs or nan at |z| = 1
-    Note 2: stable to integer l = m ~ 800, for all z
-    Note 3: stable to float l = m ~ 200, for |z| < .9
+    DLMF 14.3.12 with interval -1 < x < 1.
+    Note 1: this will return infs or nan at |x| = 1
+    Note 2: stable to integer l = m ~ 800, for all x
 
     Parameters
     ----------
@@ -104,13 +107,17 @@ def Qlm(l, m, z, deriv=False, keepdims=False):
         Degree of the associated Legendre function
     m : int or array_like
         Order of the associated Legendre function
-    z : float or array_like
-        Argument of Legendre function, bounded by |z|<1
+    x : float or array_like
+        Argument of Legendre function, bounded by |x|<1
     deriv : bool, optional
-        If True return derivative wrt z
+        If True return derivative wrt x
     keepdims : bool, optional
-        If False and (l,m) or z is len 1
+        If False and (l,m) or x is len 1
         then ravel the output
+    high_prec : bool, optional
+        If True, use precise mpmath for hypergeometric
+        calls, else use faster but less accurate scipy.
+        Matters mostly for non-integer degree
 
     Returns
     -------
@@ -125,14 +132,14 @@ def Qlm(l, m, z, deriv=False, keepdims=False):
     if m.ndim == 1:
         m = m[:, None]
     # compute Qlm
-    z = np.atleast_1d(z).copy()
+    x = np.atleast_1d(x).copy()
     if not deriv:
         # compute ortho normalization in logspace
-        C = 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
+        C = _log_legendre_norm(l, m)
         # compute w1 and w2, multiply in normalization
-        w1 = 2**m * (1-z**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, z**2)
+        w1 = 2**m * (1-x**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
         w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2))
-        w2 = 2**m * z * (1-z**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, z**2)
+        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, x**2, high_prec=high_prec)
         w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2))
         Q = .5 * np.pi * (-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
         if not keepdims:
@@ -142,17 +149,33 @@ def Qlm(l, m, z, deriv=False, keepdims=False):
                 Q = Q[0]
         return Q
     else:
-        norm = 1 / (1 - z**2)
-        dQdz = norm * ((m - l - 1) * Qlm(l+1, m, z, keepdims=True) + (l+1) * z * Qlm(l, m, z, keepdims=True))
+        norm = 1 / (1 - x**2)
+        term1 = (m - l - 1) * Qlm(l+1, m, x, keepdims=True)
+        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        term2 = (l+1) * x * Qlm(l, m, x, keepdims=True)
+        dQdx = norm * (term1 + term2)
         if not keepdims:
-            if 1 in dQdz.shape:
-                dQdz = dQdz.ravel()
-            if dQdz.size == 1:
-                dQdz = dQdz[0]
-        return dQdz
+            if 1 in dQdx.shape:
+                dQdx = dQdx.ravel()
+            if dQdx.size == 1:
+                dQdx = dQdx[0]
+        return dQdx
 
 
-def hypF(a, b, c, z):
+def _log_legendre_norm(l, m):
+    """
+    Compute log of ortho normalization for
+    associated Legendre functions
+
+    .. math::
+
+        C = \sqrt{\frac{(2l+1)(l-m)!}{4\pi(l+m)!}}
+
+    """
+    return 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
+
+
+def hypF(a, b, c, z, high_prec=True):
     """
     Gauss hypergeometric function.
     Catches the case where c is <= 0
@@ -169,6 +192,8 @@ def hypF(a, b, c, z):
     a, b : float
     c : int
     z : float
+    high_prec : bool
+        If True, use mpmath (slow), else use scipy (fast)
     
     Notes
     -----
@@ -177,6 +202,11 @@ def hypF(a, b, c, z):
     and must be re-normalized for standard use
     with spherical harmonics.
     """
+    if high_prec:
+        from mpmath import hyp2f1
+    else:
+        from scipy.special import hyp2f1
+
     if not isinstance(a, np.ndarray):
         a = np.atleast_2d(a)
     if not isinstance(b, np.ndarray):
