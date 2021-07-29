@@ -834,12 +834,12 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
                            method=method, filepath=kbin_file)
         # add monopole term if l = 0
         if _l == 0:
-            k = np.concatenate([[0], k])
+            k = np.concatenate([[0], k[:-1]])
         # get basis function g_l
         j = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
         # form transform matrix: sqrt(2/pi) k g_l
         kt = torch.as_tensor(k, device=device, dtype=_float())
-        jl[_l] = np.sqrt(2 / np.pi) * j * kt[:, None]
+        jl[_l] = np.sqrt(2 / np.pi) * j * kt[:, None].clip(1e-3)
         kbins[_l] = k
 
     return jl, kbins
