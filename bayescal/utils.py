@@ -574,7 +574,7 @@ def _gen_sph2pix_multiproc(job):
 
 def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
                 lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
-                high_prec=True, renorm=False, pixarea=None):
+                high_prec=True, renorm=False):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -635,11 +635,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         norm is 1 over the cut-sky. This is done using the sampled
         theta, phi points as a numerical inner product approx.
         Note this assumes that the theta, phi are drawn from
-        part of a HEALpix grid of pixarea, with a pixelization
+        part of a HEALpix grid with a pixelization
         density enough to resolve the fastest spatial frequency
-    pixarea : float, optional
-        If renorm, this is the HEALpix pixel area [str] of
-        each pixel.
 
     Returns
     -------
@@ -670,7 +667,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
             _m = m[i*Ntask:(i+1)*Ntask]
             jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min,
                                                       l=_l, m=_m, high_prec=high_prec,
-                                                      renorm=renorm, pixarea=pixarea)])
+                                                      renorm=renorm)])
 
         # run jobs
         try:
@@ -729,8 +726,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     # renormalize
     if renorm:
         # Note: theta and phi must be part of a HEALpix grid
-        assert pixarea is not None
-        norm = torch.sqrt(torch.sum(torch.abs(Y)**2, axis=1) * pixarea)
+        norm = torch.sqrt(torch.sum(torch.abs(Y)**2, axis=1))
         Y /= norm[:, None]
 
     return Y
@@ -742,9 +738,9 @@ def _gen_bessel2freq_multiproc(job):
 
 
 def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
-                    decimate=True, device=None, Nproc=None, Ntask=10):
+                    decimate=True, device=None, Nproc=None, Ntask=10, renorm=False):
     """
-    Generate spherical Bessel forward model matrices sqrt(2/pi) k j_l(kr)
+    Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
 
     The inverse transformation from Fourier space (k)
@@ -752,14 +748,14 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
 
     .. math::
 
-        T_{lm}(r) &= \frac{2}{\pi} \int dk k j_l(k r) T_{lm}(k) \\
-        T(r,\theta,\phi) &= \frac{2}{\pi} \int dk k j_l(k r)
+        T_{lm}(r) &= \sqrt{\frac{2}{\pi}} \int dk k g_l(k r) T_{lm}(k) \\
+        T(r,\theta,\phi) &= \sqrt{\frac{2}{\pi}} \int dk k g_l(k r)
                             T_l(k,\theta,\phi)
 
     Parameters
     ----------
     l : array_like
-        Spherical harmonic l modes for j_l(kr) terms
+        Spherical harmonic l modes for g_l(kr) terms
     freqs : array_like
         Frequency array [Hz]
     cosmo : Cosmology object
@@ -771,13 +767,16 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         options=['default', 'samushia', 'gebhardt']
         See sph_bessel_kln for details.
     decimate : bool, optional
-        Use every other j_l(z) zero as k bins (i.e. DFT convention)
+        Use every other g_l(x) zero as k bins (i.e. DFT convention)
     device : str, optional
-        Device to push j_l(kr) to.
+        Device to push g_l(kr) to.
     Nproc : int, optional
         If not None, enable multiprocessing mode with Nproc processes
     Ntask : int, optional
         Number of modes to compute per process
+    renorm : bool, optional
+        If True, renormalize g_l modes such that the numerically
+        integrated inner product is equal to pi/2 k^-2
 
     Returns
     -------
@@ -786,8 +785,9 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         spherical Fourier Bessel transform matrices,
         one for each unique l mode.
         Keys are l mode integers, values are matrices.
-    k : ndarray
-        k modes [Mpc^-1]
+    kln : dict
+        A dictionary holding a series of k modes [Mpc^-1]
+        for each l mode. same keys as gln
     """
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
@@ -804,7 +804,8 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, freqs, cosmo), dict(Nk=Nk, method=method, decimate=decimate, device=device)])
+            jobs.append([(_l, freqs, cosmo), dict(Nk=Nk, method=method, decimate=decimate,
+                                                  device=device, renorm=renorm)])
 
         # run jobs
         try:
@@ -830,9 +831,13 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     for _l in ul:
         # get k bins for this l mode
         k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
-                          method=method, filepath=kbin_file)
-        # get basis function
-        j = sph_bessel_func(_l, k, r, method=method, device=device)
+                           method=method, filepath=kbin_file)
+        # add monopole term if l = 0
+        if _l == 0:
+            k = np.concatenate([[0], k])
+        # get basis function g_l
+        j = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
+        # form transform matrix: sqrt(2/pi) k g_l
         kt = torch.as_tensor(k, device=device, dtype=_float())
         jl[_l] = np.sqrt(2 / np.pi) * j * kt[:, None]
         kbins[_l] = k
@@ -841,7 +846,7 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
 
 
 def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
-                    device=None):
+                    renorm=False, device=None):
     """
     Generate a spherical bessel radial basis function
 
@@ -866,6 +871,9 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     r_min, r_max : float, optional
         r_min and r_max of LIM survey. If None, will use
         min and max of r.
+    renorm : bool, optional
+        If True, renormalize amplitude of basis function
+        such that inner product equals pi/2 k^-2
     device : str, optional
         Device to place matrices on
 
@@ -897,6 +905,10 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
             raise NotImplementedError
 
         j[i] = torch.as_tensor(j_i, dtype=_float(), device=device)
+
+    # renormalize
+    if renorm:
+        j *= torch.sqrt(np.pi/2 * k.clip(1e-3)**-2 / torch.sum(torch.abs(j)**2, axis=1))[:, None]
 
     return j
 
