@@ -898,8 +898,11 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
 
         elif method == 'samushia':
             # j_l(kr) + A y_l(kr)
-            A = -special.jl(l, _k * r_min) / special.yl(l, _k * r_min).clip(-1e50, np.inf)
-            j_i = special.jl(l, _k * r) + A * special.yl(l, _k * r).clip(-1e50, np.inf)
+            j_i = special.jl(l, _k * r)
+            if _k > 0:
+                A = -special.jl(l, _k * r_min) / special.yl(l, _k * r_min).clip(-1e50, np.inf)
+                y_i = special.yl(l, _k * r).clip(-1e50, np.inf)
+                j_i += A * y_i
 
         elif method == 'gebhardt':
             raise NotImplementedError
