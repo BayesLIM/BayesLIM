@@ -978,7 +978,7 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, decimate=True,
         elif method == 'samushia':
             kmin = 2 * np.pi / (r_max - r_min)
             dk = kmin / 500
-            k_arr = np.linspace(kmin, kmax, (kmax-kmin)//dk+1)
+            k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
             y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
                  - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
             k = get_zeros(k_arr, y)
