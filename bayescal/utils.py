@@ -479,7 +479,7 @@ def gen_lm(lmax, real_field=True):
 
 
 def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
-                  high_prec=True):
+                  high_prec=True, add_sectoral=True):
     """
     Compute associated Legendre function degrees l on
     the spherical cap or stripe given boundary conditions.
@@ -517,11 +517,18 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
+    add_sectoral : bool, optional
+        If True, include sectoral modes (l == m)
+        regardless of whether they satisfy BC
 
     Returns
     -------
     l, m
         Array of l and m values
+
+    Notes
+    -----
+
     """
     # solve for m modes
     spacing = 2 * np.pi / phi_max
@@ -552,9 +559,9 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
 
         y = y.ravel()
         zeros = get_zeros(l, y)
-        # add monopole
-        if _m == 0:
-            zeros = [0] + zeros
+        # add sectoral
+        if add_sectoral:
+            zeros = [_m] + zeros
         ls[_m] = np.asarray(zeros)
 
     larr, marr = [], []
@@ -737,7 +744,7 @@ def _gen_bessel2freq_multiproc(job):
     return gen_bessel2freq(*args, **kwargs)
 
 
-def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
+def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
                     decimate=True, device=None, Nproc=None, Ntask=10, renorm=False):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
@@ -760,8 +767,8 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         Frequency array [Hz]
     cosmo : Cosmology object
         For freq -> r [comoving Mpc] conversion
-    Nk : int, optional
-        Number of modes to compute, starting at smallest
+    kmax : float
+        Maximum k-mode to compute [Mpc^-1]
     method : str, optional
         Method for constraining radial basis functions.
         options=['default', 'samushia', 'gebhardt']
@@ -804,8 +811,8 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, freqs, cosmo), dict(Nk=Nk, method=method, decimate=decimate,
-                                                  device=device, renorm=renorm)])
+            jobs.append([(_l, freqs, cosmo, kmax), dict(method=method, decimate=decimate,
+                                                        device=device, renorm=renorm)])
 
         # run jobs
         try:
@@ -826,11 +833,9 @@ def gen_bessel2freq(l, freqs, cosmo, Nk=None, method='default', kbin_file=None,
     # run single proc mode
     jl = {}
     kbins = {}
-    if Nk is None:
-        Nk = len(r) // 2 
     for _l in ul:
         # get k bins for this l mode
-        k = sph_bessel_kln(_l, r_max, Nk, r_min=r_min, decimate=decimate,
+        k = sph_bessel_kln(_l, r_max, kmax, r_min=r_min, decimate=decimate,
                            method=method, filepath=kbin_file)
         # add monopole term if l = 0
         if _l == 0:
@@ -916,20 +921,19 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
+def sph_bessel_kln(l, r_max, kmax, r_min=None, decimate=True,
                    method='default', filepath=None):
     """
     Get spherical bessel Fourier bins given method.
 
     Parameters
     ----------
-    l : int
+    l : float
         Angular l mode
     r_max : float
         Maximum survey radial extent [cMpc]
-    Nk : int
-        Number of k bins, starts with
-        smallest modes and works up
+    kmax : float
+        Maximum wavevector k [Mpc^-1] to compute
     r_min : float, optional
         Survey starting boundary [cMpc]
         only used for special method
@@ -963,14 +967,18 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     else:
         if method == 'default':
             import mpmath
-            Nmax = 2 * Nk + 1
-            zeros = [float(mpmath.besseljzero(l+.5, n)) for n in range(1, Nmax)]
-            k = np.array(zeros) / r_max
+            k = 0
+            zeros = []
+            n = 1
+            while k < kmax:
+                k = float(mpmath.besseljzero(l+.5, n)) / r_max
+                zeros.append(k)
+                n += 1
 
         elif method == 'samushia':
             kmin = 2 * np.pi / (r_max - r_min)
             dk = kmin / 500
-            k_arr = dk + np.arange(0, 30000) * dk
+            k_arr = np.linspace(kmin, kmax, (kmax-kmin)/dk)
             y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
                  - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
             k = get_zeros(k_arr, y)
@@ -982,7 +990,7 @@ def sph_bessel_kln(l, r_max, Nk, r_min=None, decimate=True,
     if decimate:
         k = k[1::2]
 
-    return np.asarray(k[:Nk])
+    return np.asarray(k)
 
 
 def gen_poly_A(freqs, Ndeg, device=None):
