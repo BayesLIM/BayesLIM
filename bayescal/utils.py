@@ -745,7 +745,7 @@ def _gen_bessel2freq_multiproc(job):
 
 
 def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
-                    decimate=True, device=None, Nproc=None, Ntask=10, renorm=False):
+                    decimate=False, device=None, Nproc=None, Ntask=10, renorm=False):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -921,7 +921,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_max, kmax, r_min=None, decimate=True,
+def sph_bessel_kln(l, r_max, kmax, r_min=None, decimate=False,
                    method='default', filepath=None):
     """
     Get spherical bessel Fourier bins given method.

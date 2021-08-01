@@ -125,8 +125,8 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         Legendre function of second kind at z
     """
     # reshape if needed
-    l = np.atleast_1d(l)
-    m = np.atleast_1d(m)
+    l = np.atleast_1d(l).astype(float)
+    m = np.atleast_1d(m).astype(float)
     if l.ndim == 1:
         l = l[:, None]
     if m.ndim == 1:
