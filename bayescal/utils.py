@@ -706,29 +706,10 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
     x = np.cos(theta)
-    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
+    x_min = np.cos(theta_min)
+    H = gen_legendre_func(x, l, m, method, x_min=x_min, high_prec=high_prec)
     Phi = np.exp(1j * m * phi)
-
-    if method == 'stripe':
-        # spherical stripe: uses Plm and Qlm
-        assert theta_min is not None
-        # compute Qlms
-        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
-        # compute A coefficients
-        x_min = np.cos(theta_min)
-        A = -special.Plm(l, m, x_min, high_prec=high_prec, keepdims=True) \
-            / special.Qlm(l, m, x_min, high_prec=high_prec, keepdims=True)
-        # Use deriv = True for m == 0
-        if 0 in m:
-            mzero = np.ravel(m) == 0
-            A[mzero] = -special.Plm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True) \
-                       / special.Qlm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True)
-        # construct Y
-        Y = torch.as_tensor((P + A * Q) * Phi, dtype=_cfloat(), device=device)
-
-    else:
-        # spherical cap or full sky: uses Plm
-        Y = torch.as_tensor(P * Phi, dtype=_cfloat(), device=device)
+    Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
     # renormalize
     if renorm:
@@ -738,6 +719,52 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     return Y
 
+def gen_legendre_func(x, l, m, method, x_min=None, high_prec=True):
+    """
+    Generate (un-normalized) assoc. Legendre basis
+
+    Parameters
+    ----------
+    x : array_like
+        Array of x values [-1, 1]
+    l : array_like
+        float degree
+    m : array_like
+        integer order
+    method : str, ['stripe', 'sphere']
+        boundary condition method
+    x_min : float, optional
+        If method is stripe, this the minimum x value
+    high_prec : bool, optional
+        If True, use arbitrary precision for Plm and Qlm
+        otherwise use standard (faster) scipy method
+
+    Returns
+    -------
+    H : array_like
+        Legendre basis: P + A * Q
+    """
+    # compute assoc. legendre: orthonorm is already in Plm and Qlm
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
+    if method == 'stripe':
+        # spherical stripe: uses Plm and Qlm
+        assert x_min is not None
+        # compute Qlms
+        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
+        # compute A coefficients
+        A = -special.Plm(l, m, x_min, high_prec=high_prec, keepdims=True) \
+            / special.Qlm(l, m, x_min, high_prec=high_prec, keepdims=True)
+        # Use deriv = True for m == 0
+        if 0 in m:
+            mzero = np.ravel(m) == 0
+            A[mzero] = -special.Plm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True) \
+                       / special.Qlm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True)
+
+        H = P + A * Q
+    else:
+        H = P
+
+    return H
 
 def _gen_bessel2freq_multiproc(job):
     args, kwargs = job
