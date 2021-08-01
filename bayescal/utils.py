@@ -707,7 +707,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
     x = np.cos(theta)
     x_min = np.cos(theta_min)
-    H = gen_legendre_func(x, l, m, method, x_min=x_min, high_prec=high_prec)
+    H = legendre_func(x, l, m, method, x_min=x_min, high_prec=high_prec)
     Phi = np.exp(1j * m * phi)
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
@@ -719,7 +719,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     return Y
 
-def gen_legendre_func(x, l, m, method, x_min=None, high_prec=True):
+def legendre_func(x, l, m, method, x_min=None, high_prec=True):
     """
     Generate (un-normalized) assoc. Legendre basis
 
