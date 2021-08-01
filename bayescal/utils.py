@@ -479,7 +479,7 @@ def gen_lm(lmax, real_field=True):
 
 
 def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
-                  high_prec=True, add_sectoral=True):
+                  mmin=0, high_prec=True, add_sectoral=True):
     """
     Compute associated Legendre function degrees l on
     the spherical cap or stripe given boundary conditions.
@@ -513,6 +513,8 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         Maximum degree l to compute for each m
     dl : float, optional
         Sampling density in l from m to lmax
+    mmin : int, optional
+        Minimum m to compute, default is 0.
     high_prec : bool, optional
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
@@ -525,14 +527,12 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     -------
     l, m
         Array of l and m values
-
-    Notes
-    -----
-
     """
     # solve for m modes
     spacing = 2 * np.pi / phi_max
-    m = np.arange(0, mmax + 1.1, spacing)
+    assert np.isclose(spacing % 1, 0), "phi_max must evenly divide into 2pi"
+    mmin = max([0, mmin])
+    m = np.arange(mmin, mmax + 1.1, spacing)
 
     # solve for l modes
     assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
