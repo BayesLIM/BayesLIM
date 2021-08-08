@@ -12,6 +12,7 @@ from . import rime
 from . import cosmo
 from . import sampler
 from . import special
+from . import uvdata_interface
 
 from .optim import ParamDict
 

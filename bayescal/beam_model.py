@@ -5,6 +5,7 @@ import torch
 from torch.nn import Parameter
 import numpy as np
 import warnings
+from scipy import interpolate
 
 from . import utils
 
@@ -36,8 +37,9 @@ class PixelBeam(torch.nn.Module):
     at boresight. Also, a single beam can be used for all
     antennas, or one can fit for per-antenna models.
     """
-    def __init__(self, params, freqs, response=None, response_args=(), parameter=True, polmode='1pol',
-                 powerbeam=True, fov=180, device=None):
+    def __init__(self, params, freqs, response=None, response_args=(),
+                 parameter=True, polmode='1pol',
+                 powerbeam=True, fov=180):
         """
         A generic pixelized beam model evaluated on the sky
 
@@ -58,7 +60,11 @@ class PixelBeam(torch.nn.Module):
             to output beam. It should return another callable
             that takes (zen [deg], az [deg], freqs [Hz])
             as arguments and returns the beam values of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix).
+            (Npol, Npol, Nmodel, Nfreqs, Npix). Note that unlike
+            sky_model, params are stored on both the Model and
+            the Response function with the same pointer.
+        response_args : tuple, optional
+            Arguments for the response callable
         parameter : bool, optional
             If True, fit for params (default), otherwise
             keep it fixed to its input value
@@ -80,12 +86,13 @@ class PixelBeam(torch.nn.Module):
         """
         super().__init__()
         self.params = params
+        self.device = self.params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
         if response is None:
             # assumes Npix axis of params is healpix
-            self.R = PixelResponse(self.params, 'healpix',
+            self.R = PixelResponse(self.params, freqs, 'healpix',
                                    utils.healpy.npix2nside(params.shape[-1]))
         else:
             self.R = response(self.params, *response_args)
@@ -95,7 +102,6 @@ class PixelBeam(torch.nn.Module):
         self.polmode = polmode
         self.powerbeam = powerbeam
         self.fov = fov
-        self.device = device
         if self.powerbeam:
             assert self.polmode in ['1pol', '2pol']
         self.Npol = 1 if polmode == '1pol' else 2
@@ -227,6 +233,7 @@ class PixelBeam(torch.nn.Module):
             roughly psky = beam1 * sky * beam2. The FoV cut has
             been applied to psky as well as the 'angs' key
         """
+        sky_comp = dict(sky_comp.items())
         kind = sky_comp['kind']
         if kind in ['point', 'pixel']:
             # get coords
@@ -259,16 +266,36 @@ class PixelBeam(torch.nn.Module):
 
         return sky_comp
 
+    def freq_interp(self, freqs, kind='linear'):
+        """
+        Interpolate params onto new set of frequencies
+        if freq_mode is channel. If freq_mode is
+        poly or powerlaw, just update response frequencies
 
-class AlmBeam(torch.nn.Module):
-    """
-    A beam model representation in
-    spherical harmonic space.
-    This takes sky models of 'alm' kind.
-    """
-    def __init__(self, params, freqs, parameter=True, polmode='1pol',
-                 powerbeam=False):
-        raise NotImplementedError
+        Parameters
+        ----------
+        freqs : tensor
+            Updated frequency array to interpolate to [Hz]
+        kind : str, optional
+            Kind of interpolation if freq_mode is channel
+            see scipy.interp1d for options
+        """
+        if self.R.freq_mode == 'channel':
+            # interpolate params across frequency
+            interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
+                                          utils.tensor2numpy(self.params),
+                                          axis=3, kind=kind, fill_value='extrapolate')
+            params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
+                                     dtype=self.params.dtype)
+            if self.params.requires_grad:
+                self.params = torch.nn.Parameter(params)
+            else:
+                self.params = params
+            self.R.params = self.params
+            self.freqs = freqs
+
+        self.R.freqs = freqs
+        self.R._setup()
 
 
 class PixelResponse(utils.PixInterp):
@@ -289,38 +316,69 @@ class PixelResponse(utils.PixInterp):
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, pixtype, npix, interp_mode='nearest',
-                 device=None):
+    def __init__(self, params, freqs, pixtype, npix, interp_mode='nearest',
+                 freq_mode='channel', f0=None):
         """
         Parameters
         ----------
         params : tensor
             The pixel beam map, of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix). Note that
-            params is mutable, so the output of this object
-            will change if the input params is updated!
+            (Npol, Npol, Nmodel, Nfreqs, Npix). Nfreqs
+            can be interchanged with Ncoeff where Ncoeff
+            is the number of coefficients used to model
+            frequency response (see freq_mode)
+        freqs : tensor
+            frequency array of params [Hz]
         pixtype : str
             Pixelization type. options = ['healpix', 'other']
         npix : int
             Number of sky pixels in the beam
         interp_mode : str, optional
             Spatial interpolation method. ['nearest', 'bilinear']
-        device : str, optional
-            Device to place object on
+        freq_mode : str, optional
+            Frequency parameterization model.
+            channel - each freq channel is an independent parameter
+            poly - low-order polynomial basis
+        f0 : float, optional
+            Fiducial frequency for poly freq_mode
         """
+        device = params.device
         super().__init__(pixtype, npix, interp_mode=interp_mode,
                          device=device)
+        self.freqs = freqs
         self.params = params
+        self.device = device
+        self.freq_mode = freq_mode
+        self.f0 = f0
+
+        self._setup()
+
+    def _setup(self):
+        if self.freq_mode == 'channel':
+            assert self.params.shape[3] == len(self.freqs)
+        elif self.freq_mode == 'poly':
+            # get polynomial A matrix wrt freq
+            self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
+            Ndeg = self.params.shape[3]
+            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device)
 
     def push(self, device):
         """push params and other attrs to device"""
         self.params = utils.push(self.params, device)
-        self.device = device
+        self.device = self.params.device
+        self.freqs = self.freqs.to(device)
         for k, interp in self.interp_cache.items():
             self.interp_cache[k] = (interp[0], interp[1].to(device))
 
     def __call__(self, zen, az, *args):
-        return self.interp(self.params, zen, az)
+        # interpolate or generate sky values
+        b = self.interp(self.params, zen, az)
+
+        # evaluate frequency values
+        if self.freq_mode == 'poly':
+            b = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+
+        return b
 
 
 class GaussResponse:
@@ -334,7 +392,7 @@ class GaussResponse:
 
     Recall azimuth is defined as the angle East of North
     """
-    def __init__(self, params, device=None):
+    def __init__(self, params, freqs):
         """
         .. math::
 
@@ -346,9 +404,17 @@ class GaussResponse:
             Each of shape (Npol, Npol, Nmodel, Nfreqs). The tensors are
             the Gaussian sigma in EW and NS sky directions, respectively,
             with units of the dimensionless image-plane l & m (azimuth sines & cosines).
+        freqs : tensor
+            frequency array of params [Hz]
         """
         self.params = params
-        self.device = device
+        self.freqs = freqs
+        self.device = self.params.device
+        self.freq_mode = 'channel'
+        assert self.params.shape[3] == len(self.freqs)
+
+    def _setup(self):
+        pass
 
     def __call__(self, zen, az, freqs):
         # get azimuth dependent sigma
@@ -361,7 +427,7 @@ class GaussResponse:
     def push(self, device):
         """push params and other attrs to device"""
         self.params = utils.push(self.params, device)
-        self.device = device
+        self.device = self.params.device
 
 
 class YlmResponse(PixelResponse):
@@ -380,8 +446,9 @@ class YlmResponse(PixelResponse):
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
     """ 
-    def __init__(self, params, l, m, mode='generate', interp_angs=None,
-                 powerbeam=True, freq_mode='channel', device=None):
+    def __init__(self, params, l, m, freqs, mode='generate',
+                 interp_mode='nearest', interp_angs=None,
+                 powerbeam=True, freq_mode='channel', f0=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -401,14 +468,14 @@ class YlmResponse(PixelResponse):
             Nmodel is the number of unique antenna models.
         l, m : ndarrays
             The l and m modes of params.
-        npix : int
-            Nside integer of original healpix map. Note that this may be equal
-            to Ncoeff, but it may not, as you can truncate the l and m modes
-            as desired.
+        freqs : tensor
+            frequency array of params [Hz]
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm given zen, az for each call
             interpolate - interpolate existing beam onto zen, az. See warning
             in docstring above.
+        interp_mode : str, optional
+            If mode is interpolate, this is the kind (see utils.PixelInterp)
         interp_angs : 2-tuple
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
@@ -418,6 +485,8 @@ class YlmResponse(PixelResponse):
             beam is complex antenna farfield beam.
         freq_mode : str, optional
             Frequency parameterization ['channel', 'poly']
+        f0 : float, optional
+            fiducial frequency [Hz] for poly freq_mode
 
         Notes
         -----
@@ -425,17 +494,17 @@ class YlmResponse(PixelResponse):
         ang_cache : a cache for (zen, az) arrays [deg]
         """
         self.npix = interp_angs[0].shape[-1] if interp_angs is not None else None
-        super(YlmResponse, self).__init__(params, 'healpix', self.npix)
+        super(YlmResponse, self).__init__(params, freqs, 'healpix', self.npix,
+                                          interp_mode=interp_mode,
+                                          freq_mode=freq_mode, f0=f0)
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
         self.powerbeam = powerbeam
         self.Ylm_cache = {}
         self.ang_cache = {}
         self.mode = mode
-        self.device = device
         self.interp_angs = interp_angs
         self.beam_cache = None
-        self.freq_mode = freq_mode
 
     def get_Ylm(self, zen, az):
         """
@@ -498,12 +567,8 @@ class YlmResponse(PixelResponse):
         if self.freq_mode == 'channel':
             p = self.params
         elif self.freq_mode == 'poly':
-            # get polynomial A matrix wrt freq
-            Ndeg = self.params.shape[3]
-            A = utils.gen_poly_A(freqs, Ndeg, device=self.device)
-
-            # first do fast dot product along Ndeg axis
-            p = (self.params.transpose(-1, -2) @ A.T).transpose(-1, -2)
+            # first do fast dot product along frequency axis
+            p = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         # generate Y matrix
         Ylm = self.get_Ylm(zen, az)
@@ -532,7 +597,7 @@ class YlmResponse(PixelResponse):
                 # now cache it for future calls
                 self.set_beam(beam, int_zen, int_az, freqs)
 
-            # interpolate the beam at the desired locations
+            # interpolate the beam at the desired sky locations
             beam = self.interp(self.beam_cache['beam'], zen, az)
 
         return beam
@@ -540,11 +605,22 @@ class YlmResponse(PixelResponse):
     def push(self, device):
         """push params and other attrs to device"""
         self.params = utils.push(self.params, device)
-        self.device = device
+        self.device = self.params.device
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
             self.beam_cache['beam'] = utils.push(self.beam_cache['beam'], device)
+
+
+class AlmBeam(torch.nn.Module):
+    """
+    A beam model representation in
+    spherical harmonic space.
+    This takes sky models of 'alm' kind.
+    """
+    def __init__(self, params, freqs, parameter=True, polmode='1pol',
+                 powerbeam=False):
+        raise NotImplementedError
 
 
 def airy_disk(zen, az, Dns, freqs, Dew=None):

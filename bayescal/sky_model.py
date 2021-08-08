@@ -39,6 +39,7 @@ class SkyBase(torch.nn.Module):
         """
         super().__init__()
         self.params = params
+        self.device = self.params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         self.kind = kind
@@ -47,6 +48,8 @@ class SkyBase(torch.nn.Module):
         self.R = R
         self.freqs = freqs
         self.Nfreqs = len(freqs)
+        if self.R.freq_mode == 'channel':
+            assert len(self.freqs) == self.params.shape[2]
 
     def push(self, device, attrs=[]):
         """
@@ -62,19 +65,41 @@ class SkyBase(torch.nn.Module):
             List of additional attributes to push
         """
         self.params = utils.push(self.params, device)
+        self.device = self.params.device
         if hasattr(self, 'angs'):
             self.angs = self.angs.to(device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
 
-#    def freq_interp(self, freqs):
-#        """
-#        Interpolate sky model onto frequencies
-#        """
-#        # TODO: implement
-#        # interpolate params if necessary
-#        # set new frequency array
-#        self.freqs = torch.as_tensor(freqs, dtype=_float())
+    def freq_interp(self, freqs, kind='linear'):
+        """
+        Interpolate params onto new set of frequencies
+        if response freq_mode is channel. If freq_mode is
+        poly or powerlaw, just update response frequencies
+
+        Parameters
+        ----------
+        freqs : tensor
+            Updated frequency array to interpolate to [Hz]
+        kind : str, optional
+            Kind of interpolation if freq_mode is channel
+            see scipy.interp1d for options
+        """
+        if self.R.freq_mode == 'channel':
+            # interpolate params across frequency
+            interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
+                                          utils.tensor2numpy(self.params),
+                                          axis=2, kind=kind, fill_value='extrapolate')
+            params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
+                                     dtype=self.params.dtype)
+            if self.params.requires_grad:
+                self.params = torch.nn.Parameter(params)
+            else:
+                self.params = params
+            self.freqs = freqs
+
+        self.R.freqs = freqs
+        self.R._setup()
 
 
 class DefaultResponse:
@@ -82,6 +107,9 @@ class DefaultResponse:
     Default response function for SkyBase  
     """
     def __init__(self):
+        self.freq_mode = 'channel'
+
+    def _setup(self):
         pass
 
     def __call__(self, params):
@@ -201,10 +229,10 @@ class PointSourceResponse:
     fixed locations but variable flux wrt frequency
     options include
         - channel : vary all frequency channels
-        - poly : fit a low-order polynomial across freqs
-        - powerlaw : fit an amplitude and exponent across freqs
+        - poly : low-order polynomial across freqs, centered at f0.
+        - powerlaw : amplitude and freq exponent, centered at f0.
     """
-    def __init__(self, freqs, mode='poly', f0=None,
+    def __init__(self, freqs, freq_mode='poly', f0=None,
                  device=None, Ndeg=None):
         """
         Choose a frequency parameterization for PointSourceModel
@@ -213,7 +241,7 @@ class PointSourceResponse:
         ----------
         freqs : tensor
             Frequency array [Hz]
-        mode : str, optional
+        freq_mode : str, optional
             options = ['channel', 'poly', 'powerlaw']
             Frequency parameterization mode. Choose between
             channel - each frequency is a parameter
@@ -224,7 +252,7 @@ class PointSourceResponse:
         device : str, optional
             Device of point source params
         Ndeg : int, optional
-            Polynomial degrees if mode is 'poly'
+            Polynomial degrees if freq_mode is 'poly'
 
         Notes
         -----
@@ -234,21 +262,24 @@ class PointSourceResponse:
         """
         self.freqs = freqs
         self.f0 = f0
-        self.dfreqs = (freqs - freqs[0]) / 1e6  # MHz
-        self.mode = mode
+        self.freq_mode = freq_mode
         self.Ndeg = Ndeg
         self.device = device
 
+        self._setup()
+
+    def _setup(self):
+        self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
         # setup
-        if self.mode == 'poly':
-            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=device)
+        if self.freq_mode == 'poly':
+            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
 
     def __call__(self, params):
-        if self.mode == 'channel':
+        if self.freq_mode == 'channel':
             return params
-        elif self.mode == 'poly':
+        elif self.freq_mode == 'poly':
             return self.A @ params
-        elif self.mode == 'powerlaw':
+        elif self.freq_mode == 'powerlaw':
             return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
 
 
@@ -364,7 +395,7 @@ class PixelModelResponse:
     """
     def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
                  device=None, transform_order=0,
-                 lms=None, f0=None, Ndeg=None, Nk=None, decimate=True, cosmo=None,
+                 lms=None, f0=None, Ndeg=None, kmax=1.0, decimate=True, cosmo=None,
                  radial_method='samushia', kbin_file=None):
         """
         Parameters
@@ -378,6 +409,7 @@ class PixelModelResponse:
             Choose the spatial parameterization (default is pixel)
         freq_mode : str, optional
             Choose the freq parameterization (default is channel)
+            options = ['channel', 'poly', 'bessel']
         device : str, optional
             Device to put model on
         transform_order : int, optional
@@ -405,42 +437,45 @@ class PixelModelResponse:
         self.transform_order = transform_order
         self.l, self.m = lms if lms is not None else (None, None)
         self.f0 = f0
-        self.dfreqs = (freqs - freqs[0]) / 1e6
         self.Ndeg = Ndeg
-        self.Nk = Nk
+        self.kmax = kmax
         self.decimate = decimate
         self.cosmo = cosmo
         self.radial_method = radial_method
         self.kbin_file = kbin_file
-
-        # freq setup
-        self.A, self.j = None, None
-        if self.freq_mode == 'poly':
-            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device)
-        elif self.freq_mode == 'bessel':
-            # compute comoving line of sight distances
-            self.z = cosmo.f2z(freqs)
-            self.r = cosmo.comoving_distance(self.z).value
-            self.dr = self.r = self.r.min()
-            jl, kbins = utils.gen_bessel2freq(self.l, freqs, cosmo,
-                                              Nk=Nk, decimate=decimate,
-                                              device=device,
-                                              method=radial_method,
-                                              kbin_file=kbin_file)
-            self.jl = jl[list(jl.keys())[0]]
-            self.kbins = kbins[list(kbins.keys())[0]]
-
-        # spatial setup
-        self.Ylm = None
-        if self.spatial_mode == 'alm':
-            self.Ylm = utils.gen_sph2pix(theta, phi, self.l, self.m, device=self.device,
-                                         real_field=True)
 
         # assertions
         if self.freq_mode == 'bessel':
             assert self.spatial_mode == 'alm'
             assert len(np.unique(self.l)) == 1
             assert self.transform_order == 1
+
+        self._setup()
+
+    def _setup(self):
+        # freq setup
+        self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
+        self.A, self.j = None, None
+        if self.freq_mode == 'poly':
+            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
+        elif self.freq_mode == 'bessel':
+            # compute comoving line of sight distances
+            self.z = self.cosmo.f2z(self.freqs)
+            self.r = self.cosmo.comoving_distance(self.z).value
+            self.dr = self.r = self.r.min()
+            jl, kbins = utils.gen_bessel2freq(self.l, self.freqs, self.cosmo,
+                                              kmax=self.kmax, decimate=self.decimate,
+                                              device=self.device,
+                                              method=self.radial_method,
+                                              kbin_file=self.kbin_file)
+            self.jl = jl[list(jl.keys())[0]]
+            self.kbins = kbins[list(kbins.keys())[0]]
+
+        # spatial setup
+        self.Ylm = None
+        if self.spatial_mode == 'alm':
+            self.Ylm = utils.gen_sph2pix(self.theta, self.phi, self.l, self.m,
+                                         device=self.device, real_field=True)
 
     def spatial_transform(self, params):
         """
@@ -605,6 +640,23 @@ class CompositeModel(torch.nn.Module):
 
         return output
 
+    def freq_interp(self, freqs, kind='linear'):
+        """
+        Interpolate params onto new set of frequencies
+        if response freq_mode is channel. If freq_mode is
+        poly or powerlaw, just update response frequencies
+
+        Parameters
+        ----------
+        freqs : tensor
+            Updated frequency array to interpolate to [Hz]
+        kind : str, optional
+            Kind of interpolation if freq_mode is channel
+            see scipy.interp1d for options
+        """
+        for model in self.models:
+            model.freq_interp(freqs, kind)
+
 
 def parse_catalogue(catfile, freqs, device=None,
                     parameter=False, freq_interp='linear'):
@@ -666,7 +718,7 @@ def parse_catalogue(catfile, freqs, device=None,
         # still under development
         Nsources = params.shape[-1]
         sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
-        stokes = StokesModel(sparams, parameter=parameter)
+        stokes = PolStokesModel(sparams, parameter=parameter)
         sky = torch.nn.Sequential(sky, stokes)
 
     return sky
@@ -694,8 +746,6 @@ def stokes2linear(S):
         sky model parameterization, of shape (4, ...)
         with the zeroth axis holding the Stokes parameters
         in the order of [I, Q, U, V].
-    device : str, optional
-        Device to put output onto
 
     Returns
     -------
@@ -733,12 +783,12 @@ def stokes2linear(S):
     return B
 
 
-class StokesModel(torch.nn.Module):
+class PolStokesModel(torch.nn.Module):
     """
-    A model for Stokes parameters of a SkyBase object
+    A model for Stokes Q, U, V parameters of a SkyBase object
 
     The output of a Stokes I-only sky model can be pushed
-    through this to become a full-Stokes sky model, with
+    through this to become a polarized Stokes sky model, with
     parameters dictating the relationship between
     Stokes I and Stokes Q, U, V.
 
@@ -781,6 +831,7 @@ class StokesModel(torch.nn.Module):
         """
         super().__init__()
         self.params = params
+        self.device = self.params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
@@ -792,6 +843,7 @@ class StokesModel(torch.nn.Module):
             Device to push to, e.g. 'cpu', 'cuda:0'
         """
         self.params = utils.push(self.params, device)
+        self.device = self.params.device
 
     def forward(self, sky_comp):
         """
@@ -800,7 +852,7 @@ class StokesModel(torch.nn.Module):
         Parameters
         ----------
         sky_comp : dict or tensor
-            A sky component dictionary output from
+            A Stokes-I sky component dictionary output from
             a SkyBase subclass, or a sky parameter tensor
             of shape (1, 1, Nfreqs, Nsources). To reduce
             dimensionality, one can set Nfreqs or Nsources = 1
