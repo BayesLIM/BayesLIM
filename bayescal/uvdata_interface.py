@@ -19,8 +19,8 @@ except ImportError:
 
 
 def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
-                 freq_interp='linear', outfname=None, overwrite=False,
-                 partial_write=False):
+                 freq_interp='linear', beam_sky_interp='bilinear',
+                 outfname=None, overwrite=False, partial_write=False):
     """
     Run a RIME visibility simulation given models
     for the sky, beam, and a UVData object.
@@ -31,7 +31,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
         sky model object to simulate. can also
         be a sky_model.CompositeModel to simulate and
         then sum multiple sky models
-    beam : PixelBeam object
+    beam : UVBeam object or PixelBeam object
         A beam model
     uvd : UVData object or str
         A filename to read, or a UVData object
@@ -46,6 +46,9 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     freq_interp : str, optional
         Frequency interpolation scheme for sky
         and beam if frequencies do not match uvd.
+    beam_sky_interp : str, optional
+        spatial interpolation type for evaluating the beam
+        ['nearest', 'bilinear']
     outfname : str, optional
         Output filename to write simulation to file as UVH5
     overwrite : bool, optional
@@ -58,7 +61,6 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     UVData object
         Simulated data
     """
-    assert sky.device == beam.device
     # load uvdata
     infile = False
     if isinstance(uvd, str):
@@ -73,9 +75,61 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     times = np.unique(uvd.time_array)
     sim_bls = uvd.get_antpairs()
     pols = uvd.get_pols()
+    if uvd.x_orientation is None:
+        # assume x_orientation = 'east', this has no effect
+        # if the adopted beam also has x_orientation = None
+        pols = [uvutils.polnum2str(uvutils.polstr2num(p), 'east') for p in pols]
     antpos, ants = uvd.get_ENU_antpos()
     antpos = dict(zip(ants, antpos))
 
+    # determine polmode from uvd pols
+    if len(pols) == 1:
+        polmode = '1pol'
+        assert pols[0][0] == pols[0][1], "data must be auto-pol for 1pol mode"
+    elif len(pols) == 2:
+        polmode = '2pol'
+        assert pols[0][0] == pols[0][1], "data must be auto-pols for 2pol mode"
+        assert pols[1][0] == pols[1][1], "data must be auto-pols for 2pol mode"
+    else:
+        polmode = '4pol'
+
+    # read beamfits filepath to UVBeam
+    if isinstance(beam, str):
+        uvb = UVBeam()
+        uvb.read_beamfits(beam)
+        beam = uvb
+    # convert beam to PixelBeam if necessary
+    if isinstance(beam, UVBeam):
+        assert ant2beam is None, "can only assign one beam model given UVBeam"
+        assert uvb.beam_type == 'power', "if passing UVBeam, must be powerbeam"
+        assert polmode in ['1pol', '2pol'], "if using powerbeam, data must be 1pol or 2pol"
+        assert uvb.pixel_coordinate_system == 'healpix', 'if passing UVBeam, must be healpix'
+        # get beam pols
+        xorient = beam.x_orientation
+        assert xorient == uvd.x_orientation, "uvdata and beam must have same x_orientation"
+        if xorient is None:
+            xorient = 'east'
+        bpols = [uvutils.polnum2str(p, xorient) for p in beam.polarization_array]
+        # get data
+        bdata = uvb.data_array[0, 0]
+        bfreqs = np.unique(beam.freq_array)
+        bnpix = bdata.shape[-1]
+        # sort beam polarizations
+        if polmode == '1pol':
+            bdata = torch.zeros(1, 1, 1, len(bfreqs), bnpix, dtype=_float(), device=sky.device)
+            bdata[0, 0, 0] = torch.tensor(bdata[0], dtype=_float())
+
+        elif polmode == '2pol':
+            bdata = torch.zeros(2, 2, 1, len(bfreqs), bnpix, dtype=_float(), device=sky.device)
+            bdata[0, 0, 0] = torch.tensor(bdata[bpols.index('ee')], dtype=_float())
+            bdata[1, 1, 0] = torch.tensor(bdata[bpols.index('nn')], dtype=_float())
+
+        beam = beam_model.PixelBeam(bdata, bfreqs, response=beam_model.PixelResponse,
+                                    response_args=(bfreqs, 'healpix', bnpix, beam_sky_interp),
+                                    parameter=False, polmode=polmode,
+                                    powerbeam=True, fov=180)
+
+    assert sky.device == beam.device
     if len(pols) == 1:
         assert beam.polmode == '1pol'
     elif len(pols) == 2:
