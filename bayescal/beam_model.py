@@ -196,7 +196,7 @@ class PixelBeam(torch.nn.Module):
 
         return psky
 
-    def forward(self, sky_comp, telescope, obs_jd, antpairs):
+    def forward(self, sky_comp, telescope, obs_jd, modelpairs):
         """
         Forward pass a single sky model through the beam
         at a single observation time.
@@ -213,23 +213,23 @@ class PixelBeam(torch.nn.Module):
             A model of the telescope location
         obs_jd : float
             Observation time in Julian Date (e.g. 2458101.23456)
-        antpairs : list of 2-tuple
+        modelpairs : list of 2-tuple
             A list of all unique antenna-pairs of the beam's
             "model" axis, with each 2-tuple indexing the
             unique model axis of the beam.
             For a beam with a single antenna model, or Nmodel=1,
-            then antpairs = [(0, 0)].
+            then modelpairs = [(0, 0)].
             For a beam with 3 antenna models and a baseline
             list of [(ant1, ant2), (ant1, ant3), (ant2, ant3)],
-            then antpairs = [(0, 1), (0, 2), (1, 2)]. Note that
+            then modelpairs = [(0, 1), (0, 2), (1, 2)]. Note that
             the following ArrayModel object should have a mapping
-            of antpairs to the physical baseline list.
+            of modelpairs to the physical baseline list.
 
         Returns
         -------
         psky_comp : dict
             Same input dictionary but with psky as 'sky' of shape
-            (Npol, Npol, Nantpair, Nfreqs, Nsources), where
+            (Npol, Npol, Nmodelpair, Nfreqs, Nsources), where
             roughly psky = beam1 * sky * beam2. The FoV cut has
             been applied to psky as well as the 'angs' key
         """
@@ -248,8 +248,8 @@ class PixelBeam(torch.nn.Module):
 
             # iterate over baselines
             shape = sky.shape
-            psky = torch.zeros(shape[:2] + (len(antpairs),) + shape[2:], dtype=sky.dtype, device=self.device)
-            for k, (ant1, ant2) in enumerate(antpairs):
+            psky = torch.zeros(shape[:2] + (len(modelpairs),) + shape[2:], dtype=sky.dtype, device=self.device)
+            for k, (ant1, ant2) in enumerate(modelpairs):
                 # get beam of each antenna
                 beam1 = beam[:, :, ant1]
                 beam2 = beam[:, :, ant2]
