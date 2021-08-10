@@ -772,7 +772,7 @@ def _gen_bessel2freq_multiproc(job):
 
 
 def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
-                    dk=0.01, decimate=False, device=None, Nproc=None, Ntask=10, renorm=False):
+                    dk_factor=1e-2, decimate=False, device=None, Nproc=None, Ntask=10, renorm=False):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -800,9 +800,12 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         Method for constraining radial basis functions.
         options=['default', 'samushia', 'gebhardt']
         See sph_bessel_kln for details.
-    dk : float, optional
-        Spacing in k [Mpc^-1] to use
-        when sampling for roots
+    dk_factor : float, optional
+        The delta-k spacing in the k_array used for sampling
+        for the roots of the boundary condition is given as
+        dk = k_min * dk_factor where k_min = 2pi / (rmax-rmin)
+        A smaller dk_factor leads to higher resolution in k
+        when solving for roots, but is slower to compute.
     decimate : bool, optional
         Use every other g_l(x) zero as k bins (i.e. DFT convention)
     device : str, optional
@@ -951,7 +954,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_max, kmax, r_min=None, dk=0.01, decimate=False,
+def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-2, decimate=False,
                    method='default', filepath=None):
     """
     Get spherical bessel Fourier bins given method.
@@ -967,9 +970,12 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk=0.01, decimate=False,
     r_min : float, optional
         Survey starting boundary [cMpc]
         only used for special method
-    dk : float, optional
-        Spacing in k [Mpc^-1] to use
-        when sampling for roots
+    dk_factor : float, optional
+        The delta-k spacing in the k_array used for sampling
+        for the roots of the boundary condition is given as
+        dk = k_min * dk_factor where k_min = 2pi / (rmax-rmin)
+        A smaller dk_factor leads to higher resolution in k
+        when solving for roots, but is slower to compute.
     decimate : bool, optional
         If True, use every other zero
         starting at the second zero. This
@@ -1010,6 +1016,7 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk=0.01, decimate=False,
 
         elif method == 'samushia':
             kmin = 2 * np.pi / (r_max - r_min)
+            dk = kmin * dk_factor
             k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
             y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
                  - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
