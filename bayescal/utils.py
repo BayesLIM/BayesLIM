@@ -772,7 +772,8 @@ def _gen_bessel2freq_multiproc(job):
 
 
 def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
-                    dk_factor=1e-2, decimate=False, device=None, Nproc=None, Ntask=10, renorm=False):
+                    dk_factor=1e-2, decimate=False, device=None,
+                    Nproc=None, Ntask=10, renorm=False):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -836,6 +837,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
 
     # multiproc mode
     if Nproc is not None:
+        assert kbin_file is None, "no multiproc necessary if passing kbin_file"
         import multiprocessing
         Njobs = len(ul) / Ntask
         if Njobs % 1 > 0:
@@ -844,7 +846,8 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, freqs, cosmo, kmax), dict(method=method, decimate=decimate,
+            jobs.append([(_l, freqs, cosmo, kmax), dict(method=method, dk_factor=dk_factor,
+                                                        decimate=decimate,
                                                         device=device, renorm=renorm)])
 
         # run jobs
