@@ -868,7 +868,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
     kbins = {}
     for _l in ul:
         # get k bins for this l mode
-        k = sph_bessel_kln(_l, r_max, kmax, r_min=r_min, dk=dk, decimate=decimate,
+        k = sph_bessel_kln(_l, r_max, kmax, r_min=r_min, dk_factor=dk_factor, decimate=decimate,
                            method=method, filepath=kbin_file)
         # add monopole term if l = 0
         if _l == 0:
