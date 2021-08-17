@@ -1047,26 +1047,25 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-1, decimate=False,
     if filepath is not None:
         k = np.loadtxt(filepath, delimiter=',')[l, 1:]
     else:
+        # setup k_array of k samples to find roots
+        kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
+        dk = kmin * dk_factor
+        k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
+
         if method == 'default':
-            import mpmath
-            k = 0.0
-            zeros = []
-            n = 1
-            while k < kmax:
-                k = float(mpmath.besseljzero(l+.5, n)) / r_max
-                zeros.append(k)
-                n += 1
+            # BC is g_l(k_n r) = 0 at r_max
+            y = special.jl(l, k_arr * r_max)
 
         elif method == 'samushia':
-            kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
-            dk = kmin * dk_factor
-            k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
+            # BC is g_l(k_n r) = 0 at r_min and r_max
             y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
-                 - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf)) * k_arr**2
-            k = get_zeros(k_arr, y)
+                 - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf))
 
         elif method == 'gebhardt':
             raise NotImplementedError
+
+        # get roots
+        k = get_zeros(k_arr, y)
 
     # decimate if desired
     if decimate:
