@@ -1070,7 +1070,7 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-1, decimate=False,
 
     # decimate if desired
     if decimate:
-        k = k[1::2]
+        k = k[::2]
 
     return np.asarray(k)
 
