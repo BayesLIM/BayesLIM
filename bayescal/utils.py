@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from scipy.special import voigt_profile
 from scipy.integrate import quad
+from scipy.signal import windows
+from scipy.interpolate import interp1d
 import copy
 import warnings
 
@@ -766,13 +768,51 @@ def legendre_func(x, l, m, method, x_min=None, high_prec=True):
 
     return H
 
+
+def stripe_tukey_mask(theta, theta_min, theta_max,
+                      phi, phi_min, phi_max,
+                      theta_alpha=0.5, phi_alpha=0.5):
+    """
+    Generate a tukey apodization mask for a spherical stripe
+
+    Parameters
+    ----------
+    theta : array_like
+        co-latitude (polar) [rad]
+    theta_min, theta_max : float
+        minimum and maximum extent in theta of the stripe [rad]
+    phi : array_like
+        azimuth [rad]
+    phi_min, phi_max : float
+        minimum and maximum extent in phi of the stripe [rad]
+    theta_alpha, phi_alpha : float, optional
+        alpha parameter of the tukey window for the theta
+        and phi axes respectively
+
+    Returns
+    -------
+    ndarray
+        Apodization mask wrt theta, phi spanning [0, 1]
+    """
+    # theta mask: 5000 yields ang. resolution < nside 512
+    th_arr = np.linspace(theta_min, theta_max, 5000, endpoint=True)
+    mask = windows.tukey(5000, alpha=theta_alpha)
+    theta_mask = interp1d(th_arr, mask, fill_value=0, bounds_error=False, kind='linear')(theta)
+    # phi mask
+    ph_arr = np.linspace(phi_min, phi_max, 5000, endpoint=True)
+    mask = windows.tukey(5000, alpha=phi_alpha)
+    phi_mask = interp1d(ph_arr, mask, fill_value=0, bounds_error=False, kind='linear')(phi)
+
+    return theta_mask * phi_mask
+
+
 def _gen_bessel2freq_multiproc(job):
     args, kwargs = job
     return gen_bessel2freq(*args, **kwargs)
 
 
 def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
-                    dk_factor=1e-2, decimate=False, device=None,
+                    dk_factor=1e-1, decimate=False, device=None,
                     Nproc=None, Ntask=10, renorm=False):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
@@ -957,7 +997,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-2, decimate=False,
+def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-1, decimate=False,
                    method='default', filepath=None):
     """
     Get spherical bessel Fourier bins given method.
@@ -1018,7 +1058,7 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-2, decimate=False,
                 n += 1
 
         elif method == 'samushia':
-            kmin = 2 * np.pi / (r_max - r_min)
+            kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
             dk = kmin * dk_factor
             k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
             y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
@@ -1395,25 +1435,28 @@ class PixInterp:
     Sky pixel spatial interpolation object
     """
     def __init__(self, pixtype, npix, interp_mode='nearest',
-                 device=None):
+                 theta=None, phi=None, device=None):
         """
         Parameters
         ----------
         pixtype : str
-            Pixelization type. options = ['healpix', 'other']
+            Pixelization type. options = ['healpix', 'rect']
         npix : int
             Number of sky pixels in the beam
         interp_mode : str, optional
             Spatial interpolation method. ['nearest', 'bilinear']
+        theta, phi : array_like
+            unique co-latitude and azimuth arrays [deg]
+            of 2D grid to interpolate from
         device : str, optional
             Device to place object on
         """
-        if pixtype != 'healpix':
-            raise NotImplementedError("only supports healpix pixelization currently")
+        assert pixtype in ['healpix', 'rect']
         self.pixtype = pixtype
         self.npix = npix
         self.interp_cache = {}
         self.interp_mode = interp_mode
+        self.theta, self.phi = theta, phi
         self.device = device
 
     def get_interp(self, zen, az):
@@ -1444,13 +1487,23 @@ class PixInterp:
                 inds, wgts = healpy.get_interp_weights(nside,
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
-                # down select if using nearest interpolation
-                if self.interp_mode == 'nearest':
-                    wgts = np.argmax(wgts, axis=0)
-                    inds = np.array([inds[wi, i] for i, wi in enumerate(wgts)])
-                    wgts = 1.0
-            else:
+
+            elif self.pixtype == 'rect':
                 raise NotImplementedError
+                # get 4 neighbors and their interpolation weights
+                zen, az = tensor2numpy(zen), tensor2numpy(az)
+                theta_inds = np.argsort(np.abs(self.theta[:, None] - zen), axis=0)[:2, :]
+                #dtheta = 
+                phi_inds = np.argmin(np.abs(self.phi[:, None] - az), axis=0)[:2, 0]
+                inds = np.concatenate([theta_inds, phi_inds], axis=1)
+                #theta_wgts = 
+
+
+            # down select if using nearest interpolation
+            if self.interp_mode == 'nearest':
+                wgts = np.argmax(wgts, axis=0)
+                inds = np.array([inds[wi, i] for i, wi in enumerate(wgts)])
+                wgts = 1.0
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
@@ -1461,24 +1514,31 @@ class PixInterp:
 
     def interp(self, m, zen, az):
         """
-        Interpolate a healpix map m at zen, az points
+        Interpolate a map m at zen, az points
 
         Parameters
         ----------
         m : array_like or tensor
-            healpix map to interpolate
+            healpix map to interpolate of shape (..., Npix) or
+            rect map to interpolate of shape (..., Ntheta, Nphi)
         zen, az : array_like or tensor
-            Zenith angle (colatittude) and azimuth [deg]
+            Zenith angle (co-latitude) and azimuth [deg]
             points at which to interpolate map
         """
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
         if self.interp_mode == 'nearest':
             # use nearest neighbor
-            return m[..., inds]
+            if self.pixtype == 'healpix':
+                return m[..., inds]
+            elif self.pixtype == 'rect':
+                return m[..., inds[0], inds[1]]
         elif self.interp_mode == 'bilinear':
             # select out 4-nearest neighbor indices for each zen, az
-            nearest = m[..., inds.T]
+            if self.pixtype == 'healpix':
+                nearest = m[..., inds.T]
+            else:
+                nearest = m[..., inds[0].T, inds[1].T]
             # multiply by weights and sum
             return torch.sum(nearest * wgts.T, axis=-1)
 

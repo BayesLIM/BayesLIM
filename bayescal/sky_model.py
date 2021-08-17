@@ -285,10 +285,10 @@ class PointSourceResponse:
 
 class PixelModel(SkyBase):
     """
-    Pixelized model (e.g. Healpix) of the sky
-    specific intensity (aka brightness or temperature)
-    at fixed locations in Equatorial coordinates
-    but with variable amplitude.
+    Pixelized model (e.g. healpix or other representation)
+    of the sky specific intensity distribution
+    (aka brightness or temperature) at fixed locations in
+    Equatorial coordinates but with variable amplitude.
 
     While the input sky model (params) should be in units of
     specific intensity (Kelvin or Jy / str), the output
@@ -330,10 +330,10 @@ class PixelModel(SkyBase):
             last two axes are RA and Dec [deg].
         freqs : tensor
             Frequency array of sky model [Hz].
-        px_area : float
+        px_area : tensor or float
             Contains the solid angle of each pixel [str]. This is multiplied
             into the final sky model, and thus needs to be a scalar or
-            a tensor of shape (1, 1, 1, Npix) to allow for broadcasting
+            a tensor of shape (Npix,) to allow for broadcasting
             rules to apply.
         R : callable, optional
             An arbitrary response function for the sky model, mapping
