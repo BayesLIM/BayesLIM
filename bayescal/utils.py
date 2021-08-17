@@ -911,7 +911,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
     kbins = {}
     for _l in ul:
         # get k bins for this l mode
-        k = sph_bessel_kln(_l, r_max, kmax, r_min=r_min, dk_factor=dk_factor, decimate=decimate,
+        k = sph_bessel_kln(_l, r_min, r_max, kmax, dk_factor=dk_factor, decimate=decimate,
                            method=method, filepath=kbin_file)
         # add monopole term if l = 0
         if _l == 0:
@@ -997,7 +997,7 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-1, decimate=False,
+def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
                    method='default', filepath=None):
     """
     Get spherical bessel Fourier bins given method.
@@ -1006,13 +1006,12 @@ def sph_bessel_kln(l, r_max, kmax, r_min=None, dk_factor=1e-1, decimate=False,
     ----------
     l : float
         Angular l mode
+    r_min : float
+        Survey starting boundary [cMpc]
     r_max : float
         Maximum survey radial extent [cMpc]
     kmax : float
         Maximum wavevector k [Mpc^-1] to compute
-    r_min : float, optional
-        Survey starting boundary [cMpc]
-        only used for special method
     dk_factor : float, optional
         The delta-k spacing in the k_array used for sampling
         for the roots of the boundary condition is given as
