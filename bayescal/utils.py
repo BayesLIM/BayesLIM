@@ -815,7 +815,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
                     dk_factor=1e-1, decimate=False, device=None,
                     Nproc=None, Ntask=10, renorm=False):
     """
-    Generate spherical Bessel forward model matrices sqrt(2/pi) k g_l(kr)
+    Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
 
     The inverse transformation from Fourier space (k)
@@ -856,8 +856,9 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
     Ntask : int, optional
         Number of modes to compute per process
     renorm : bool, optional
-        If True, renormalize g_l modes such that the numerically
-        integrated inner product is equal to pi/2 k^-2
+        If True, renormalize the g_l modes
+        such that inner product of r^1 g_l(k_n r) with
+        itself equals pi/2 k^-2
 
     Returns
     -------
@@ -919,8 +920,9 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         # get basis function g_l
         j = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
         # form transform matrix: sqrt(2/pi) k g_l
+        rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
-        jl[_l] = np.sqrt(2 / np.pi) * j * kt[:, None].clip(1e-3)
+        jl[_l] = np.sqrt(2 / np.pi) * r**2 * kt[:, None].clip(1e-3) * j
         kbins[_l] = k
 
     return jl, kbins
@@ -929,7 +931,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
 def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
                     renorm=False, device=None):
     """
-    Generate a spherical bessel radial basis function
+    Generate a spherical bessel radial basis function, g_l(k_n r)
 
     Parameters
     ----------
@@ -944,17 +946,19 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
         default : interval is 0 -> r_max, basis is
             j_l(kr), BC is j_l(k_ln r_max) = 0
         samushia : interval is r_min -> r_max, basis is
-            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
-            is g_nl(k r) = 0 for r_min and r_max (Samushia2019)
+            g_ln = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
+            is g_ln(k r) = 0 for r_min and r_max (Samushia2019)
         gebhardt : interval is r_min -> r_max, basis is
-            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
+            g_ln = j_l(k_ln r) + A_ln y_l(k_ln r)
             BC is potential field continuity (Gebhardt+2021)
+            Not yet implemented.
     r_min, r_max : float, optional
         r_min and r_max of LIM survey. If None, will use
         min and max of r.
     renorm : bool, optional
         If True, renormalize amplitude of basis function
-        such that inner product equals pi/2 k^-2
+        such that inner product of r^1 g_l(k_n r) with
+        itself equals pi/2 k^-2
     device : str, optional
         Device to place matrices on
 
@@ -992,7 +996,8 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
 
     # renormalize
     if renorm:
-        j *= torch.sqrt(np.pi/2 * k.clip(1e-3)**-2 / torch.sum(torch.abs(j)**2, axis=1))[:, None]
+        rt = torch.as_tensor(r, device=device, dtype=_float())
+        j *= torch.sqrt(np.pi/2 * k.clip(1e-3)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
 
     return j
 
