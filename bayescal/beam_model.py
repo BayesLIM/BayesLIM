@@ -422,8 +422,10 @@ class GaussResponse:
     def __call__(self, zen, az, freqs):
         # get azimuth dependent sigma
         zen_rad, az_rad = zen * D2R, az * D2R
-        l = torch.as_tensor(np.sin(zen_rad) * np.sin(az_rad), device=self.device)
-        m = torch.as_tensor(np.sin(zen_rad) * np.cos(az_rad), device=self.device)
+        srad = np.sin(zen_rad)
+        srad[zen_rad > np.pi/2] = 1.0  # ensure sine_zen doesn't wrap around back to zero below horizon
+        l = torch.as_tensor(srad * np.sin(az_rad), device=self.device)
+        m = torch.as_tensor(srad * np.cos(az_rad), device=self.device)
         beam = torch.exp(-0.5 * ((l / self.params[0][..., None])**2 + (m / self.params[1][..., None])**2))
         return beam
   
