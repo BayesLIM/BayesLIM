@@ -922,7 +922,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
-        jl[_l] = np.sqrt(2 / np.pi) * r**2 * kt[:, None].clip(1e-3) * j
+        jl[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-3) * j
         kbins[_l] = k
 
     return jl, kbins
