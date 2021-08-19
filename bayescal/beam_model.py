@@ -282,9 +282,10 @@ class PixelBeam(torch.nn.Module):
         """
         if self.R.freq_mode == 'channel':
             # interpolate params across frequency
+            freq_ax = 3 if not hasattr(self.R, 'freq_ax') else self.R.freq_ax
             interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
                                           utils.tensor2numpy(self.params),
-                                          axis=3, kind=kind, fill_value='extrapolate')
+                                          axis=freq_ax, kind=kind, fill_value='extrapolate')
             params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
                                      dtype=self.params.dtype)
             if self.params.requires_grad:
@@ -350,6 +351,7 @@ class PixelResponse(utils.PixInterp):
         self.device = device
         self.freq_mode = freq_mode
         self.f0 = f0
+        self.freq_ax = 3
 
         self._setup()
 
@@ -411,6 +413,7 @@ class GaussResponse:
         self.freqs = freqs
         self.device = self.params.device
         self.freq_mode = 'channel'
+        self.freq_ax = 4
         assert self.params.shape[4] == len(self.freqs)
 
     def _setup(self):
@@ -505,6 +508,7 @@ class YlmResponse(PixelResponse):
         self.mode = mode
         self.interp_angs = interp_angs
         self.beam_cache = None
+        self.freq_ax = 3
 
     def get_Ylm(self, zen, az):
         """
