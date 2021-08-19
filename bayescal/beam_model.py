@@ -400,9 +400,9 @@ class GaussResponse:
 
         Parameters
         ----------
-        params : list of 2 tensors
-            Each of shape (Npol, Npol, Nmodel, Nfreqs). The tensors are
-            the Gaussian sigma in EW and NS sky directions, respectively,
+        params : tensor
+            Tensor of shape (2, Npol, Npol, Nmodel, Nfreqs). The tensors are
+            the Gaussian sigma in EW and NS sky directions, respectively (0th axis),
             with units of the dimensionless image-plane l & m (azimuth sines & cosines).
         freqs : tensor
             frequency array of params [Hz]
@@ -411,7 +411,7 @@ class GaussResponse:
         self.freqs = freqs
         self.device = self.params.device
         self.freq_mode = 'channel'
-        assert self.params.shape[3] == len(self.freqs)
+        assert self.params.shape[4] == len(self.freqs)
 
     def _setup(self):
         pass
