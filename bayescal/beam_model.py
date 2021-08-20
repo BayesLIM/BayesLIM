@@ -480,10 +480,18 @@ class AiryResponse:
         pass
 
     def __call__(self, zen, az, freqs):
+        """
+        Parameters
+        ----------
+        zen, az : array or tensor
+            zenith and azimuth arrays [deg]
+        freqs : array or tensor
+            Frequency array [Hz]
+        """
         # get azimuth dependent sigma
         Dew = self.params[0][..., None, None]
         Dns = self.params[1][..., None, None] if len(self.params) > 1 else None
-        beam = airy_disk(zen / D2R, az / D2R, Dew, freqs, Dns, self.freq_ratio)
+        beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio)
         return torch.as_tensor(beam, device=self.device)
   
     def push(self, device):
