@@ -519,7 +519,7 @@ class PixelModelResponse:
         if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':
-            return self.A @ params
+            return params @ self.A.T
         elif self.freq_mode == 'powerlaw':
             return params[..., 0, :] * (self.freqs / self.f0)**params[..., 1, :]
         elif self.freq_mode == 'bessel':

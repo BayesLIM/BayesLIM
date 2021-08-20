@@ -1078,9 +1078,9 @@ def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
     return np.asarray(k)
 
 
-def gen_poly_A(freqs, Ndeg, device=None):
+def gen_poly_A(x, Ndeg, device=None, basis='direct'):
     """
-    Generate design matrix (A) for polynomial of Ndeg across freqs,
+    Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
 
     .. math::
@@ -1089,27 +1089,27 @@ def gen_poly_A(freqs, Ndeg, device=None):
 
     Parameters
     ----------
-    freqs : ndarray
-        Frequency bins [Hz]
+    x : ndarray
     Ndeg : int
         Polynomial degree
-    device : str
-        device to send A matrix to
+    device : str, optional
+        device to send A matrix to before return
+    basis : str, optional
+        Polynomial basis to use. See emupy.linear.setup_polynomial
+        ['direct', 'legendre', 'chebyshevt', 'chebyshevu']
+        direct (default) is a standard polynomial (x^0 + x^1 + ...)
 
     Returns
     -------
     torch tensor
-        Polynomial design matrix
+        Polynomial design matrix (Nx, Ndeg)
     """
-    ## TODO: implement this?
-    #from emupy.linear import setup_polynomial
-    #dfreqs = (freqs - freqs[0]) / 1e6  # In MHz
-    #A = setup_polynomial(dfreqs[:, None], Ndeg-1, basis=basis)[0]
-    #A = torch.as_tensor(A, dtype=dtype, device=device)
-    dfreqs = (freqs - freqs.mean()) / 1e6  # In MHz
-    A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
-                        dtype=_float(), device=device).T
-    return A
+    # LEGACY
+    #A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
+    #                    dtype=_float(), device=device).T
+    from emupy.linear import setup_polynomial
+    A = setup_polynomial(freqs[:, None], Ndeg - 1, basis=basis)[0]
+    return torch.as_tensor(A, dtype=_float(), device=device)
 
 
 def voigt_beam(nside, sigma, gamma):
