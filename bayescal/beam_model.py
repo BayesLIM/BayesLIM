@@ -5,7 +5,8 @@ import torch
 from torch.nn import Parameter
 import numpy as np
 import warnings
-from scipy import interpolate
+from scipy import interpolate, special as scispecial
+import copy
 
 from . import utils
 
@@ -270,7 +271,7 @@ class PixelBeam(torch.nn.Module):
         """
         Interpolate params onto new set of frequencies
         if freq_mode is channel. If freq_mode is
-        poly or powerlaw, just update response frequencies
+        poly, powerlaw or other, just update response frequencies
 
         Parameters
         ----------
@@ -378,7 +379,7 @@ class PixelResponse(utils.PixInterp):
 
         # evaluate frequency values
         if self.freq_mode == 'poly':
-            b = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            b = (self.params.transpose(-1, -2) @ self.A).transpose(-1, -2)
 
         return b
 
@@ -392,7 +393,8 @@ class GaussResponse:
         R = GaussResponse(params)
         beam = R(zen, az, freqs)
 
-    Recall azimuth is defined as the angle East of North
+    Recall azimuth is defined as the angle East of North.
+    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
     def __init__(self, params, freqs):
         """
@@ -435,6 +437,61 @@ class GaussResponse:
         self.device = self.params.device
 
 
+class AiryResponse:
+    """
+    An Airy Disk representation for PixelBeam.
+    -- Note this is not differentiable!
+
+    .. code-block:: python
+
+        R = AiryResponse(params)
+        beam = R(zen, az, freqs)
+
+    Recall azimuth is defined as the angle East of North.
+    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
+    """
+    def __init__(self, params, freq_ratio=1.0):
+        """
+        .. math::
+
+            b = \left[\frac{2J_1(2\pi\nu a\sin\theta/c)}{2\pi\nu a\sin\theta/c}\right]^2
+
+        Parameters
+        ----------
+        params : tensor
+            Tensor of shape (2, Npol, Npol, Nmodel). The tensors are
+            the aperture diameter [meters] in the EW and NS aperture directions,
+            respectively (0th axis). In case one wants a single aperture diameter
+            for both EW and NS directions, this is shape (1, Npol, Npol, Nmodel)
+        freqs : tensor
+            frequency array of params [Hz]
+        freq_ratio : float, optional
+            Multiplicative scalar acting on freqs before airy disk is
+            evaluated. Makes the beam mimic a higher or lower frequency beam.
+        """
+        assert not params.requires_grad, "AiryResponse not differentiable"
+        self.params = params
+        self.freq_ratio = 1.0
+        self.device = self.params.device
+        self.freq_mode = 'other'
+        self.freq_ax = None
+
+    def _setup(self):
+        pass
+
+    def __call__(self, zen, az, freqs):
+        # get azimuth dependent sigma
+        Dew = self.params[0][..., None, None]
+        Dns = self.params[1][..., None, None] if len(self.params) > 1 else None
+        beam = airy_disk(zen, az, Dew, freqs, Dns, self.freq_ratio)
+        return torch.as_tensor(beam, device=self.device)
+  
+    def push(self, device):
+        """push params and other attrs to device"""
+        self.params = utils.push(self.params, device)
+        self.device = self.params.device
+
+
 class YlmResponse(PixelResponse):
     """
     A spherical harmonic representation for PixelBeam,
@@ -450,6 +507,7 @@ class YlmResponse(PixelResponse):
     you need to clear_beam() after every backwards call,
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
+    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """ 
     def __init__(self, params, l, m, freqs, mode='generate',
                  interp_mode='nearest', interp_angs=None,
@@ -574,7 +632,7 @@ class YlmResponse(PixelResponse):
             p = self.params
         elif self.freq_mode == 'poly':
             # first do fast dot product along frequency axis
-            p = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            p = (self.params.transpose(-1, -2) @ self.A).transpose(-1, -2)
 
         # generate Y matrix
         Ylm = self.get_Ylm(zen, az)
@@ -629,43 +687,56 @@ class AlmBeam(torch.nn.Module):
         raise NotImplementedError
 
 
-def airy_disk(zen, az, Dns, freqs, Dew=None):
+def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0):
     """
-    Generate a (asymmetric) airy disk function
+    Generate a (asymmetric) airy disk function.
+    Note: this is not differentiable!
+
+    .. math::
+
+        b = \left[\frac{2J_1(x)}{x}\right]^2
 
     Parameters
     ----------
     zen, az : ndarray
         Zenith (co-latitude) and azimuth angles [rad]
-    Dns : float
-        Effective diameter of aperture along the NS direction
+    Dew : float or array
+        Effective diameter of aperture along the EW direction
     freqs : ndarray
         Frequency bins [Hz]
-    Dew : float, optional
-        Effective diameter of aperture along the EW direction
+    Dns : float or array, optional
+        Effective diameter of aperture along the NS direction
+    freq_ratio : float, optional
+        Optional scalar to multiply frequencies by before
+        evaluating airy disk. Can make the beam look like a
+        lower or higher frequency beam
+        (i.e. have a smaller or wider main lobe)
 
     Returns
     -------
     ndarray
-        Airy disk response at zen, az angles
+        Airy disk response at zen, az angles of
+        shape (..., Nfreqs, Npix)
     """
+    # determine if ndarray or tensor
+    mod = np if isinstance(zen, np.ndarray) else torch
+    # move to numpy
+    zen = copy.deepcopy(zen)
+
     # set supra horizon to horizon value
-    zen = zen.copy()
     zen[zen > np.pi / 2] = np.pi / 2
 
     # get sky angle dependent diameter
-    if Dew is None:
-        diameter = Dns
+    if Dns is None:
+        diameter = Dew
     else:
-        ecc = np.abs(np.sin(az))**2            
+        ecc = mod.abs(mod.sin(az))**2            
         diameter = Dns + ecc * (Dew - Dns)
-        diameter = diameter.reshape(-1, 1)
-        
-    # get xvals and evaluate airy disk
-    from scipy import special
-    xvals = diameter * np.sin(zen.reshape(-1, 1)) * np.pi * freqs.reshape(1, -1) / 2.99e8
-    zeros = np.isclose(xvals, 0.0)
-    beam = (2.0 * np.true_divide(special.j1(xvals), xvals, where=~zeros)) ** 2.0
-    beam[zeros] = 1.0
+
+    # get xvals
+    xvals = diameter * mod.sin(zen) * np.pi * freqs.reshape(-1, 1) * freq_ratio / 2.9979e8
+    # add a small value to handle x=0: introduces error on level of 1e-10
+    xvals += 1e-10
+    beam = (2.0 * scispecial.j1(xvals) / xvals)**2
 
     return beam
