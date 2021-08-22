@@ -7,6 +7,115 @@ import torch
 from . import utils
 
 
+class Sequential(torch.nn.Sequential):
+    """
+    A shallow wrapper around torch.nn.Sequential.
+    The forward call takes a parameter dictionary as
+    input and updates model before evaluation. e.g.
+
+    .. code-block:: python
+
+        S = Sequential(OrderedDict(model1=model1, model2=model2))
+        
+    where evaluation order is S(params) -> model2( model1( params ) )
+
+    Note that the keys of the parameter dictionary
+    must conform to nn.Module.named_parameters() syntax.
+    """
+    def __init__(self, models, starting_input=None):
+        """
+        Parameters
+        ----------
+        models : OrderedDict
+            Models to evaluate in sequential order.
+        starting_input : tensor, optional
+            If the first model in the sequence needs
+            an input, specify it here.
+        """
+        super().__init__(models)
+        self.starting_input = starting_input
+
+    def get_attr(self, module, attr):
+        """
+        Get attribute from module
+
+        Parameters
+        ----------
+        module : torch.nn.Module
+        attr : str or list
+            An attribute in Module.named_parameters()
+            syntax, or a list of attribute strings
+            in nested submodules.
+
+        Returns
+        -------
+        tensor
+            parameter tensor in module
+            or a submodule
+        """
+        # if nested string, split into submodules
+        if '.' in attr:
+            attrs = attr.split('.')
+            return self.get_attr(self, attrs)
+        # if a string but no dot, this is the deepest module
+        if isinstance(attr, str):
+            return getattr(module, attr)
+        # if its a list, get the first module and repeat
+        if isinstance(attr, list):
+            if len(attr) == 1:
+                return self.get_attr(module, attr[0])
+            else:
+                return self.get_attr(getattr(module, attr[0]), attr[1:])
+
+    def set_attr(self, module, attr, val):
+        """
+        Set attribute on module
+
+        Parameters
+        ----------
+        module : torch.nn.Module
+        attr : str or list
+            An attribute in Module.named_parameters()
+            syntax, or a list of attribute strings
+            in nested submodules.
+        val : tensor
+        """
+        if '.' in attr:
+            attrs = attr.split('.')
+            module = self.get_attr(module, attrs[:-1])
+            attr = attrs[-1]
+        setattr(module, attr, val)
+
+    def __getitem__(self, key):
+        return self.get_attr(self, key)
+
+    def forward(self, params=None):
+        """
+        Evaluate model in sequential order,
+        optionally updating all parameters beforehand
+
+        Parameters
+        ----------
+        params : ParamDict
+            Parameter dictionary with keys
+            conforming to nn.Module.get_parameter
+            syntax, and values as tensors
+        """
+        # update parameters of module and sub-modules
+        if params is not None:
+            for k in params:
+                param = self.get_attr(self, k)
+                parameter = isinstance(param, torch.nn.Parameter)
+                self.set_attr(self, k, utils.push(params[k], param.device, parameter))
+
+        # evaluate models
+        inp = self.starting_input
+        for i, module in enumerate(self):
+            inp = module(inp)
+
+        return inp
+
+
 class LogGaussLikelihood(torch.nn.Module):
     """
     Negative log Gaussian likelihood
@@ -111,7 +220,7 @@ class LogPrior(torch.nn.Module):
 
         Parameters
         ----------
-        model : nn.Module or rime.Sequential
+        model : nn.Module or optim.Sequential
             The forward model object
         params : list
             List of parameter strings conforming

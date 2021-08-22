@@ -13,7 +13,7 @@ class SkyBase(torch.nn.Module):
     """
     Base class for various sky model representations
     """
-    def __init__(self, params, kind, freqs, R=None, parameter=True):
+    def __init__(self, params, kind, freqs, R=None, name=None, parameter=True):
         """
         Base class for a torch sky model representation.
 
@@ -33,6 +33,8 @@ class SkyBase(torch.nn.Module):
             point source model, mapping self.params
             to a sky source tensor of shape
             (Npol, Npol, Nfreqs, Nsources)
+        name : str, optional
+            Name for this object
         parameter : bool
             If True, treat params as variables to be fitted,
             otherwise hold them fixed as their input value
@@ -46,10 +48,15 @@ class SkyBase(torch.nn.Module):
         if R is None:
             R = DefaultResponse()
         self.R = R
+        self.name = name
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         if self.R.freq_mode == 'channel':
             assert len(self.freqs) == self.params.shape[2]
+
+        # construct _args for str repr
+        self._args = dict(name=name)
+        self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
     def push(self, device, attrs=[]):
         """
@@ -116,7 +123,7 @@ class DefaultResponse:
         return params
 
 
-class PointSourceModel(SkyBase):
+class PointSky(SkyBase):
     """
     Point source sky model with fixed
     source locations but variable flux density.
@@ -127,7 +134,7 @@ class PointSourceModel(SkyBase):
     Returns point source flux density and their sky
     locations in equatorial coordinates.
     """
-    def __init__(self, params, angs, freqs, R=None, parameter=True):
+    def __init__(self, params, angs, freqs, R=None, name=None, parameter=True):
         """
         Fixed-location point source model with
         parameterized flux density.
@@ -187,11 +194,11 @@ class PointSourceModel(SkyBase):
                 S = params[0][..., None]
                 spix = params[1]
                 return S * (freqs / freqs[0])**spix
-            P = bayescal.sky.PointSourceModel([amps, alpha],
+            P = bayescal.sky.PointSky([amps, alpha],
                                               angs, Nfreqs, R=R)
 
         """
-        super().__init__(params, 'point', freqs, R=R, parameter=parameter)
+        super().__init__(params, 'point', freqs, R=R, name=name, parameter=parameter)
         self.angs = angs
 
     def forward(self, params=None):
@@ -223,7 +230,7 @@ class PointSourceModel(SkyBase):
         return dict(kind=self.kind, sky=self.R(params), angs=self.angs)
 
 
-class PointSourceResponse:
+class PointSkyResponse:
     """
     Frequency parameterization of point sources at
     fixed locations but variable flux wrt frequency
@@ -235,7 +242,7 @@ class PointSourceResponse:
     def __init__(self, freqs, freq_mode='poly', f0=None,
                  device=None, Ndeg=None):
         """
-        Choose a frequency parameterization for PointSourceModel
+        Choose a frequency parameterization for PointSky
 
         Parameters
         ----------
@@ -265,8 +272,10 @@ class PointSourceResponse:
         self.freq_mode = freq_mode
         self.Ndeg = Ndeg
         self.device = device
-
         self._setup()
+
+        # construct _args for str repr
+        self._args = dict(freq_mode=self.freq_mode)
 
     def _setup(self):
         self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
@@ -283,7 +292,7 @@ class PointSourceResponse:
             return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
 
 
-class PixelModel(SkyBase):
+class PixelSky(SkyBase):
     """
     Pixelized model (e.g. healpix or other representation)
     of the sky specific intensity distribution
@@ -295,7 +304,7 @@ class PixelModel(SkyBase):
     of the forward model is in flux density [Jy]
     (i.e. we multiply by each cell's solid angle).
     """
-    def __init__(self, params, angs, freqs, px_area, R=None, parameter=True):
+    def __init__(self, params, angs, freqs, px_area, R=None, name=None, parameter=True):
         """
         Pixelized model of the sky brightness distribution.
         This can be parameterized in any generic way via params,
@@ -343,7 +352,7 @@ class PixelModel(SkyBase):
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
         """
-        super().__init__(params, 'pixel', freqs, R=R, parameter=parameter)
+        super().__init__(params, 'pixel', freqs, R=R, name=name, parameter=parameter)
         self.angs = angs
         self.px_area = px_area
 
@@ -377,9 +386,9 @@ class PixelModel(SkyBase):
         return dict(kind=self.kind, sky=sky, angs=self.angs)
 
 
-class PixelModelResponse:
+class PixelSkyResponse:
     """
-    Spatial and frequency parameterization for PixelModel
+    Spatial and frequency parameterization for PixelSky
 
     options for spatial parameterization include
         - 'pixel' : sky pixel
@@ -451,6 +460,9 @@ class PixelModelResponse:
             assert self.transform_order == 1
 
         self._setup()
+
+        # construct _args for str repr
+        self._args = dict(freq_mode=self.freq_mode, spatial_mode=self.spatial_mode)
 
     def _setup(self):
         # freq setup
@@ -538,7 +550,7 @@ class PixelModelResponse:
         return params
 
 
-class SphHarmModel(SkyBase):
+class SphHarmSky(SkyBase):
     """
     Spherical harmonic expansion of a sky temperature field
     at pointing direction s and frequency f
@@ -677,7 +689,7 @@ def parse_catalogue(catfile, freqs, device=None,
     Returns
     -------
     tensor
-        PointSourceModel object
+        PointSky object
     """
     import yaml
     with open(catfile) as f:
@@ -711,8 +723,8 @@ def parse_catalogue(catfile, freqs, device=None,
     else:
         raise NotImplementedError
 
-    R = PointSourceResponse(freqs, mode=d['mode'], device=device, **d['mode_kwargs'])
-    sky = PointSourceModel(params, angs, freqs, R=R, parameter=parameter)
+    R = PointSkyResponse(freqs, mode=d['mode'], device=device, **d['mode_kwargs'])
+    sky = PointSky(params, angs, freqs, R=R, parameter=parameter)
 
     if 'polarizaton' in d:
         # still under development

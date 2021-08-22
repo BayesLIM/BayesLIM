@@ -49,7 +49,7 @@ class TelescopeModel:
         obs_jd : float
             observation julian date (e.g. 2458101.245501)
         sky : sky model object
-            A sky object (e.g. PointSourceModel, DiffuseModel)
+            A sky object (e.g. PointSky, PixelSky)
 
         Returns
         -------

@@ -90,6 +90,9 @@ class JonesModel(torch.nn.Module):
             # a single antenna for all baselines
             assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
             self._vis2ants = {bl: (0, 0) for bl in bls}
+        # construct _args for str repr
+        self._args = dict(refant=refant, polmode=polmode)
+        self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
     def forward(self, V_m, params=None, undo=False):
         """
@@ -265,6 +268,10 @@ class JonesResponse:
             self.antpos_EW = EW[None, None, :, None, None]  
             NS = torch.as_tensor([antpos[a][1] for a in self.ants], device=self.device)
             self.antpos_NS = NS[None, None, :, None, None]  
+
+        # construct _args for str repr
+        self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
+                          gain_type=self.gain_type)
 
     def param2gain(self, params):
         """

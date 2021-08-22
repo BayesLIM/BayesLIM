@@ -1078,7 +1078,7 @@ def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
     return np.asarray(k)
 
 
-def gen_poly_A(x, Ndeg, device=None, basis='direct'):
+def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True):
     """
     Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
@@ -1098,6 +1098,9 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct'):
         Polynomial basis to use. See emupy.linear.setup_polynomial
         ['direct', 'legendre', 'chebyshevt', 'chebyshevu']
         direct (default) is a standard polynomial (x^0 + x^1 + ...)
+    whiten : bool, optional
+        If True, center (i.e. subtract mean) and scale (i.e. range of -1, 1) x.
+        Useful when using orthogonal polynomial bases
 
     Returns
     -------
@@ -1107,8 +1110,11 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct'):
     # LEGACY
     #A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
     #                    dtype=_float(), device=device).T
+    if whiten:
+        x = x - x.mean()
+        x = x / x.max()
     from emupy.linear import setup_polynomial
-    A = setup_polynomial(freqs[:, None], Ndeg - 1, basis=basis)[0]
+    A = setup_polynomial(x[:, None], Ndeg - 1, basis=basis)[0]
     return torch.as_tensor(A, dtype=_float(), device=device)
 
 
@@ -1709,6 +1715,41 @@ def get_zeros(x, y):
             prev = curr
             
     return roots
+
+def get_model_description(model):
+    """
+    Iterate through a torch Module or Sequential
+    model and collect the tree structure and description
+    of arguments, if provided
+
+    Parameters
+    ----------
+    model : torch Module or Sequential
+
+    Returns
+    -------
+    str
+        High-level model tree structure
+    dict
+        Subdirectories containing sub-model
+        arguments, if provided
+    """
+    # get str
+    tree = str(model)
+    # construct directory of model arguments
+    name = model._get_name()
+    model_args = {name: {}}
+    args = getattr(model, '_args', None)
+    if args is not None:
+        model_args[name]['args'] = args
+    # iterate over sub-modules
+    for submod in model._modules:
+        submodule = getattr(model, submod)
+        subname = submodule._get_name()
+        subargs = get_model_description(submodule)[1][subname]
+        model_args[name][subname] = subargs
+
+    return tree, model_args
 
 
 def _make_hex(N, D=15):

@@ -19,7 +19,7 @@ except ImportError:
 
 
 def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
-                 freq_interp='linear', beam_sky_interp='bilinear',
+                 freq_interp='linear',
                  outfname=None, overwrite=False, partial_write=False):
     """
     Run a RIME visibility simulation given models
@@ -46,9 +46,6 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     freq_interp : str, optional
         Frequency interpolation scheme for sky
         and beam if frequencies do not match uvd.
-    beam_sky_interp : str, optional
-        spatial interpolation type for evaluating the beam
-        ['nearest', 'bilinear']
     outfname : str, optional
         Output filename to write simulation to file as UVH5
     overwrite : bool, optional
@@ -125,7 +122,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
             bdata[1, 1, 0] = torch.tensor(bdata[bpols.index('nn')], dtype=_float())
 
         beam = beam_model.PixelBeam(bdata, bfreqs, response=beam_model.PixelResponse,
-                                    response_args=(bfreqs, 'healpix', bnpix, beam_sky_interp),
+                                    response_args=(bfreqs, 'healpix', bnpix, 'bilinear'),
                                     parameter=False, polmode=polmode,
                                     powerbeam=True, fov=180)
 

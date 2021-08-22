@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import os
 import glob
+from datetime import datetime
+import json
 
 from . import utils, optim
 from .optim import ParamDict
@@ -14,7 +16,7 @@ class SamplerBase:
     """
     Base sampler class
     """
-    def __init__(self, x0, outdir=None):
+    def __init__(self, x0):
         """
         Parameters
         ----------
@@ -28,7 +30,9 @@ class SamplerBase:
         self.accept_ratio = 1.0
         self._acceptances = []
         self.chain = {k: [] for k in x0.keys}
-        self.outdir = outdir
+        # this contains all lists, which is needed
+        # when writing the chain to file and loading it
+        self.lists = ['_acceptances']
 
     def step(self):
         """overload this method in a Sampler subclass.
@@ -37,7 +41,7 @@ class SamplerBase:
         """
         raise NotImplementedError
 
-    def sample(self, Nsample):
+    def sample(self, Nsample, Ncheck=None, outfile=None, description=''):
         """
         Sample and append to chain
 
@@ -45,37 +49,94 @@ class SamplerBase:
         ----------
         Nsamples : int
             Number of samples to run
+        Ncheck : int, optional
+            When i_sample % Ncheck == 0, checkpoint
+            the chain to outfile.
+        outfile : str, optional
+            If checkpointing, this is the .npz filepath 
+            to write the chain
         """
         for i in range(Nsample):
             accept = self.step()
             self._acceptances.append(accept)
             for k in self.x.keys:
                 self.chain[k].append(utils.tensor2numpy(self.x[k], clone=True))
+            if Ncheck is not None:
+                if i > 0 and i % Ncheck == 0:
+                    assert outfile is not None
+                    self.write_chain(outfile, overwrite=True, description=description)
         self.accept_ratio = sum(self._acceptances) / len(self._acceptances)
 
     def get_chain(self):
         return {k: torch.as_tensor(self.chain[k]) for k in self.chain.keys()}
 
-    def _checkpoint(self, attrs=[], outfile=None, overwrite=False):
+    def _write_chain(self, outfile, attrs=[], overwrite=False, description=''):
         """
-        Save the current state of the chain, parameters,
-        and forward model to self.outdir as mcmc_run00.npz
-        """
-        raise NotImplementedError
-        if not os.path.exists(self.outdir):
-            os.mkdir(self.outdir)
+        Write chain to an npz file
 
-        # save chain
-        cfiles = sorted(glob.glob(self.outdir + '/mcmc_run*npz'))
-        if len(cfiles) == 0:
-            run_ind = 0
+        Parameters
+        ----------
+        outfile : str
+            Path to output npz file
+        attrs : list of str, optional
+            List of additional attributes to write to file.
+            Base attrs are chain, _acceptances, x, accept_ratio
+        overwrite : bool, optional
+            Overwrite if file exists
+        description : str, optional
+            Description of run
+        """
+        attrs  = ['chain', '_acceptances', 'accept_ratio', 'x'] + attrs
+        self.accept_ratio = sum(self._acceptances) / len(self._acceptances)
+        fexists = os.path.exists(outfile)
+        if not fexists or overwrite:
+            write_dict = {}
+            for attr in attrs:
+                if attr in self.lists:
+                    # special treatment for list to preserve it upon read
+                    # wrap it in its own dict
+                    write_dict[attr] = {attr: getattr(self, attr)}
+                else:
+                    write_dict[attr] = getattr(self, attr)
+            write_dict['description'] = "Written UTC: {}\n{}\n{}".format(datetime.utcnow(),
+                                                                         '-'*40, description)
+            np.savez(outfile, **write_dict)
+
         else:
-            run_ind = int(cfiles[-1].split('_')[-1][3:5]) + 1
-        if outfile is None:
-            outfile = self.outdir + "/mcmc_run{:02d}.npz".format(run_ind)
-        kwargs = {attr: getattr(self, attr) for attr in attrs}
-        np.savez(outfile, chain=chain, accept_ratio=self.accept_ratio,
-                 _acceptances=self._acceptances, x=self.x, outdir=self.outdir, **kwargs)
+            print("{} exists, not overwriting...".format(outfile))
+
+    def write_chain(self, outfile, overwrite=False, description=''):
+        """
+        Write chain to an npz file
+
+        Parameters
+        ----------
+        outfile : str
+            Path to output npz file
+        overwrite : bool, optional
+            Overwrite if file exists
+        """
+        # overload this function in Sampler subclass
+        self._write_chain(outfile, overwrite=overwrite, description=description)
+
+    def load_chain(self, infile):
+        """
+        Read a chain from npz file and attach attributes to object.
+        This overwrites all attributes in self from the infile
+
+        Parameters
+        ----------
+        infile : str
+            Filepath to npz file written by self.write_chain
+        """
+        with np.load(infile, allow_pickle=True) as f:
+            for key in f:
+                if key not in ['description']:
+                    if key in self.lists:
+                        # special treatment for lists
+                        setattr(self, key, f[key].item()[key])
+                    else:
+                        setattr(self, key, f[key].item())
 
 
 class HMC(SamplerBase):
@@ -234,22 +295,22 @@ class HMC(SamplerBase):
             self.mass[k] = m
             self.invmass[k] = invm
 
-    def from_file(self, fname):
+    def write_chain(self, outfile, overwrite=False, description=''):
         """
-        Load an HMC sampler from file
+        Write chain to an npz file
+
+        Parameters
+        ----------
+        outfile : str
+            Path to output npz file
+        overwrite : bool, optional
+            Overwrite if file exists
         """
-        raise NotImplementedError
-        with np.load(fname) as f:
-            pass
-
-        # instantiate
-        H = HMC(potent_fn, x0, eps, Nstep=Nstep, mass=mass)
-        # update attrs
-        H.chain
-        H._acceptances 
-        H.accept_ratio 
-
-        return H
+        if isinstance(self.potential_fn, Potential):
+            model_tree = json.dumps(utils.get_model_description(self.potential_fn)[1], indent=2)
+            description = "{}\n{}\n{}".format(model_tree, '-'*40, description)
+        self._write_chain(outfile, overwrite=overwrite,
+                          attrs=['fn_evals', '_H'], description=description)
 
 
 class NUTS(HMC):
@@ -288,7 +349,7 @@ class NUTS(HMC):
         return accept
 
 
-class Potential:
+class Potential(torch.nn.Module):
     """
     The HMC potential, holding the full forward model
     """
@@ -300,6 +361,7 @@ class Potential:
             The full forward model ending in the log posterior,
             which takes a ParamDict and returns the log post. (aka potential)
         """
+        super().__init__()
         self.model = model
         self.named_params = list(dict(self.model.named_parameters()).keys())
 
@@ -324,6 +386,8 @@ class Potential:
         """
         # zero gradients
         self.model.zero_grad()
+        ## TODO: allow for gradient accumulation here
+        ## (e.g. iterations over bl groups)
         # evaluate model
         U = self.model(x)
         # run reverse AD

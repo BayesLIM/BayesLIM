@@ -106,6 +106,9 @@ class PixelBeam(torch.nn.Module):
         if self.powerbeam:
             assert self.polmode in ['1pol', '2pol']
         self.Npol = 1 if polmode == '1pol' else 2
+        # construct _args for str repr
+        self._args = dict(powerbeam=powerbeam, fov=fov, polmode=polmode)
+        self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
     def push(self, device):
         """
@@ -356,6 +359,9 @@ class PixelResponse(utils.PixInterp):
 
         self._setup()
 
+        # construct _args for str repr
+        self._args = dict(interp_mode=interp_mode, freq_mode=freq_mode)
+
     def _setup(self):
         if self.freq_mode == 'channel':
             assert self.params.shape[3] == len(self.freqs)
@@ -577,6 +583,9 @@ class YlmResponse(PixelResponse):
         self.interp_angs = interp_angs
         self.beam_cache = None
         self.freq_ax = 3
+
+        # construct _args for str repr
+        self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
 
     def get_Ylm(self, zen, az):
         """
