@@ -534,7 +534,8 @@ class YlmResponse(PixelResponse):
     """ 
     def __init__(self, params, l, m, freqs, mode='generate',
                  interp_mode='nearest', interp_angs=None,
-                 powerbeam=True, freq_mode='channel', f0=None):
+                 powerbeam=True, freq_mode='channel', f0=None,
+                 Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -592,6 +593,7 @@ class YlmResponse(PixelResponse):
         self.interp_angs = interp_angs
         self.beam_cache = None
         self.freq_ax = 3
+        self.Ylm_kwargs = Ylm_kwargs
 
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
@@ -619,10 +621,8 @@ class YlmResponse(PixelResponse):
         else:
             # generate it, may take a while
             # generate exact Y_lm
-            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m, device=self.device,
-                                    real_field=self.powerbeam)
-            if self.powerbeam and not self.neg_m:
-                Ylm[:, self.m > 0] *= 2
+            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, l=self.l, m=self.m, device=self.device,
+                                    real_field=self.powerbeam, **self.Ylm_kwargs)
             # store it
             self.Ylm_cache[h] = Ylm
             self.ang_cache[h] = zen, az
