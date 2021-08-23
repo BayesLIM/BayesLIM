@@ -708,6 +708,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
     x = np.cos(theta)
+    if method == 'sphere':
+        theta_min = 0
     x_min = np.cos(theta_min)
     H = legendre_func(x, l, m, method, x_min=x_min, high_prec=high_prec)
     Phi = np.exp(1j * m * phi)
