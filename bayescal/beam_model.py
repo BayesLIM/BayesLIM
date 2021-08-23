@@ -326,7 +326,7 @@ class PixelResponse(utils.PixInterp):
     given the zen and az arrays.
     """
     def __init__(self, params, freqs, pixtype, npix, interp_mode='nearest',
-                 freq_mode='channel', f0=None):
+                 freq_mode='channel', f0=None, poly_kwargs={}):
         """
         Parameters
         ----------
@@ -350,6 +350,8 @@ class PixelResponse(utils.PixInterp):
             poly - low-order polynomial basis
         f0 : float, optional
             Fiducial frequency for poly freq_mode
+        poly_kwargs : dict, optional
+            Optional kwargs to pass to utils.gen_poly_A
         """
         device = params.device
         super().__init__(pixtype, npix, interp_mode=interp_mode,
@@ -360,6 +362,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_mode = freq_mode
         self.f0 = f0
         self.freq_ax = 3
+        self.poly_kwargs = poly_kwargs
 
         self._setup()
 
@@ -371,9 +374,11 @@ class PixelResponse(utils.PixInterp):
             assert self.params.shape[3] == len(self.freqs)
         elif self.freq_mode == 'poly':
             # get polynomial A matrix wrt freq
+            if self.f0 is None:
+                self.f0 = self.freqs.mean()
             self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
             Ndeg = self.params.shape[3]
-            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device)
+            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device, **self.poly_kwargs)
 
     def push(self, device):
         """push params and other attrs to device"""
@@ -389,7 +394,7 @@ class PixelResponse(utils.PixInterp):
 
         # evaluate frequency values
         if self.freq_mode == 'poly':
-            b = (self.params.transpose(-1, -2) @ self.A).transpose(-1, -2)
+            b = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         return b
 
