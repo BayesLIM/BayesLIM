@@ -98,7 +98,7 @@ class PixelBeam(torch.nn.Module):
         if response is None:
             # assumes Npix axis of params is healpix
             self.R = PixelResponse(self.params, freqs, 'healpix',
-                                   utils.healpy.npix2nside(params.shape[-1]))
+                                   params.shape[-1])
         else:
             self.R = response(self.params, *response_args, **response_kwargs)
 
