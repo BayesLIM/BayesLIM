@@ -38,7 +38,8 @@ class PixelBeam(torch.nn.Module):
     at boresight. Also, a single beam can be used for all
     antennas, or one can fit for per-antenna models.
     """
-    def __init__(self, params, freqs, response=None, response_args=(),
+    def __init__(self, params, freqs, response=None,
+                 response_args=(), response_kwargs={},
                  parameter=True, polmode='1pol',
                  powerbeam=True, fov=180):
         """
@@ -56,16 +57,19 @@ class PixelBeam(torch.nn.Module):
             to Npix via R(params), or feed a list of tensors (e.g. GaussResponse).
         freqs : tensor
             Observational frequency bins [Hz]
-        response : callable, optional
-            Beam response function, mapping input params
-            to output beam. It should return another callable
+        response : response object, optional
+            Beam response class to instantiate, which
+            maps the input params to the output beam.
+            The instantiated object has a __call__ signature
             that takes (zen [deg], az [deg], freqs [Hz])
             as arguments and returns the beam values of shape
             (Npol, Npol, Nmodel, Nfreqs, Npix). Note that unlike
             sky_model, params are stored on both the Model and
             the Response function with the same pointer.
         response_args : tuple, optional
-            Arguments for the response callable
+            arguments for instantiating response object
+        response_kwargs : tuple, optional
+            Keyword arguments for instantiating response object
         parameter : bool, optional
             If True, fit for params (default), otherwise
             keep it fixed to its input value
@@ -96,7 +100,7 @@ class PixelBeam(torch.nn.Module):
             self.R = PixelResponse(self.params, freqs, 'healpix',
                                    utils.healpy.npix2nside(params.shape[-1]))
         else:
-            self.R = response(self.params, *response_args)
+            self.R = response(self.params, *response_args, **response_kwargs)
 
         self.freqs = freqs
         self.Nfreqs = len(freqs)
