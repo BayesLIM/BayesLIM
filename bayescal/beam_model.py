@@ -658,7 +658,7 @@ class YlmResponse(PixelResponse):
             p = self.params
         elif self.freq_mode == 'poly':
             # first do fast dot product along frequency axis
-            p = (self.params.transpose(-1, -2) @ self.A).transpose(-1, -2)
+            p = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         # generate Y matrix
         Ylm = self.get_Ylm(zen, az)
