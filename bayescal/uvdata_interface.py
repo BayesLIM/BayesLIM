@@ -19,7 +19,7 @@ except ImportError:
 
 
 def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
-                 freq_interp='linear',
+                 freq_interp='linear', array_kwargs={},
                  outfname=None, overwrite=False, partial_write=False):
     """
     Run a RIME visibility simulation given models
@@ -46,6 +46,8 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     freq_interp : str, optional
         Frequency interpolation scheme for sky
         and beam if frequencies do not match uvd.
+    array_kwargs : dict, optional
+        Additional kwargs for ArrayModel
     outfname : str, optional
         Output filename to write simulation to file as UVH5
     overwrite : bool, optional
@@ -121,6 +123,8 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
             bdata[0, 0, 0] = torch.tensor(bdata[bpols.index('ee')], dtype=_float())
             bdata[1, 1, 0] = torch.tensor(bdata[bpols.index('nn')], dtype=_float())
 
+        # hard-code bilinear b/c nearest is insufficient
+        # if higher order becomes available then expose kwarg
         beam = beam_model.PixelBeam(bdata, bfreqs, response=beam_model.PixelResponse,
                                     response_args=(bfreqs, 'healpix', bnpix, 'bilinear'),
                                     parameter=False, polmode=polmode,
@@ -144,8 +148,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     loc = uvd.telescope_location_lat_lon_alt_degrees
     tele = telescope_model.TelescopeModel((loc[1], loc[0], loc[2]),
                                           device=sky.device)
-    arr = telescope_model.ArrayModel(antpos, freqs, parameter=False, cache_s=True,
-                                     cache_f=False, device=sky.device)
+    arr = telescope_model.ArrayModel(antpos, freqs, device=sky.device, **array_kwargs)
     if ant2beam is None:
         ant2beam = {ant: 0 for ant in arr.ants}
 
