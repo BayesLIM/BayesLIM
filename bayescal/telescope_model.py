@@ -304,13 +304,13 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         s_h = utils.ang_hash(zen), utils.ang_hash(az)
         if s_h not in self.cache and bl not in self.cache:
             # compute the pointing vector at each sky location
-            zen = zen * D2R
-            az = az * D2R
+            _zen = zen * D2R
+            _az = az * D2R
             s = torch.zeros(3, len(zen), dtype=_float(), device=self.device)
             # az is East of North
-            s[0] = torch.sin(zen) * torch.sin(az)  # x
-            s[1] = torch.sin(zen) * torch.cos(az)  # y
-            s[2] = torch.cos(zen)                  # z
+            s[0] = torch.sin(_zen) * torch.sin(_az)  # x
+            s[1] = torch.sin(_zen) * torch.cos(_az)  # y
+            s[2] = torch.cos(_zen)                  # z
         elif self.cache_s:
             s = self.cache[s_h]
 

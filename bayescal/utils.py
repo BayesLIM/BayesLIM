@@ -1458,7 +1458,7 @@ class PixInterp:
             Spatial interpolation method. ['nearest', 'bilinear']
         theta, phi : array_like
             unique co-latitude and azimuth arrays [deg]
-            of 2D grid to interpolate from
+            of 2D grid to interpolate from (for 'rect' interp)
         device : str, optional
             Device to place object on
         """
@@ -1552,6 +1552,8 @@ class PixInterp:
                 nearest = m[..., inds[0].T, inds[1].T]
             # multiply by weights and sum
             return torch.sum(nearest * wgts.T, axis=-1)
+        else:
+            raise ValueError("didnt recognize interp_mode")
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,
