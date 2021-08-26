@@ -1470,6 +1470,10 @@ class PixInterp:
         self.theta, self.phi = theta, phi
         self.device = device
 
+    def _clear_cache(self):
+        """Clears interpolation cache"""
+        self.interp_cache = {}
+
     def get_interp(self, zen, az):
         """
         Get bilinear or nearest interpolation

@@ -297,6 +297,12 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         """reset frequency array"""
         self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
         self.interp_cache = {}
+        self.cache = {}
+
+    def _clear_cache(self):
+        """Clear interpolation and fringe cache"""
+        self.interp_cache = {}
+        self.cache = {}
 
     def _fringe(self, bl, zen, az):
         """compute fringe term"""
