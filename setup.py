@@ -3,7 +3,7 @@ import os
 import ast
 
 # get version from __init__.py
-init_file = os.path.join('/'.join(os.path.abspath(__file__).split('/')[:-1]), 'bayescal/__init__.py')
+init_file = os.path.join('/'.join(os.path.abspath(__file__).split('/')[:-1]), 'bayeslim/__init__.py')
 with open(init_file, 'r') as f:
     lines = f.readlines()
     for l in lines:
@@ -22,18 +22,18 @@ def package_files(package_dir, subdirectory):
     return paths
 
 
-data_files = package_files('bayescal', 'data') + package_files('bayescal', 'config')
+data_files = package_files('bayeslim', 'data') + package_files('bayeslim', 'config')
 
 setup(
-    name            = 'bayescal',
+    name            = 'bayeslim',
     version         = version,
     license         = 'MIT',
-    description     = 'Bayesian Interferometric Calibration and Imaging',
+    description     = 'Bayesian Calibration and Signal Extraction for Line Intensity Mapping',
     author          = 'Nicholas Kern',
-    url             = "http://github.com/nkern/bayescal",
-    package_data    = {'bayescal': data_files},
+    url             = "http://github.com/nkern/bayeslim",
+    package_data    = {'bayeslim': data_files},
     include_package_data = True,
-    packages        = ['bayescal'],
-    package_dir     = {'bayescal': 'bayescal'},
+    packages        = ['bayeslim'],
+    package_dir     = {'bayeslim': 'bayeslim'},
     zip_safe        = False
     )

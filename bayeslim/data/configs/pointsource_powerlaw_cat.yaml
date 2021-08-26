@@ -1,9 +1,9 @@
-# A bayescal point source catalogue
+# A bayeslim point source catalogue
 # with mode = 'powerlaw'
 # data from Bernardi et al. 2013, and Hurley-Walker et al. 2017
 
 # -- Model Representation --
-# See bayescal.sky_model.PointSourceResponse
+# See bayeslim.sky_model.PointSourceResponse
 mode : 'powerlaw'  # ['channel', 'poly', 'powerlaw']
 mode_kwargs : 
   f0 : 200e6       # anchor freq [Hz]

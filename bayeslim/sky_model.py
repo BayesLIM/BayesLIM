@@ -157,7 +157,7 @@ class PointSky(SkyBase):
                     U - iV & I - Q \end{array}
                 \right)
 
-            See bayescal.sky_model.stokes2linear() for details.
+            See bayeslim.sky_model.stokes2linear() for details.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -194,7 +194,7 @@ class PointSky(SkyBase):
                 S = params[0][..., None]
                 spix = params[1]
                 return S * (freqs / freqs[0])**spix
-            P = bayescal.sky.PointSky([amps, alpha],
+            P = bayeslim.sky.PointSky([amps, alpha],
                                               angs, Nfreqs, R=R)
 
         """
@@ -332,7 +332,7 @@ class PixelSky(SkyBase):
                     U - iV & I - Q \end{array}
                 \right)
 
-            See bayescal.sky_model.stokes2linear() for details.
+            See bayeslim.sky_model.stokes2linear() for details.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -674,7 +674,7 @@ def parse_catalogue(catfile, freqs, device=None,
                     parameter=False, freq_interp='linear'):
     """
     Read a point source catalogue YAML file.
-    See bayescal.data.DATA_PATH for examples.
+    See bayeslim.data.DATA_PATH for examples.
 
     Parameters
     ----------

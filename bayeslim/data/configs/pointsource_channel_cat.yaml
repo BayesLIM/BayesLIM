@@ -1,8 +1,8 @@
-# A bayescal point source catalogue
+# A bayeslim point source catalogue
 # with mode = 'channel'
 
 # -- Model Representation --
-# See bayescal.sky_model.PointSourceResponse
+# See bayeslim.sky_model.PointSourceResponse
 freqs : [100e6, 110e6, 120e6, 130e6]
 mode : 'channel'  # ['channel', 'poly', 'powerlaw']
 mode_kwargs : 
