@@ -58,7 +58,7 @@ class TelescopeModel:
         """
         return hash((obs_jd, sky))
 
-    def clear_cache(self, key=None):
+    def _clear_cache(self, key=None):
         """Clear conversion cache, or just a single
         key from the cache
 

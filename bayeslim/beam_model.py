@@ -325,7 +325,7 @@ class PixelResponse(utils.PixInterp):
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, freqs, pixtype, npix, interp_mode='nearest',
+    def __init__(self, params, freqs, pixtype, npix, interp_mode='bilinear',
                  freq_mode='channel', f0=None, poly_kwargs={}):
         """
         Parameters
@@ -533,7 +533,7 @@ class YlmResponse(PixelResponse):
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """ 
     def __init__(self, params, l, m, freqs, mode='generate',
-                 interp_mode='nearest', interp_angs=None,
+                 interp_mode='bilinear', interp_angs=None,
                  powerbeam=True, freq_mode='channel', f0=None,
                  Ylm_kwargs={}):
         """
