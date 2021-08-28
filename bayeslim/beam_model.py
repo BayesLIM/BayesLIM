@@ -637,9 +637,13 @@ class YlmResponse(PixelResponse):
         Parameters
         ----------
         fname : str
-            Filepath to .npz file with Ylm, angs, l, and m keys.
-            Ylm is tensor output from utils.gen_sph2pix and
-            angs is (zen, az) tensors [deg]
+            Filepath to .npz file with Ylm, angs, l, and m str keys.
+            Values are dictionaries, each with only a single
+            key that is the same key with values as tensors.
+            E.g.
+            np.load(fname)['Ylm'] -> {'Ylm': Ylm}
+            where Ylm is tensor output from utils.gen_sph2pix and
+            angs is (zen, az) tensors [deg].
         lmax : float, optional
             Truncate all Ylm modes with l > lmax
         discard : tensor, optional
@@ -647,10 +651,10 @@ class YlmResponse(PixelResponse):
             to discard from fname. Discards any Ylm modes
             that match the provided l and m.
         """
-        with np.load(fname) as f:
-            Ylm = f['Ylm'].item()
-            zen, az = f['angs'].item()
-            l, m = f['l'].item(), f['m'].item()
+        with np.load(fname, allow_pickle=True) as f:
+            Ylm = f['Ylm'].item()['Ylm']
+            zen, az = f['angs'].item()['angs']
+            l, m = f['l'].item()['l'], f['m'].item()['m']
 
         # truncate modes
         if lmax is not None:
@@ -669,6 +673,22 @@ class YlmResponse(PixelResponse):
         self.ang_cache[h] = zen, az
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
+
+    def write_cache(self, fname, key):
+        """
+        Write a key in the cache to fname
+
+        Parameters
+        ----------
+        fname : str
+            Filepath of output .npz file
+        key : int
+            key of cache
+        """
+        assert key in self.Ylm_cache and key in self.ang_cache
+        Ylm = self.Ylm_cache[h]
+        angs = self.ang_cache[h]
+        np.savez(fname, Ylm={'Ylm':Ylm}, angs={'angs':angs}, l={'l':self.l}, m={'m':self.m})
 
     def set_beam(self, beam, zen, az, freqs):
         self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
