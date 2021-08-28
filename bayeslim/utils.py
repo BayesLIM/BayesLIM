@@ -543,24 +543,25 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     m = np.atleast_1d(m)
     for _m in m:
         # construct array of test l's, skip l == m
-        l = _m + np.arange(1, (lmax - _m)//dl + 1) * dl
-        if len(l) < 1:
+        larr = _m + np.arange(1, (lmax - _m)//dl + 1) * dl
+        marr = np.ones_like(larr) * _m
+        if len(larr) < 1:
             continue
         # boundary condition is derivative is zero for m == 0
         deriv = _m == 0
         if np.isclose(theta_min, 0):
             # spherical cap
-            y = special.Plm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         else:
             # spherical stripe
-            y = special.Plm(l, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                - special.Plm(l, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(l, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                - special.Plm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(larr, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         y = y.ravel()
-        zeros = get_zeros(l, y)
+        zeros = get_zeros(larr, y)
         # add sectoral
         if add_sectoral:
             zeros = [_m] + zeros

@@ -51,6 +51,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         l = l[:, None]
     if m.ndim == 1:
         m = m[:, None]
+    assert m.shape == l.shape
     # avoid singularity
     x = np.atleast_1d(x).copy()
     s = np.isclose(np.abs(x), 1, rtol=1e-10)
