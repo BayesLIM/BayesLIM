@@ -551,14 +551,14 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         deriv = _m == 0
         if np.isclose(theta_min, 0):
             # spherical cap
-            y = special.Plm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         else:
             # spherical stripe
-            y = special.Plm(larr, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                - special.Plm(larr, _m, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(larr, _m, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
+                * special.Qlm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         y = y.ravel()
         zeros = get_zeros(larr, y)
