@@ -629,7 +629,7 @@ class YlmResponse(PixelResponse):
 
         return Ylm
 
-    def load_cache(self, fname):
+    def load_cache(self, fname, lmax=None, discard=None):
         """
         Load an .npz file with Ylm and ang tensors
         and insert into the cache
@@ -640,11 +640,29 @@ class YlmResponse(PixelResponse):
             Filepath to .npz file with Ylm, angs, l, and m keys.
             Ylm is tensor output from utils.gen_sph2pix and
             angs is (zen, az) tensors [deg]
+        lmax : float, optional
+            Truncate all Ylm modes with l > lmax
+        discard : tensor, optional
+            Of shape (2, Nlm), holding [l, m] modes
+            to discard from fname. Discards any Ylm modes
+            that match the provided l and m.
         """
         with np.load(fname) as f:
             Ylm = f['Ylm'].item()
             zen, az = f['angs'].item()
             l, m = f['l'].item(), f['m'].item()
+
+        # truncate modes
+        if lmax is not None:
+            cut = l < lmax
+            Ylm = Ylm[cut]
+            l, m = l[cut], m[cut]
+        if discard is not None:
+            cut_l, cut_m = discard
+            cut = ~np.isclose(l, cut_l) or ~np.isclose(m, cut_m)
+            Ylm = Ylm[cut]
+            l, m = l[cut], m[cut]
+
         # compute hash
         h = utils.ang_hash(zen)
         self.Ylm_cache[h] = Ylm
