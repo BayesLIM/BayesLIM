@@ -62,7 +62,9 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         # compute hyper-geometric
         norm = ((1 + x) / (1 - x))**(m/2)
         a, b, c = l+1, -l, 1-m
-        P = norm * hypF(a, b, c, (1-x)/2, high_prec=high_prec)
+        P = hypF(a, b, c, (1-x)/2, high_prec=high_prec)
+        s = np.isfinite(norm)
+        P[s] *= norm[s]
         # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
         C = _log_legendre_norm(l, m)
         P *= np.exp(C + gammaln(np.abs(c)+1))

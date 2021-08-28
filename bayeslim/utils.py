@@ -738,7 +738,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True):
     method : str, ['stripe', 'sphere', 'cap']
         boundary condition method
     x_max : float, optional
-        If method is strip or cap, this the max x value
+        If method is stripe or cap, this the max x value
     high_prec : bool, optional
         If True, use arbitrary precision for Plm and Qlm
         otherwise use standard (faster) scipy method

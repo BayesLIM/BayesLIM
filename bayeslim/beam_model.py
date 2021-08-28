@@ -629,7 +629,7 @@ class YlmResponse(PixelResponse):
 
         return Ylm
 
-    def load_cache(self, fname, lmax=None, discard=None):
+    def load_cache(self, fname, lmax=None, discard=None, cast=None):
         """
         Load an .npz file with Ylm and ang tensors
         and insert into the cache
@@ -650,9 +650,13 @@ class YlmResponse(PixelResponse):
             Of shape (2, Nlm), holding [l, m] modes
             to discard from fname. Discards any Ylm modes
             that match the provided l and m.
+        cast : torch.dtype
+            Data type to cast Ylm into before caching
         """
         with np.load(fname, allow_pickle=True) as f:
             Ylm = f['Ylm'].item()['Ylm']
+            if cast is not None:
+                Ylm = Ylm.to(cast)
             zen, az = f['angs'].item()['angs']
             l, m = f['l'].item()['l'], f['m'].item()['m']
 

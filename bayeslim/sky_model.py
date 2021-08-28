@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from scipy import special, interpolate
 
-from . import utils
+from . import utils, cosmology
 from .utils import _float, _cfloat
 
 
@@ -403,9 +403,8 @@ class PixelSkyResponse:
             from a single l mode
     """
     def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
-                 device=None, transform_order=0,
-                 lms=None, f0=None, Ndeg=None, kmax=1.0, decimate=True, cosmo=None,
-                 radial_method='samushia', kbin_file=None):
+                 device=None, transform_order=0, cosmo=None,
+                 spatial_kwargs={}, freq_kwargs={}):
         """
         Parameters
         ----------
@@ -424,19 +423,19 @@ class PixelSkyResponse:
         transform_order : int, optional
             0 - spatial then frequency transform (default)
             1 - frequency then spatial transform
-        lms : ndarray, optional
-            l and m modes for alm decomposition, shape (2, Ncoeff)
-        f0 : float, optional
-            Fiducial frequency [Hz], only used for polynomial basis
-        kbins : ndarray, optional
-            The wavevector bins used in the spherical bessel transform
         cosmo : Cosmology object
-            Cosmology object for computing conversions
-        radial_method : str, optional
-            If freq_mode is 'bessel', this is the radial basis method
-        kbin_file : str, optional
-            If freq_mode is 'bessel', this is a filepath to a csv of
-            pre-computed k_ln bins.
+        spatial_kwargs : dict, optional
+            Kwargs used to generate spatial transform matrix
+            lms : array, holding l, m vaues of shape (2, Nlm)
+        freq_kwargs : dict, optional
+            Kwargs used to generate freq transform matrix
+            f0 : float, fiducial frequency [Hz], used for poly
+            Ndeg : int, number of degrees, used for poly
+            kbins : ndarray, wavevector bins [Mpc-1], used for bessel
+            radial_method : str, radial convention, used for bessel
+            kmax : float, maximum k to compute
+            decimate : bool, if True, decimate every other kbin
+            kbin_file : str, filepath to csv of k-bins, used for bessel
         """
         self.theta, self.phi = theta, phi
         self.freqs = freqs
@@ -444,20 +443,23 @@ class PixelSkyResponse:
         self.freq_mode = freq_mode
         self.device = device
         self.transform_order = transform_order
+        self.spatial_kwargs = spatial_kwargs
+        self.freq_kwargs = freq_kwargs
+        if cosmo is None:
+            cosmo = cosmology.Cosmology()
+        self.cosmo = cosmo
+
         self.l, self.m = lms if lms is not None else (None, None)
         self.f0 = f0
         self.Ndeg = Ndeg
         self.kmax = kmax
         self.decimate = decimate
-        self.cosmo = cosmo
         self.radial_method = radial_method
         self.kbin_file = kbin_file
 
         # assertions
         if self.freq_mode == 'bessel':
             assert self.spatial_mode == 'alm'
-            assert len(np.unique(self.l)) == 1
-            assert self.transform_order == 1
 
         self._setup()
 
@@ -466,27 +468,29 @@ class PixelSkyResponse:
 
     def _setup(self):
         # freq setup
-        self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
-        self.A, self.j = None, None
+        self.dfreqs = (self.freqs - self.freq_kwargs['f0']) / 1e6  # MHz
+        self.A, self.jl = None, None
         if self.freq_mode == 'poly':
-            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
+            self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'], device=self.device)
         elif self.freq_mode == 'bessel':
             # compute comoving line of sight distances
             self.z = self.cosmo.f2z(self.freqs)
             self.r = self.cosmo.comoving_distance(self.z).value
             self.dr = self.r = self.r.min()
-            jl, kbins = utils.gen_bessel2freq(self.l, self.freqs, self.cosmo,
-                                              kmax=self.kmax, decimate=self.decimate,
+            jl, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'], self.freqs, self.cosmo,
+                                              kmax=self.freq_kwargs['kmax'],
+                                              decimate=self.freq_kwargs['decimate'],
                                               device=self.device,
-                                              method=self.radial_method,
-                                              kbin_file=self.kbin_file)
+                                              method=self.freq_kwargs['radial_method'],
+                                              kbin_file=self.freq_kwargs['kbin_file'])
             self.jl = jl[list(jl.keys())[0]]
             self.kbins = kbins[list(kbins.keys())[0]]
 
         # spatial setup
         self.Ylm = None
         if self.spatial_mode == 'alm':
-            self.Ylm = utils.gen_sph2pix(self.theta, self.phi, self.l, self.m,
+            self.Ylm = utils.gen_sph2pix(self.theta, self.phi, self.spatial_kwargs['l'],
+                                         self.spatial_kwargs['m'],
                                          device=self.device, real_field=True)
 
     def spatial_transform(self, params):
@@ -533,7 +537,7 @@ class PixelSkyResponse:
         elif self.freq_mode == 'poly':
             return params @ self.A.T
         elif self.freq_mode == 'powerlaw':
-            return params[..., 0, :] * (self.freqs / self.f0)**params[..., 1, :]
+            return params[..., 0, :] * (self.freqs / self.freq_kwargs['f0'])**params[..., 1, :]
         elif self.freq_mode == 'bessel':
             return (params.transpose(-1, -2) @ self.j).transpose(-1, -2)
 
