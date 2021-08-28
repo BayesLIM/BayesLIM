@@ -686,8 +686,8 @@ class YlmResponse(PixelResponse):
             key of cache
         """
         assert key in self.Ylm_cache and key in self.ang_cache
-        Ylm = self.Ylm_cache[h]
-        angs = self.ang_cache[h]
+        Ylm = self.Ylm_cache[key]
+        angs = self.ang_cache[key]
         np.savez(fname, Ylm={'Ylm':Ylm}, angs={'angs':angs}, l={'l':self.l}, m={'m':self.m})
 
     def set_beam(self, beam, zen, az, freqs):
