@@ -629,6 +629,26 @@ class YlmResponse(PixelResponse):
 
         return Ylm
 
+    def load_cache(self, fname):
+        """
+        Load an .npz file with Ylm and ang tensors
+        and insert into the cache
+
+        Parameters
+        ----------
+        fname : str
+            Filepath to .npz file with Ylm and angs keys.
+            Ylm is tensor output from utils.gen_sph2pix and
+            angs is (zen, az) tensors [deg]
+        """
+        with np.load(fname) as f:
+            Ylm = f['Ylm'].item()
+            zen, az = f['angs'].item()
+        # compute hash
+        h = utils.ang_hash(zen)
+        self.Ylm_cache[h] = Ylm
+        self.ang_cache[h] = zen, az
+
     def set_beam(self, beam, zen, az, freqs):
         self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
 

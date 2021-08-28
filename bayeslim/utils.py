@@ -484,7 +484,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                   mmin=0, high_prec=True, add_sectoral=True):
     """
     Compute associated Legendre function degrees l on
-    the spherical cap or stripe given boundary conditions.
+    the spherical stripe or cap given boundary conditions.
 
     theta BC:
         theta_min == 0 and theta_max < pi:
@@ -581,7 +581,7 @@ def _gen_sph2pix_multiproc(job):
     return Ydict
 
 
-def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
+def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
                 lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
                 high_prec=True, renorm=False):
     """
@@ -614,8 +614,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         Spherical harmonic mode ['sphere', 'stripe', 'cap']
         For 'sphere', l modes are integer
         For 'stripe' or 'cap', l modes are float
-    theta_min : float, optional
-        For method == 'stripe', this is the minimum theta
+    theta_max : float, optional
+        For method == 'stripe' or 'cap', this is the maximum theta
         boundary [radians] of the mask.
     l : array_like, optional
         Integer or float array of spherical harmonic l modes
@@ -674,7 +674,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
         for i in range(Njobs):
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_min=theta_min,
+            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_max=theta_max,
                                                       l=_l, m=_m, high_prec=high_prec,
                                                       renorm=renorm)])
 
@@ -709,9 +709,9 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
     x = np.cos(theta)
     if method == 'sphere':
-        theta_min = 0
-    x_min = np.cos(theta_min)
-    H = legendre_func(x, l, m, method, x_min=x_min, high_prec=high_prec)
+        theta_max = np.pi
+    x_max = np.cos(theta_max)
+    H = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec)
     Phi = np.exp(1j * m * phi)
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
@@ -723,7 +723,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_min=None, l=None, m=None,
 
     return Y
 
-def legendre_func(x, l, m, method, x_min=None, high_prec=True):
+def legendre_func(x, l, m, method, x_max=None, high_prec=True):
     """
     Generate (un-normalized) assoc. Legendre basis
 
@@ -735,10 +735,10 @@ def legendre_func(x, l, m, method, x_min=None, high_prec=True):
         float degree
     m : array_like
         integer order
-    method : str, ['stripe', 'sphere']
+    method : str, ['stripe', 'sphere', 'cap']
         boundary condition method
-    x_min : float, optional
-        If method is stripe, this the minimum x value
+    x_max : float, optional
+        If method is strip or cap, this the max x value
     high_prec : bool, optional
         If True, use arbitrary precision for Plm and Qlm
         otherwise use standard (faster) scipy method
@@ -752,17 +752,17 @@ def legendre_func(x, l, m, method, x_min=None, high_prec=True):
     P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
     if method == 'stripe':
         # spherical stripe: uses Plm and Qlm
-        assert x_min is not None
+        assert x_max is not None
         # compute Qlms
         Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
         # compute A coefficients
-        A = -special.Plm(l, m, x_min, high_prec=high_prec, keepdims=True) \
-            / special.Qlm(l, m, x_min, high_prec=high_prec, keepdims=True)
+        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True) \
+            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True)
         # Use deriv = True for m == 0
         if 0 in m:
             mzero = np.ravel(m) == 0
-            A[mzero] = -special.Plm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True) \
-                       / special.Qlm(l[mzero], m[mzero], x_min, high_prec=high_prec, keepdims=True, deriv=True)
+            A[mzero] = -special.Plm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True) \
+                       / special.Qlm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True)
 
         H = P + A * Q
     else:
@@ -1542,6 +1542,7 @@ class PixInterp:
         """
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
+        #assert inds.shape[-1] == m.shape[-1], "mismatched Npix for map and inds"
         if self.interp_mode == 'nearest':
             # use nearest neighbor
             if self.pixtype == 'healpix':
