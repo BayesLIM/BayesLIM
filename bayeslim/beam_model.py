@@ -637,17 +637,20 @@ class YlmResponse(PixelResponse):
         Parameters
         ----------
         fname : str
-            Filepath to .npz file with Ylm and angs keys.
+            Filepath to .npz file with Ylm, angs, l, and m keys.
             Ylm is tensor output from utils.gen_sph2pix and
             angs is (zen, az) tensors [deg]
         """
         with np.load(fname) as f:
             Ylm = f['Ylm'].item()
             zen, az = f['angs'].item()
+            l, m = f['l'].item(), f['m'].item()
         # compute hash
         h = utils.ang_hash(zen)
         self.Ylm_cache[h] = Ylm
         self.ang_cache[h] = zen, az
+        self.l, self.m = l, m
+        self.neg_m = np.any(m < 0)
 
     def set_beam(self, beam, zen, az, freqs):
         self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
