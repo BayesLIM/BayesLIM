@@ -663,7 +663,9 @@ class YlmResponse(PixelResponse):
             l, m = l[cut], m[cut]
         if discard is not None:
             cut_l, cut_m = discard
-            cut = ~np.isclose(l, cut_l) or ~np.isclose(m, cut_m)
+            cut = np.ones(len(l), dtype=bool)
+            for i in range(len(cut_l)):
+                cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
             Ylm = Ylm[cut]
             l, m = l[cut], m[cut]
 
