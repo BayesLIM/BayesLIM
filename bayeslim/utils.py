@@ -783,7 +783,7 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
     with h5py.File(fname, 'r') as f:
         Ylm = f['Ylm'][:]
         angs = f['angs'][:]
-        l, m = f['l'][:], m['m'][:]
+        l, m = f['l'][:], f['m'][:]
 
     # truncate modes
     if lmax is not None:
