@@ -63,7 +63,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         # compute hyper-geometric
         norm = ((1 + x) / (1 - x))**(m/2)
         a, b, c = l+1, -l, 1-m
-        P = hypF(a, b, c, (1-x)/2, high_prec=high_prec)
+        P = hypF(a, b, c, (1-x)/2, high_prec=high_prec, keepdims=True)
         isf = np.isfinite(norm)
         P[isf] *= norm[isf]
         # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
@@ -178,7 +178,7 @@ def _log_legendre_norm(l, m):
     return 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
 
 
-def hypF(a, b, c, z, high_prec=True):
+def hypF(a, b, c, z, high_prec=True, keepdims=False):
     """
     Gauss hypergeometric function.
     Catches the case where c is <= 0
@@ -195,8 +195,11 @@ def hypF(a, b, c, z, high_prec=True):
     a, b : float
     c : int
     z : float
-    high_prec : bool
+    high_prec : bool, optional
         If True, use mpmath (slow), else use scipy (fast)
+    keepdims : bool, optional
+        If True, keep full shape, otherwise squeeze
+        along len-1 axes
     
     Notes
     -----
@@ -252,7 +255,7 @@ def hypF(a, b, c, z, high_prec=True):
         f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a)), 4, 1)(A, B, C, z), dtype=float)
         F[~s] = f21 / gamma(C) / gamma(C+1)
 
-    if len(F) == 1:
+    if not keepdims and len(F) == 1:
         F = F[0]
 
     return F

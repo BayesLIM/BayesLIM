@@ -77,6 +77,7 @@ class SkyBase(torch.nn.Module):
             self.angs = self.angs.to(device)
         for attr in attrs:
             setattr(self, attr, getattr(self, attr).to(device))
+        self.R.push(device)
 
     def freq_interp(self, freqs, kind='linear'):
         """
@@ -121,6 +122,9 @@ class DefaultResponse:
 
     def __call__(self, params):
         return params
+
+    def push(self, device):
+        pass
 
 
 class PointSky(SkyBase):
@@ -291,6 +295,10 @@ class PointSkyResponse:
         elif self.freq_mode == 'powerlaw':
             return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
 
+    def push(self, device):
+        self.A = self.A.to(device)
+        self.freqs = self.freqs.to(device)
+        self.device = device
 
 class PixelSky(SkyBase):
     """
@@ -402,19 +410,17 @@ class PixelSkyResponse:
             For this mode, the all elements in params must be
             from a single l mode
     """
-    def __init__(self, theta, phi, freqs, spatial_mode='pixel', freq_mode='channel',
+    def __init__(self, freqs, spatial_mode='pixel', freq_mode='channel',
                  device=None, transform_order=0, cosmo=None,
                  spatial_kwargs={}, freq_kwargs={}):
         """
         Parameters
         ----------
-        theta, phi : ndarrays
-            colatitude and azimuth angles [radian] of the output sky map
-            in arbitrary coordintes
-        freqs : ndarray
+        freqs : tensor
             Frequency bins [Hz]
         spatial_mode : str, optional
             Choose the spatial parameterization (default is pixel)
+            options = ['pixel', 'alm']
         freq_mode : str, optional
             Choose the freq parameterization (default is channel)
             options = ['channel', 'poly', 'bessel']
@@ -427,6 +433,10 @@ class PixelSkyResponse:
         spatial_kwargs : dict, optional
             Kwargs used to generate spatial transform matrix
             lms : array, holding l, m vaues of shape (2, Nlm)
+            theta, phi : array, holds co-latitude and azimuth
+                angles [deg] of pixel model, used for alm
+            Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
+                matrix. If None, will compute it given l, m
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
             f0 : float, fiducial frequency [Hz], used for poly
@@ -437,8 +447,8 @@ class PixelSkyResponse:
             decimate : bool, if True, decimate every other kbin
             kbin_file : str, filepath to csv of k-bins, used for bessel
         """
-        self.theta, self.phi = theta, phi
         self.freqs = freqs
+        self.Nfreqs = len(freqs)
         self.spatial_mode = spatial_mode
         self.freq_mode = freq_mode
         self.device = device
@@ -448,14 +458,6 @@ class PixelSkyResponse:
         if cosmo is None:
             cosmo = cosmology.Cosmology()
         self.cosmo = cosmo
-
-        self.l, self.m = lms if lms is not None else (None, None)
-        self.f0 = f0
-        self.Ndeg = Ndeg
-        self.kmax = kmax
-        self.decimate = decimate
-        self.radial_method = radial_method
-        self.kbin_file = kbin_file
 
         # assertions
         if self.freq_mode == 'bessel':
@@ -471,27 +473,44 @@ class PixelSkyResponse:
         self.dfreqs = (self.freqs - self.freq_kwargs['f0']) / 1e6  # MHz
         self.A, self.jl = None, None
         if self.freq_mode == 'poly':
-            self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'], device=self.device)
+            self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
+                                      basis=getattr(self.freq_kwargs, 'basis', 'direct'),
+                                      whiten=getattr(self.freq_kwargs, 'whiten', None),
+                                      device=self.device)
         elif self.freq_mode == 'bessel':
+            assert self.spatial_transform == 'alm'
             # compute comoving line of sight distances
-            self.z = self.cosmo.f2z(self.freqs)
+            self.z = self.cosmo.f2z(utils.tensor2numpy(self.freqs))
             self.r = self.cosmo.comoving_distance(self.z).value
-            self.dr = self.r = self.r.min()
-            jl, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'], self.freqs, self.cosmo,
-                                              kmax=self.freq_kwargs['kmax'],
-                                              decimate=self.freq_kwargs['decimate'],
-                                              device=self.device,
-                                              method=self.freq_kwargs['radial_method'],
-                                              kbin_file=self.freq_kwargs['kbin_file'])
-            self.jl = jl[list(jl.keys())[0]]
-            self.kbins = kbins[list(kbins.keys())[0]]
+            self.dr = self.r.max() - self.r.min()
+            if 'jl' in self.freq_kwargs and 'kbins' in self.freq_kwargs:
+                self.jl = self.freq_kwargs['jl']
+                self.kbins = self.freq_kwargs['kbins']
+            else:
+                jl, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
+                                                  utils.tensor2numpy(self.freqs), self.cosmo,
+                                                  kmax=getattr(freq_kwargs, 'kmax'),
+                                                  decimate=getattr(freq_kwargs, 'decimate', True),
+                                                  dk_factor=getattr(freq_kwargs, 'dk_factor', 1e-1),
+                                                  device=self.device,
+                                                  method=getattr(freq_kwargs, 'radial_method', 'default'),
+                                                  Nproc=getattr(freq_kwargs, 'Nproc', None),
+                                                  Ntask=getattr(freq_kwargs, 'Ntask', 10),
+                                                  renorm=getattr(freq_kwargs, 'renorm', False))
+                self.jl = jl
+                self.kbins = kbins
 
         # spatial setup
         self.Ylm = None
         if self.spatial_mode == 'alm':
-            self.Ylm = utils.gen_sph2pix(self.theta, self.phi, self.spatial_kwargs['l'],
-                                         self.spatial_kwargs['m'],
-                                         device=self.device, real_field=True)
+            if 'Ylm' in self.spatial_kwargs:
+                self.Ylm = self.spatial_kwargs['Ylm']
+            else:
+                self.Ylm = utils.gen_sph2pix(self.spatial_kwargs['theta'] * D2R,
+                                             self.spatial_kwargs['phi'] * D2R,
+                                             self.spatial_kwargs['l'],
+                                             self.spatial_kwargs['m'],
+                                             device=self.device, real_field=True)
 
     def spatial_transform(self, params):
         """
@@ -513,7 +532,7 @@ class PixelSkyResponse:
         if self.spatial_mode == 'pixel':
             return params
         elif self.spatial_mode == 'alm':
-            return params @ self.Ylm.transpose(-1, -2)
+            return params @ self.Ylm
 
     def freq_transform(self, params):
         """
@@ -539,7 +558,12 @@ class PixelSkyResponse:
         elif self.freq_mode == 'powerlaw':
             return params[..., 0, :] * (self.freqs / self.freq_kwargs['f0'])**params[..., 1, :]
         elif self.freq_mode == 'bessel':
-            return (params.transpose(-1, -2) @ self.j).transpose(-1, -2)
+            out = torch.zeros(params.shape[:-2] + (self.Nfreqs,) + params.shape[-1:],
+                              device=params.device, dtype=params.dtype)
+            for l in np.unique(self.freq_kwargs['l']):
+                inds = self.freq_kwargs['l'] == l
+            out += (params[:, :, inds].transpose(-1, -2) @ self.jl[l]).transpose(-1, -2)
+            return out
 
     def __call__(self, params):
         if params.device != self.device:
@@ -552,6 +576,18 @@ class PixelSkyResponse:
             params = self.spatial_transform(params)
 
         return params
+
+    def push(self, device):
+        if self.spatial_mode == 'alm':
+            self.Ylm = self.Ylm.to(device)
+
+        if self.freq_mode == 'poly':
+            self.A = self.A.to(device)
+        elif self.freq_mode == 'bessel':
+            for k in self.jl:
+                self.jl[k] = self.jl[k].to(device)
+
+        self.device = device
 
 
 class SphHarmSky(SkyBase):
@@ -672,6 +708,11 @@ class CompositeModel(torch.nn.Module):
         """
         for model in self.models:
             model.freq_interp(freqs, kind)
+
+    def push(self, device):
+        for model in self.models:
+            model.push(device)
+        self.device = device
 
 
 def parse_catalogue(catfile, freqs, device=None,

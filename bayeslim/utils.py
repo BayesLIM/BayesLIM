@@ -724,6 +724,93 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
 
     return Y
 
+
+def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
+    """
+    Write a Ylm basis to HDF5 file
+
+    Parameters
+    ----------
+    fname : str
+        Filepath of output hdf5 file
+    Ylm : array
+        Ylm matrix of shape (Ncoeff, Npix)
+    angs : array
+        theta, phi sky positions of Ylm in degrees
+        of shape (2, Npix). This is either
+        co-lat and azimuth or Dec, RA depending on
+        whether this is used for beam or sky
+    l, m : array
+        Ylm degree l and order m of len Ncoeff
+    """
+    import os
+    if not os.path.exists(fname) or overwrite:
+        with h5py.File(fname, 'w') as f:
+            f.create_dataset('Ylm', data=Ylm)
+            f.create_dataset('angs', data=np.array(angs))
+            f.create_dataset('l', data=l)
+            f.create_dataset('m', data=m)
+
+
+def load_Ylm(fname, lmax=None, discard=None, cast=None,
+             zen_max=None, device=None):
+    """
+    Load an hdf5 file with Ylm and ang arrays
+
+    Parameters
+    ----------
+    fname : str
+        Filepath to hdf5 file with Ylm, angs, l, and m as datasets.
+    lmax : float, optional
+        Truncate all Ylm modes with l > lmax
+    discard : tensor, optional
+        Of shape (2, Nlm), holding [l, m] modes
+        to discard from fname. Discards any Ylm modes
+        that match the provided l and m.
+    cast : torch.dtype
+        Data type to cast Ylm into
+    zen_max : float, optional
+        truncate Ylm response for zen > zen_max [deg]
+        assuming angs[0] is zenith (co-latitude)
+    device : str, optional
+        Device to place Ylm
+
+    Returns
+    -------
+    Ylm, angs, l, m
+    """
+    import h5py
+    with h5py.File(fname, 'r') as f:
+        Ylm = f['Ylm'][:]
+        angs = f['angs'][:]
+        l, m = f['l'][:], m['m'][:]
+
+    # truncate modes
+    if lmax is not None:
+        cut = l < lmax
+        Ylm = Ylm[cut]
+        l, m = l[cut], m[cut]
+    if discard is not None:
+        cut_l, cut_m = discard
+        cut = np.ones(len(l), dtype=bool)
+        for i in range(len(cut_l)):
+            cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
+        Ylm = Ylm[cut]
+        l, m = l[cut], m[cut]
+    if zen_max is not None:
+        zen, az = angs
+        cut = zen < zen_max
+        Ylm = Ylm[:, cut]
+        zen = zen[cut]
+        az = az[cut]
+
+    Ylm = torch.tensor(Ylm, device=device)
+    if cast is not None:
+        Ylm = Ylm.to(cast)
+
+    return Ylm, angs, l, m
+
+
 def legendre_func(x, l, m, method, x_max=None, high_prec=True):
     """
     Generate (un-normalized) assoc. Legendre basis

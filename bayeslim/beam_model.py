@@ -629,21 +629,16 @@ class YlmResponse(PixelResponse):
 
         return Ylm
 
-    def load_cache(self, fname, lmax=None, discard=None, cast=None):
+    def load_cache(self, fname, lmax=None, discard=None, cast=None,
+                   zen_max=None):
         """
-        Load an .npz file with Ylm and ang tensors
+        Load an hdf5 file with Ylm and ang arrays
         and insert into the cache
 
         Parameters
         ----------
         fname : str
-            Filepath to .npz file with Ylm, angs, l, and m str keys.
-            Values are dictionaries, each with only a single
-            key that is the same key with values as tensors.
-            E.g.
-            np.load(fname)['Ylm'] -> {'Ylm': Ylm}
-            where Ylm is tensor output from utils.gen_sph2pix and
-            angs is (zen, az) tensors [deg].
+            Filepath to hdf5 file with Ylm, angs, l, and m as datasets.
         lmax : float, optional
             Truncate all Ylm modes with l > lmax
         discard : tensor, optional
@@ -652,49 +647,30 @@ class YlmResponse(PixelResponse):
             that match the provided l and m.
         cast : torch.dtype
             Data type to cast Ylm into before caching
+        zen_max : float, optional
+            truncate Ylm response for zen > zen_max [deg]
         """
-        with np.load(fname, allow_pickle=True) as f:
-            Ylm = f['Ylm'].item()['Ylm']
-            if cast is not None:
-                Ylm = Ylm.to(cast)
-            zen, az = f['angs'].item()['angs']
-            l, m = f['l'].item()['l'], f['m'].item()['m']
+        Ylm, angs, l, m = utils.load_Ylm(fname, lmax=lmax, discard=discard,
+                                         cast=cast, zen_max=zen_max, device=self.device)
 
-        # truncate modes
-        if lmax is not None:
-            cut = l < lmax
-            Ylm = Ylm[cut]
-            l, m = l[cut], m[cut]
-        if discard is not None:
-            cut_l, cut_m = discard
-            cut = np.ones(len(l), dtype=bool)
-            for i in range(len(cut_l)):
-                cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
-            Ylm = Ylm[cut]
-            l, m = l[cut], m[cut]
-
-        # compute hash
-        h = utils.ang_hash(zen)
         self.Ylm_cache[h] = Ylm
         self.ang_cache[h] = zen, az
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
 
-    def write_cache(self, fname, key):
+    def write_cache(self, fname, key, overwrite=False):
         """
         Write a key in the cache to fname
 
         Parameters
         ----------
         fname : str
-            Filepath of output .npz file
+            Filepath of output hdf5 file
         key : int
             key of cache
         """
-        assert key in self.Ylm_cache and key in self.ang_cache
-        Ylm = self.Ylm_cache[key]
-        angs = self.ang_cache[key]
-        np.savez(fname, Ylm={'Ylm':Ylm}, angs={'angs':angs}, l={'l':self.l}, m={'m':self.m})
+        utils.write_Ylm(fname, self.Ylm_cache[key], self.ang_cache[key],
+                        self.l, self.m, overwrite=overwrite)
 
     def set_beam(self, beam, zen, az, freqs):
         self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
