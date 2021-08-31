@@ -317,6 +317,8 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
             s[0] = torch.sin(_zen) * torch.sin(_az)  # x
             s[1] = torch.sin(_zen) * torch.cos(_az)  # y
             s[2] = torch.cos(_zen)                  # z
+            if self.cache_s:
+                self.cache[s_h] = s
         elif self.cache_s:
             s = self.cache[s_h]
 
