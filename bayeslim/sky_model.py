@@ -282,9 +282,9 @@ class PointSkyResponse:
         self._args = dict(freq_mode=self.freq_mode)
 
     def _setup(self):
-        self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
         # setup
         if self.freq_mode == 'poly':
+            self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
             self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
 
     def __call__(self, params):
@@ -434,7 +434,8 @@ class PixelSkyResponse:
             Kwargs used to generate spatial transform matrix
             lms : array, holding l, m vaues of shape (2, Nlm)
             theta, phi : array, holds co-latitude and azimuth
-                angles [deg] of pixel model, used for alm
+                angles [deg] of pixel model, used for generating
+                Ylm in alm mode
             Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
                 matrix. If None, will compute it given l, m
         freq_kwargs : dict, optional
@@ -470,9 +471,9 @@ class PixelSkyResponse:
 
     def _setup(self):
         # freq setup
-        self.dfreqs = (self.freqs - self.freq_kwargs['f0']) / 1e6  # MHz
         self.A, self.jl = None, None
         if self.freq_mode == 'poly':
+            self.dfreqs = (self.freqs - self.freq_kwargs['f0']) / 1e6  # MHz
             self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
                                       basis=getattr(self.freq_kwargs, 'basis', 'direct'),
                                       whiten=getattr(self.freq_kwargs, 'whiten', None),
@@ -554,7 +555,7 @@ class PixelSkyResponse:
         if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':
-            return params @ self.A.T
+            return (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
         elif self.freq_mode == 'powerlaw':
             return params[..., 0, :] * (self.freqs / self.freq_kwargs['f0'])**params[..., 1, :]
         elif self.freq_mode == 'bessel':
