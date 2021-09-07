@@ -300,6 +300,7 @@ class PointSkyResponse:
         self.freqs = self.freqs.to(device)
         self.device = device
 
+
 class PixelSky(SkyBase):
     """
     Pixelized model (e.g. healpix or other representation)
@@ -716,8 +717,8 @@ class CompositeModel(torch.nn.Module):
         self.device = device
 
 
-def parse_catalogue(catfile, freqs, device=None,
-                    parameter=False, freq_interp='linear'):
+def read_catalogue(catfile, freqs, device=None,
+                   parameter=False, freq_interp='linear'):
     """
     Read a point source catalogue YAML file.
     See bayeslim.data.DATA_PATH for examples.
@@ -752,7 +753,7 @@ def parse_catalogue(catfile, freqs, device=None,
     angs = torch.tensor([np.array(sources['ra']),
                          np.array(sources['dec'])], dtype=_float())
 
-    if d['mode'] == 'channel':
+    if d['freq_mode'] == 'channel':
         # collect Stokes I fluxes at specified frequencies
         S = np.array([sources['freq{}'.format(i)] for i in range(len(d['freqs']))])
 
@@ -761,7 +762,7 @@ def parse_catalogue(catfile, freqs, device=None,
                                       fill_value='extrapolate')
         params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, :]
 
-    elif d['mode'] == 'powerlaw':
+    elif d['freq_mode'] == 'powerlaw':
         # ensure frequencies are float
         d['mode_kwargs']['f0'] = float(d['mode_kwargs']['f0'])
 
@@ -771,7 +772,7 @@ def parse_catalogue(catfile, freqs, device=None,
     else:
         raise NotImplementedError
 
-    R = PointSkyResponse(freqs, freq_mode=d['mode'], device=device, **d['mode_kwargs'])
+    R = PointSkyResponse(freqs, freq_mode=d['freq_mode'], device=device, **d['mode_kwargs'])
     sky = PointSky(params, angs, freqs, R=R, parameter=parameter)
 
     if 'polarizaton' in d:
@@ -782,6 +783,58 @@ def parse_catalogue(catfile, freqs, device=None,
         sky = torch.nn.Sequential(sky, stokes)
 
     return sky, sources['name']
+
+
+def write_catalogue(catfile, sky, names, overwrite=False):
+    """
+    Write a point source catalogue to YAML file
+
+    Parameters
+    ----------
+    catfile : str
+        Name of output catalogue yml file
+    sky : PointSky object
+    names : list
+        List of str holding source names
+    """
+    import os
+    import yaml
+    if not os.path.exists(catfile) or overwrite:
+        d = {}
+        assert sky.params.shape[0] == 1, "Writing Stokes QUV not currently implemented"
+
+        # insert header metadata
+        d['freq_mode'] = sky.R.freq_mode
+        d['mode_kwargs'] = {}
+
+        if sky.R.freq_mode == 'channel':
+            d['freqs'] = utils.tensor2numpy(sky.freqs).tolist()
+            d['mode_kwargs']['f0'] = None
+
+        elif sky.R.freq_mode == 'powerlaw':
+            d['mode_kwargs']['f0'] = sky.R.f0
+
+        elif sky.R.freq_mode == 'poly':
+            raise NotImplementedError
+        
+        else:
+            raise ValueError("{} not recognized".format(sky.R.freq_mode))
+
+        # insert source data
+        d['sources'] = {}
+        d['sources']['name'] = list(names)
+        d['sources']['ra'], d['sources']['dec'] = utils.tensor2numpy(sky.angs).tolist()
+
+        if sky.R.freq_mode == 'channel':
+            for i in range(len(sky.freqs)):
+                d['sources']['freq{:d}'.format(i)] = utils.tensor2numpy(sky.params[0, 0, i]).tolist()
+
+        elif sky.R.freq_mode == 'powerlaw':
+            d['sources']['amp'] = utils.tensor2numpy(sky.params[0, 0, 0]).tolist()
+            d['sources']['alpha'] = utils.tensor2numpy(sky.params[0, 0, 1]).tolist()
+
+        with open(catfile, 'w') as f:
+            yaml.dump(d, f)
 
 
 def stokes2linear(S):

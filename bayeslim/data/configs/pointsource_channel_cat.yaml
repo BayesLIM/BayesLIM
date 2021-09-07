@@ -1,12 +1,12 @@
 # A bayeslim point source catalogue
-# with mode = 'channel'
+# with freq_mode = 'channel'
 
 # -- Model Representation --
 # See bayeslim.sky_model.PointSourceResponse
-freqs : [100e6, 110e6, 120e6, 130e6]
-mode : 'channel'  # ['channel', 'poly', 'powerlaw']
+freq_mode : 'channel'  # ['channel', 'poly', 'powerlaw']
 mode_kwargs : 
   f0 : None       # anchor freq [Hz]
+freqs : [100e6, 110e6, 120e6, 130e6]
 
 # -- Sources --
 # This should be consistent with 'mode' above
