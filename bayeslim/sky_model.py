@@ -769,7 +769,7 @@ def parse_catalogue(catfile, freqs, device=None,
     else:
         raise NotImplementedError
 
-    R = PointSkyResponse(freqs, mode=d['mode'], device=device, **d['mode_kwargs'])
+    R = PointSkyResponse(freqs, freq_mode=d['mode'], device=device, **d['mode_kwargs'])
     sky = PointSky(params, angs, freqs, R=R, parameter=parameter)
 
     if 'polarizaton' in d:
