@@ -736,6 +736,8 @@ def parse_catalogue(catfile, freqs, device=None,
     -------
     tensor
         PointSky object
+    list
+        Source names
     """
     import yaml
     with open(catfile) as f:
@@ -779,7 +781,7 @@ def parse_catalogue(catfile, freqs, device=None,
         stokes = PolStokesModel(sparams, parameter=parameter)
         sky = torch.nn.Sequential(sky, stokes)
 
-    return sky
+    return sky, sources['name']
 
 
 def stokes2linear(S):
