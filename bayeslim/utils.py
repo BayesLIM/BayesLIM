@@ -744,6 +744,7 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
         Ylm degree l and order m of len Ncoeff
     """
     import os
+    import h5py
     if not os.path.exists(fname) or overwrite:
         with h5py.File(fname, 'w') as f:
             f.create_dataset('Ylm', data=Ylm)
