@@ -782,28 +782,30 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
     """
     import h5py
     with h5py.File(fname, 'r') as f:
-        Ylm = f['Ylm'][:]
+        # load angles and all modes
         angs = f['angs'][:]
         l, m = f['l'][:], f['m'][:]
 
-    # truncate modes
-    if lmax is not None:
-        cut = l < lmax
-        Ylm = Ylm[cut]
+        # truncate modes
+        cut = np.ones_like(l, dtype=bool)
+        if lmax is not None:
+            cut = cut & (l < lmax)
+        if discard is not None:
+            cut_l, cut_m = discard
+            for i in range(len(cut_l)):
+                cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
+
+        Ylm = f['Ylm'][cut, :]
         l, m = l[cut], m[cut]
-    if discard is not None:
-        cut_l, cut_m = discard
-        cut = np.ones(len(l), dtype=bool)
-        for i in range(len(cut_l)):
-            cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
-        Ylm = Ylm[cut]
-        l, m = l[cut], m[cut]
+
+    # truncate sky
     if zen_max is not None:
         zen, az = angs
         cut = zen < zen_max
         Ylm = Ylm[:, cut]
         zen = zen[cut]
         az = az[cut]
+        angs = zen, az
 
     Ylm = torch.tensor(Ylm, device=device)
     if cast is not None:
