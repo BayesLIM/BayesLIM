@@ -6,20 +6,34 @@ import numpy as np
 
 from . import telescope_model, calibration, beam_model, sky_model, utils
 from .utils import _float, _cfloat
+from .visdata import VisData
 
 
 class RIME(torch.nn.Module):
     """
     Performs the sky integral component of the radio interferometric
     measurement equation (RIME) to produce the interferometric
-    visibilities between antennas p and q.
+    visibilities between antennas p and q
 
     .. math::
 
-        V_{jk} = \int_{4\pi}d \Omega\ A_p(\hat{s})
+        V_{pq} = \int_{4\pi}d \Omega\ A_p(\hat{s})
                   I(\hat{s}) A_q^\dagger K_{pq}
 
     where K is the interferometric fringe term.
+    This is performed for each pair of linear
+    feed polarizations to form the matrix
+
+    .. math::
+
+        V_{pq} = \left(
+            \begin{array}{cc}V^{ee} & V^{en} \\
+            V^{ne} & V^{nn} \end{array}
+        \right)
+
+    for two dipole feeds east (e) and north (n).
+    For the case of Npol = 1, then only a single
+    element from the diagonal is used.
     """
     def __init__(self, sky, telescope, beam, ant2beam, array, sim_bls,
                  obs_jds, freqs, data_bls=None, device=None):
@@ -108,7 +122,7 @@ class RIME(torch.nn.Module):
             redundant bl in sim_bls will be copied over to data_bls
             appropriately. Note this will not work if array.antpos
             is a parameter. Also note that redundant baselines
-            must be adjacent each other in data_bls.
+            must be ordered next to each other in data_bls.
         """
         self.sim_bls = sim_bls
         self.Nbls = len(self.sim_bls)
@@ -148,8 +162,8 @@ class RIME(torch.nn.Module):
 
         Returns
         -------
-        vis : tensor
-            Measured visibilities, shape (Npol, Npol, Nbl_group, Ntimes, Nfreqs)
+        vis : VisData object
+            Measured visibilities, shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
         """
         # get sky components
         if sky_components is None:
@@ -159,6 +173,7 @@ class RIME(torch.nn.Module):
 
         # initialize visibility tensor
         Npol = self.beam.Npol
+        vd = VisData()
         vis = torch.zeros((Npol, Npol, self.Ndata_bls, self.Ntimes, self.Nfreqs),
                           dtype=_cfloat(), device=self.device)
 
@@ -195,7 +210,11 @@ class RIME(torch.nn.Module):
                     self._prod_and_sum(self.beam, ant_beams, cut_sky, bl[0], bl[1],
                                        kind, zen, az, vis, bl_slice, j)
 
-        return vis
+        history = utils.get_model_description(self)[0]
+        vd.setup_telescope(self.telescope, self.array)
+        vd.setup_data(self.sim_bls, self.obs_jds, self.freqs, pol=self.beam.pol,
+                      data=vis, flags=None, cov=None, history=history)
+        return vd
 
     def _prod_and_sum(self, beam, ant_beams, cut_sky, ant1, ant2,
                       kind, zen, az, vis, bl_slice, obs_ind):

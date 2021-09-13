@@ -27,7 +27,7 @@ class TelescopeModel:
         ----------
         location : tuple
             3-tuple location of the telescope in geodetic
-            frame (lon, lat) in degrees.
+            frame (lon, lat, alt), where lon, lat in degrees.
         """
         # setup telescope location in geocentric (ECEF) frame
         self.location = location

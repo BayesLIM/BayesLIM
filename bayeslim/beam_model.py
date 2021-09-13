@@ -40,7 +40,7 @@ class PixelBeam(torch.nn.Module):
     """
     def __init__(self, params, freqs, response=None,
                  response_args=(), response_kwargs={},
-                 parameter=True, polmode='1pol',
+                 parameter=True, polmode='1pol', pol=None,
                  powerbeam=True, fov=180):
         """
         A generic pixelized beam model evaluated on the sky
@@ -73,11 +73,14 @@ class PixelBeam(torch.nn.Module):
         parameter : bool, optional
             If True, fit for params (default), otherwise
             keep it fixed to its input value
-        polmode : str, ['1pol', '2pol', '4pol'], optional
+        polmode : str, optional
             Polarization mode. params must conform to polmode.
-            1pol : single linear polarization (default)
-            2pol : two linear polarizations (diag of Jones)
-            4pol : four linear and cross pol (2x2 Jones)
+            1pol : single linear polarization (default) Npol=1
+            2pol : two linear polarizations (diag of Jones) Npol=2
+            4pol : four linear and cross pol (2x2 Jones) Npol=2
+        pol : str, optional
+            This specifies the dipole polarization for 1pol mode.
+            Only used for 1pol mode. Options = ['ee', 'nn']
         powerbeam : bool, optional
             If True, take the antenna beam to be a real-valued, baseline
             "power" beam, or psky = beam * sky. Only valid for 1pol or 2pol.
@@ -110,6 +113,10 @@ class PixelBeam(torch.nn.Module):
         if self.powerbeam:
             assert self.polmode in ['1pol', '2pol']
         self.Npol = 1 if polmode == '1pol' else 2
+        self.pol = pol
+        if self.polmode == '1pol':
+            assert self.pol is not None, "must specify pol for 1pol mode"
+            assert self.pol.lower() in ['ee', 'nn'], "must be 'ee' or 'nn'"
         # construct _args for str repr
         self._args = dict(powerbeam=powerbeam, fov=fov, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)

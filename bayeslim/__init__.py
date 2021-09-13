@@ -13,8 +13,10 @@ from . import cosmology
 from . import sampler
 from . import special
 from . import uvdata_interface
+from . import visdata
 
 from .optim import ParamDict
+from .visdata import VisData
 
 
 __version__ = "0.0.1"

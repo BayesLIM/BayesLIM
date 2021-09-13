@@ -1816,6 +1816,7 @@ def get_zeros(x, y):
             
     return roots
 
+
 def get_model_description(model):
     """
     Iterate through a torch Module or Sequential
