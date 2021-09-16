@@ -4,6 +4,7 @@ Module for visibility data and other formats
 import torch
 import numpy as np
 import os
+import copy
 
 from . import utils, telescope_model
 from .utils import _float, _cfloat
@@ -16,11 +17,24 @@ class VisData:
     """
     def __init__(self):
         self.data, self.flags = None, None
-        self.cov, self.cov_axis = None, None
+        self.icov, self.cov, self.cov_axis = None, None, None
         self.bls, self.time, self.times = None, None, None
         self.freqs, self.pol, self.history = None, None, ''
         self.telescope, self.array = None, None
         self.atol = 1e-5
+
+    def copy(self):
+        """
+        Copy and return self. Data tensor
+        is detached and cloned.
+        """
+        vd = VisData()
+        vd.setup_telescope(telescope=self.telescope, array=self.array)
+        vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
+                      time=self.time, data=self.data.detach().clone(),
+                      flags=self.flags, cov=self.cov, icov=self.icov,
+                      cov_axis=self.cov_axis, history=self.history)
+        return vd
 
     def setup_telescope(self, telescope=None, array=None):
         """
@@ -37,7 +51,7 @@ class VisData:
         self.array = array
 
     def setup_data(self, bls, times, freqs, pol=None, time=None,
-                   data=None, flags=None, cov=None, cov_axis=None,
+                   data=None, flags=None, cov=None, icov=None, cov_axis=None,
                    history='', run_check=True):
         """
         Setup metadata and optionally data tensors.
@@ -76,6 +90,8 @@ class VisData:
                 cov_axis = 'bl': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
                 cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
                 cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nbl, Nfreq)
+        icov : tensor, optional
+            Inverse covariance. must match shape of cov.
         cov_axis : str, optional
             If cov represents on and off diagonal components, this is the
             axis over which off-diagonal is modeled.
@@ -103,6 +119,7 @@ class VisData:
         self.data = data
         self.flags = flags
         self.cov = cov
+        self.icov = icov
         self.cov_axis = cov_axis
         self.history = history
 
@@ -267,6 +284,7 @@ class VisData:
         """
         Slice into cov tensor and return values.
         Only one axis can be specified at a time.
+        See optim.apply_cov() for details on shape.
 
         Parameters
         ----------
@@ -320,6 +338,36 @@ class VisData:
         if squeeze:
             cov = cov.squeeze()
         return cov
+
+    def set_icov(self, icov=None, pinv=True, rcond=1e-15):
+        """
+        Set inverse covariance as self.icov.
+        See optim.apply_cov() for details on shape.
+
+        Parameters
+        ----------
+        icov : tensor, optional
+            Pre-computed inverse covariance to set. Must
+            match shape of self.cov. Default is to compute
+            icov given self.cov
+        pinv : bool, optional
+            Use pseudo-inverse to compute covariance,
+            otherwise use direct inversion
+        rcond : float, optional
+            rcond kwarg for pinverse
+        """
+        if icov is None:
+            icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
+        self.icov = icov
+
+    def get_icov(self, bl=None, icov=None, **kwargs):
+        """
+        Slice into cached inverse covariance.
+        Same kwargs as get_cov()
+        """
+        if icov is None:
+            icov = self.icov
+        return self.get_cov(bl=bl, cov=icov, **kwargs)
 
     def __getitem__(self, bl):
         return self.get_data(bl, squeeze=True)
@@ -469,15 +517,15 @@ class VisData:
                             data=data, flags=flags, cov=cov, time=time,
                             cov_axis=cov_axis, history=history)
 
-    def read_uvh5(self, fname, run_check=True, **kwargs):
+    def read_uvdata(self, fname, run_check=True, **kwargs):
         """
-        Read a UVH5 object into a VisData object. Needs
-        pyuvdata support.
+        Read a UVH5 file into a UVData and transfer to
+        a VisData object. Needs pyuvdata support.
 
         Parameters
         ----------
-        fname : str
-            Filename(s) to read
+        fname : str or UVData
+            Filename(s) to read, or UVData object
         run_check : bool, optional
             Run check after read
         kwargs : dict
@@ -485,8 +533,11 @@ class VisData:
         """
         from pyuvdata import UVData
         # load uvdata
-        uvd = UVData()
-        uvd.read_uvh5(fname, **kwargs)
+        if isinstance(fname, str):
+            uvd = UVData()
+            uvd.read_uvh5(fname, **kwargs)
+        elif isinstance(fname, UVData):
+            uvd = fname
         # extract data and metadata
         bls = uvd.get_antpairs()
         Nbls = uvd.Nbls
@@ -573,6 +624,7 @@ def concat_VisData(vds, axis, run_check=True):
     Nvd = len(vds)
     vd = vds[0]
     out = VisData()
+    flags, cov = None, None
     if axis == 'bl':
         dim = 2
         times = vd.times
@@ -609,7 +661,7 @@ def concat_VisData(vds, axis, run_check=True):
     out.setup_telescope(vd.telescope, vd.array)
     out.setup_data(bls, times, freqs, pol=pol,
                    data=data, flags=flags, cov=cov,
-                   cov_axis=cov_axis, history=vd.history,
+                   cov_axis=vd.cov_axis, history=vd.history,
                    run_check=run_check)
 
     return out

@@ -9,6 +9,7 @@ from scipy.signal import windows
 from scipy.interpolate import interp1d
 import copy
 import warnings
+import os
 
 from . import special
 from .data import DATA_PATH
@@ -1815,42 +1816,6 @@ def get_zeros(x, y):
             prev = curr
             
     return roots
-
-
-def get_model_description(model):
-    """
-    Iterate through a torch Module or Sequential
-    model and collect the tree structure and description
-    of arguments, if provided
-
-    Parameters
-    ----------
-    model : torch Module or Sequential
-
-    Returns
-    -------
-    str
-        High-level model tree structure
-    dict
-        Subdirectories containing sub-model
-        arguments, if provided
-    """
-    # get str
-    tree = str(model)
-    # construct directory of model arguments
-    name = model._get_name()
-    model_args = {name: {}}
-    args = getattr(model, '_args', None)
-    if args is not None:
-        model_args[name]['args'] = args
-    # iterate over sub-modules
-    for submod in model._modules:
-        submodule = getattr(model, submod)
-        subname = submodule._get_name()
-        subargs = get_model_description(submodule)[1][subname]
-        model_args[name][subname] = subargs
-
-    return tree, model_args
 
 
 def _make_hex(N, D=15):

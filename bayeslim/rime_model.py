@@ -36,7 +36,7 @@ class RIME(torch.nn.Module):
     element from the diagonal is used.
     """
     def __init__(self, sky, telescope, beam, ant2beam, array, sim_bls,
-                 obs_jds, freqs, data_bls=None, device=None):
+                 times, freqs, data_bls=None, device=None):
         """
         RIME object. Takes a model
         of the sky brightness, passes it through
@@ -61,7 +61,7 @@ class RIME(torch.nn.Module):
         ant2beam : dict
             Dict of integers that map each antenna number in array.ants
             to a particular index in the beam model output from beam.
-            E.g. {10: 0, 1: 0, 12: 0} for 3-antennas [10, 11, 12] with
+            E.g. {10: 0, 11: 0, 12: 0} for 3-antennas [10, 11, 12] with
             1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
             [10, 11, 12] with different 3 beam models.
         array : ArrayModel object
@@ -73,8 +73,8 @@ class RIME(torch.nn.Module):
             If array.ants = [1, 3, 5], then bls could be, for e.g.,
             bls = [(1, 3), (1, 5), (3, 5)]. Note sim_bls must
             be a subset of array.bls.
-        obs_jds : tensor
-            Array of observational times in Julian Date
+        times : tensor
+            Array of observation times in Julian Date
         freqs : tensor
             Array of observational frequencies [Hz]
         data_bls : list, optional
@@ -92,8 +92,8 @@ class RIME(torch.nn.Module):
         self.beam = beam
         self.ant2beam = ant2beam
         self.array = array
-        self.obs_jds = obs_jds
-        self.Ntimes = len(obs_jds)
+        self.times = times
+        self.Ntimes = len(times)
         self.device = device
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -188,13 +188,13 @@ class RIME(torch.nn.Module):
             sky = sky_comp['sky']
 
             # iterate over observation times
-            for j, obs_jd in enumerate(self.obs_jds):
+            for j, time in enumerate(self.times):
 
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
                     ra, dec = sky_comp['angs']
-                    alt, az = self.telescope.eq2top(obs_jd, ra, dec, sky=kind, store=True)
+                    alt, az = self.telescope.eq2top(time, ra, dec, sky=kind, store=True)
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
@@ -212,7 +212,7 @@ class RIME(torch.nn.Module):
 
         history = utils.get_model_description(self)[0]
         vd.setup_telescope(self.telescope, self.array)
-        vd.setup_data(self.sim_bls, self.obs_jds, self.freqs, pol=self.beam.pol,
+        vd.setup_data(self.sim_bls, self.times, self.freqs, pol=self.beam.pol,
                       data=vis, flags=None, cov=None, history=history)
         return vd
 

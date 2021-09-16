@@ -211,7 +211,7 @@ class PixelBeam(torch.nn.Module):
 
         return psky
 
-    def forward(self, sky_comp, telescope, obs_jd, modelpairs):
+    def forward(self, sky_comp, telescope, time, modelpairs):
         """
         Forward pass a single sky model through the beam
         at a single observation time.
@@ -226,7 +226,7 @@ class PixelBeam(torch.nn.Module):
             and expected by the beam response function.
         telescope : TelescopeModel object
             A model of the telescope location
-        obs_jd : float
+        time : float
             Observation time in Julian Date (e.g. 2458101.23456)
         modelpairs : list of 2-tuple
             A list of all unique antenna-pairs of the beam's
@@ -252,7 +252,7 @@ class PixelBeam(torch.nn.Module):
         kind = sky_comp['kind']
         if kind in ['point', 'pixel']:
             # get coords
-            alt, az = telescope.eq2top(obs_jd, sky_comp['angs'][0], sky_comp['angs'][1],
+            alt, az = telescope.eq2top(time, sky_comp['angs'][0], sky_comp['angs'][1],
                                        sky=kind, store=False)
             zen = utils.colat2lat(alt, deg=True)
 
@@ -538,7 +538,7 @@ class YlmResponse(PixelResponse):
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
-    """ 
+    """
     def __init__(self, params, l, m, freqs, mode='generate',
                  interp_mode='bilinear', interp_angs=None,
                  powerbeam=True, freq_mode='channel', f0=None,

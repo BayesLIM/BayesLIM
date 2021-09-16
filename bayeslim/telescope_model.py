@@ -37,7 +37,7 @@ class TelescopeModel:
         self.conv_cache = {}
         self.device = device
 
-    def hash(self, obs_jd, sky):
+    def hash(self, time, sky):
         """
         Create a hash from an observation time
         and sky model object. It is assumed that
@@ -46,7 +46,7 @@ class TelescopeModel:
 
         Parameters
         ----------
-        obs_jd : float
+        time : float
             observation julian date (e.g. 2458101.245501)
         sky : sky model object
             A sky object (e.g. PointSky, PixelSky)
@@ -56,7 +56,7 @@ class TelescopeModel:
         hash : int
             A unique integer hash
         """
-        return hash((obs_jd, sky))
+        return hash((time, sky))
 
     def _clear_cache(self, key=None):
         """Clear conversion cache, or just a single
@@ -74,14 +74,14 @@ class TelescopeModel:
         else:
             del self.conv_cache[key]
 
-    def eq2top(self, obs_jd, ra, dec, sky=None, store=False):
+    def eq2top(self, time, ra, dec, sky=None, store=False):
         """
         Convert equatorial coordinates to topocentric (aka AltAz).
         Pull from the conv_cache if saved.
 
         Parameters
         ----------
-        obs_jd : float
+        time : float
             Observation time in Julian Date
         ra : tensor or ndarray
             right ascension in degrees [J2000]
@@ -101,7 +101,7 @@ class TelescopeModel:
             oriented along East-North-Up frame
         """
         # create hash
-        h = self.hash(obs_jd, sky)
+        h = self.hash(time, sky)
 
         # pull from cache
         if h in self.conv_cache:
@@ -110,7 +110,7 @@ class TelescopeModel:
         # if not present, perform conversion
         ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
         dtype = ra.dtype if isinstance(ra, torch.Tensor) else None
-        angs = eq2top(self.tloc, obs_jd, ra, dec)
+        angs = eq2top(self.tloc, time, ra, dec)
         angs = torch.as_tensor(angs, device=self.device, dtype=dtype)
 
         # and save to cache
@@ -415,7 +415,7 @@ class ArrayModel(utils.PixInterp, torch.nn.Module):
         self.device = device
 
 
-def eq2top(location, obs_jd, ra, dec):
+def eq2top(location, time, ra, dec):
     """
     Convert equatorial ICRS (J200) coordinates
     RA, Dec in degrees to topocentric coordinates
@@ -425,7 +425,7 @@ def eq2top(location, obs_jd, ra, dec):
     ----------
     location : astropy.coordinates.EarthLocation object
         Location of telescope
-    obs_jd : float
+    time : float
         Observation Julian Date
     ra, dec : array
         Right ascension and declination [deg]
@@ -444,14 +444,14 @@ def eq2top(location, obs_jd, ra, dec):
         ra = ra.detach().numpy()
     if isinstance(dec, torch.Tensor):
         dec = dec.detach().numpy()
-    altaz = AltAz(location=location, obstime=time.Time(obs_jd, format='jd'))
+    altaz = AltAz(location=location, obstime=time.Time(time, format='jd'))
     icrs = ICRS(ra=ra * units.deg, dec=dec * units.deg)
     out = icrs.transform_to(altaz)
 
     return out.alt.deg, out.az.deg
 
 
-def top2eq(location, obs_jd, alt, az):
+def top2eq(location, time, alt, az):
     """
     Convert topocentric (AltAz) coordinates
     of altitude angle and azimuth [deg] to
@@ -461,7 +461,7 @@ def top2eq(location, obs_jd, alt, az):
     ----------
     location : astropy.coordinates.EarthLocation object
         Location of telescope
-    obs_jd : float
+    time : float
         Observation Julian Date
     alt, az : array
         altitude and azimuth [deg]
@@ -476,7 +476,7 @@ def top2eq(location, obs_jd, alt, az):
         alt = alt.detach().numpy()
     if isinstance(az, torch.Tensor):
         az = az.detach().numpy()
-    altaz = AltAz(location=location, obstime=time.Time(obs_jd, format='jd'),
+    altaz = AltAz(location=location, obstime=time.Time(time, format='jd'),
                   alt=alt * units.deg, az=az * units.deg)
     icrs = ICRS()
     out = altaz.transform_to(icrs)

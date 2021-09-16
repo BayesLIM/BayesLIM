@@ -3,8 +3,9 @@ Optimization module
 """
 import numpy as np
 import torch
+import os
 
-from . import utils
+from . import utils, io
 
 
 class Sequential(torch.nn.Sequential):
@@ -16,7 +17,7 @@ class Sequential(torch.nn.Sequential):
     .. code-block:: python
 
         S = Sequential(OrderedDict(model1=model1, model2=model2))
-        
+
     where evaluation order is S(params) -> model2( model1( params ) )
 
     Note that the keys of the parameter dictionary
@@ -35,83 +36,35 @@ class Sequential(torch.nn.Sequential):
         super().__init__(models)
         self.starting_input = starting_input
 
-    def get_attr(self, module, attr):
-        """
-        Get attribute from module
+    def __getitem__(self, name):
+        return io.get_model_attr(self, name)
 
-        Parameters
-        ----------
-        module : torch.nn.Module
-        attr : str or list
-            An attribute in Module.named_parameters()
-            syntax, or a list of attribute strings
-            in nested submodules.
+    def __setitem__(self, name, value):
+        io.set_model_attr(self, name, value)
 
-        Returns
-        -------
-        tensor
-            parameter tensor in module
-            or a submodule
-        """
-        # if nested string, split into submodules
-        if '.' in attr:
-            attrs = attr.split('.')
-            return self.get_attr(self, attrs)
-        # if a string but no dot, this is the deepest module
-        if isinstance(attr, str):
-            return getattr(module, attr)
-        # if its a list, get the first module and repeat
-        if isinstance(attr, list):
-            if len(attr) == 1:
-                return self.get_attr(module, attr[0])
-            else:
-                return self.get_attr(getattr(module, attr[0]), attr[1:])
-
-    def set_attr(self, module, attr, val):
-        """
-        Set attribute on module
-
-        Parameters
-        ----------
-        module : torch.nn.Module
-        attr : str or list
-            An attribute in Module.named_parameters()
-            syntax, or a list of attribute strings
-            in nested submodules.
-        val : tensor
-        """
-        if '.' in attr:
-            attrs = attr.split('.')
-            module = self.get_attr(module, attrs[:-1])
-            attr = attrs[-1]
-        setattr(module, attr, val)
-
-    def __getitem__(self, key):
-        return self.get_attr(self, key)
-
-    def forward(self, params=None):
+    def forward(self, pdict=None):
         """
         Evaluate model in sequential order,
         optionally updating all parameters beforehand
 
         Parameters
         ----------
-        params : ParamDict
+        pdict : ParamDict
             Parameter dictionary with keys
             conforming to nn.Module.get_parameter
             syntax, and values as tensors
         """
         # update parameters of module and sub-modules
-        if params is not None:
-            for k in params:
-                param = self.get_attr(self, k)
-                parameter = isinstance(param, torch.nn.Parameter)
-                self.set_attr(self, k, utils.push(params[k], param.device, parameter))
+        if pdict is not None:
+            for k in pdict:
+                param = self[k]
+                is_parameter = isinstance(param, torch.nn.Parameter)
+                self[k] = utils.push(pdict[k], param.device, is_parameter)
 
         # evaluate models
         inp = self.starting_input
-        for i, module in enumerate(self):
-            inp = module(inp)
+        for i, model in enumerate(self):
+            inp = model(inp)
 
         return inp
 
@@ -122,63 +75,79 @@ class LogGaussLikelihood(torch.nn.Module):
 
     .. math::
 
-        -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d-\mu)\\
+        -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d - \mu)\\
                 &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi) 
     """
-    def __init__(self, target, cov, sparse_cov=True, parameter=False, device=None):
+    def __init__(self, target, cov, cov_axis, parameter=False, device=None):
         """
         Parameters
         ----------
         target : tensor
-            Data tensor
+            Data tensor of shape
+            (Npol, Npol, Nbls, Ntimes, Nfreqs)
         cov : tensor
-            Covariance of target data.
-            Can be an nD tensor with the same
-            shape as target, in which case
-            this is just the diagonal of the cov mat
-            reshaped as the target (sparse_cov=True)
-            Can also be a 2D tensor holding the on and
-            off diagonal covariances, in which case
-            target must be a flat column tensor (sparse_cov=False)
+            Covariance of the target data.
+            See optim.apply_icov() for shape details.
+        cov_axis : str
+            This specifies the kind of covariance. See optim.apply_icov()
+            for details.
         parameter : bool, optional
             If fed a covariance, this makes the inverse covariance
-            a parameter in the fit.
+            a parameter in the fit. (not yet implemented)
         device : str, optional
             Set the device for this object
         """
         super().__init__()
         self.target = target
+        if parameter:
+            raise NotImplementedError
         self.parameter = parameter
         self.device = device
-        self.sparse_cov = sparse_cov
-        self.set_icov(cov)
+        self.cov = cov
+        self.cov_axis = cov_axis
+        self.icov = None
 
-    def set_icov(self, cov):
+    def set_icov(self, icov=None):
         """
         Set inverse covariance as self.icov
 
         Parameters
         ----------
-        cov : tensor
-            Covariance of target data.
-            Can be an nD tensor with the same
-            shape as target, in which case
-            this is just the diagonal of the cov mat
-            reshaped as the target (sparse_cov=True)
-            Can also be a 2D tensor holding the on and
-            off diagonal covariances, in which case
-            target must be a flat column tensor (sparse_cov=False)
+        icov : tensor, optional
+            Inverse covariance of the target data.
+            See optim.apply_icov() for shape details.
+            Default is to compute it from self.cov.
+            Note that self.icov is used for the loglike,
+            and self.cov is used for normalization. The
+            two should therefore be consistent.
         """
-        self.cov = utils.push(cov, self.device)
-        if self.sparse_cov:
-            self.icov = 1 / self.cov
+        # push cov to device is needed
+        if self.cov.device is not self.device:
+            self.cov = self.cov.to(self.device)
+
+        # compute likelihood normalization from self.cov
+        self.ndim = sum(self.target.shape)
+        if self.cov_axis is None:
             self.logdet = torch.sum(torch.log(self.cov))
-            self.ndim = sum(self.cov.shape)
+        elif self.cov_axis == 'full':
+            self.logdet = torch.slogdet(self.cov).logabsdet
         else:
-            self.icov = torch.linalg.pinv(self.cov)
-            self.logdet = torch.slogdet(self.cov)
-            self.ndim = len(self.cov)
+            self.logdet = 0
+            for i in range(self.cov.shape[2]):
+                for j in range(self.cov.shape[3]):
+                    for k in range(self.cov.shape[4]):
+                        for l in range(self.covh.shape[5]):
+                            self.logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
         self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+
+        # set icov
+        if icov is not None:
+            # use utils.push in case icov is a parameter
+            self.icov = utils.push(icov, self.device)
+        else:
+            # compute icov and set it
+            self.icov = utils.push(compute_icov(self.cov, self.cov_axis), self.device)
+
         if self.parameter:
             self.icov = torch.nn.Parameter(self.icov.detach().clone())
 
@@ -196,14 +165,12 @@ class LogGaussLikelihood(torch.nn.Module):
             is to be summed over after forming chi-square.
         """
         ## TODO: allow for kwarg dynamic cov for cosmic variance
+
         # compute residual
-        res = torch.abs(prediction - self.target)
+        res = (prediction - self.target).to(self.device)
 
         # get negative log likelihood
-        if self.sparse_cov:
-            chisq = 0.5 * torch.sum(res**2 * self.icov)
-        else:
-            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+        chisq = 0.5 * torch.sum(apply_icov(res, self.icov, self.cov_axis))
 
         return chisq + self.norm
 
@@ -220,15 +187,17 @@ class LogPrior(torch.nn.Module):
 
         Parameters
         ----------
-        model : nn.Module or optim.Sequential
-            The forward model object
-        params : list
-            List of parameter strings conforming
-            to model.named_parameters() syntax
+        model : torch.nn.Module subclass
+            THe forward model that holds all parameters
+            as attributes (i.e. model.named_parameters())
+        params : list of str
+            List of all params tensors to pull dynamically
+            from model and to evaluate their prior
         priors : dict
-            Dictionary of logprior callables
-            with keys matching params and values
-            as logprior functions.
+            Dictionary of logprior objects, with keys
+            matching syntax of params and values as callables.
+            If a prior doesn't exist for a parameter it is assumed
+            unbounded.
         """
         super().__init__()
         self.model = model
@@ -237,13 +206,12 @@ class LogPrior(torch.nn.Module):
 
     def forward(self):
         """
-        Extract current parameter values from model,
-        evaluate their logpriors and sum
+        Evaluate log priors for all params and sum.
         """
         logprior = 0
         for p in self.params:
-            param = self.model.get_parameter(p)
-            logprior += self.priors[p](param)
+            if p in self.priors:
+                logprior += self.priors[p](io.get_model_attr(self.model, p))
 
         return logprior
 
@@ -253,7 +221,7 @@ class LogPrior(torch.nn.Module):
 
 class LogProb(torch.nn.Module):
     """
-    The log probabilty density of the likelihood times the prior,
+    The negative log posterior density: the likelihood times the prior,
     which is proportional to the log posterior up to a constant.
     """
     def __init__(self, target, loglike, logprior=None):
@@ -335,12 +303,12 @@ class LogGaussPrior:
         Parameters
         ----------
         mean : tensor
-            Parameter mean tensor, matching param
+            Parameter mean tensor, matching params shape
         cov : tensor
             Parameter covariance tensor
         sparse_cov : bool, optional
             If True, cov is the diagonal of the covariance
-            else ,cov is a 2D matrix dotted into params.ravel()
+            else, cov is a 2D matrix dotted into params.ravel()
         """
         self.mean = mean
         self.cov = cov
@@ -382,8 +350,19 @@ class ParamDict:
     An object holding a dictionary of model parameters.
     """
     def __init__(self, params):
+        """
+        Parameters
+        ----------
+        params : dict
+            Dictionary of parameters with str keys
+            and tensor values
+        """
         self.params = params
+        self._setup()
+
+    def _setup(self):
         self.keys = list(self.params.keys())
+        self.devices = {k: self.params[k].device for k in self.keys}
 
     def __mul__(self, other):
         if isinstance(other, ParamDict):
@@ -493,6 +472,11 @@ class ParamDict:
         """detach object"""
         return ParamDict({k: self.params[k].detach() for k in self.keys})
 
+    def update(self, other):
+        for key in other:
+            self.__setitem__(key, other[key])
+        self._setup()
+
     def __getitem__(self, key):
         return self.params[key]
 
@@ -500,6 +484,190 @@ class ParamDict:
         self.params[key] = val
 
     def __repr__(self):
-        return self.params.__repr__()
+        return 'ParamDict\n{}'.format(self.params.__repr__())
 
+    def write_npy(self, fname, overwrite=False):
+        """
+        Write ParamDict to .npy file
+
+        Parameters
+        ----------
+        fname : str
+            Path to output .npy filename
+        overwrite : bool, optional
+            If True overwrite fname if it exists
+        """
+        if not os.path.exists(fname) or overwrite:
+            # reinstantiate with detached params
+            pd = ParamDict({k: self.params[k].detach() for k in self.keys})
+            np.savez(fname, pd)
+        else:
+            print("{} exists, not overwriting".format(fname))
+
+    @staticmethod
+    def load_npy(fname, force_cpu=False):
+        """
+        Load .npy file and return ParamDict object
+
+        Parameters
+        ----------
+        fname : str
+            .npy file to load
+        force_cpu : bool, optional
+            Force tensors onto CPU, even if they were
+            written from a GPU
+
+        Returns
+        -------
+        ParamDict object
+        """
+        # load pd, by default they are loaded into the cpu
+        pd = np.load(fname, allow_pickle=True).item()
+        if force_cpu:
+            for k in pd.keys:
+                pd.params[k] = pd.params[k].cpu()
+        pd._setup()
+
+        return pd
+
+
+def train(model, opt, Nepochs=1):
+    """
+    Train a Sequantial model
+
+    Parameters
+    ----------
+    model : optim.Sequential object
+        A sky / visibility / instrument model that ends
+        with evaluation of the negative log-posterior
+    opt : torch.nn.optimization object
+    Nepochs : int, optional
+        Number of epochs to run
+
+    Returns
+    -------
+    dict : convergence info
+    """
+    start = time.time()
+    # setup
+    train_loss = []
+
+    # iterate over epochs
+    for epoch in range(Nepochs):
+        if verbose:
+            print('Epoch {}/{}'.format(epoch, Nepochs))
+            print('-' * 10)
+
+        opt.zero_grad()
+        out = model()
+        out.backward()
+        opt.step()
+        train_loss.append(out)
+    time_elapsed = time.time() - start
+    info = dict(train_loss=train_loss, valid_loss=valid_loss, train_acc=train_acc, valid_acc=valid_acc,
+                optimizer=opt)
+
+    return info
+
+
+def apply_icov(data, icov, cov_axis):
+    """
+    Apply inverse covariance to data
+
+    .. math ::
+
+        data^{\dagger} \cdot \Sigma^{-1} \cdot data
+
+    Parameters
+    ----------
+    data : tensor
+        data tensor to apply to icov
+    icov : tensor
+        inverse covariance to apply to data
+    cov_axis : str
+        data axis over which covariance is modeled
+        [None, 'bl', 'time', 'freq', 'full']
+        See Notes
+
+    Returns
+    -------
+    tensor
+
+    Notes
+    -----
+    cov_axis : None
+        icov matches the shape of data and represents
+        the inverse of the covariance diagonal
+    cov_axis : 'full'
+        icov is 2D of shape (data.size, data.size) and
+        represents the full inv cov of data.ravel()
+    For the following, data is of shape
+    (Npol, Npol, Nbls, Ntimes, Nfreqs). See VisData for
+    more details.
+    cov_axis : 'bl'
+        icov is shape (Nbl, Nbl, Npol, Npol, Ntimes, Nfreqs)
+    cov_axis : 'time'
+        icov is shape (Ntimes, Ntimes, Npol, Npol, Nbls, Nfreqs)
+    cov_axis : 'freq'
+        icov is shape (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
+    """
+    if cov_axis is None:
+        # icov is just diagonal
+        out = data**2 * icov
+    elif cov_axis == 'full':
+        # icov is full inv cov
+        out = data.ravel().conj() @ icov @ data.ravel()
+    elif cov_axis == 'bl':
+        # icov is along bls
+        d = data.moveaxis(2, 0)
+        out = d.T.conj() @ icov @ d
+    elif cov_axis == 'time':
+        # icov is along times
+        d = data.moveaxis(3, 0)
+        out = d.T.conj() @ icov @ d
+    elif cov_axis == 'freq':
+        # icov is along freqs
+        d = data.moveaxis(4, 0)
+        out = d.T.conj() @ icov @ d
+
+    return out
+
+
+def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
+    """
+    Compute the inverse covariance
+
+    Parameters
+    ----------
+    cov : tensor
+        data covariance. See optim.apply_cov() for shapes
+    cov_axis : str
+        covariance type. See optim.apply_cov() for options
+    pinv : bool, optional
+        Use pseudo inverse, otherwise use direct inverse
+    rcond : float, optional
+        rcond kwarg for pinverse
+
+    Returns
+    -------
+    tensor
+    """
+    # set inversion function
+    inv = lambda x: torch.pinverse(x, rcond=rcond) if pinv else torch.inverse
+    if cov_axis is None:
+        # this is just diagonal
+        icov = 1 / cov
+    elif cov_axis == 'full':
+        # invert full covariance
+        icov = inv(cov)
+    else:
+        # cov is 6-dim, only invert first two dims
+        icov = torch.zeros_like(cov)
+        for i in range(cov.shape[2]):
+            for j in range(cov.shape[3]):
+                for k in range(cov.shape[4]):
+                    for l in range(cov.shape[5]):
+                        icov[:, :, i, j, k, l] = inv(cov[:, :, i, j, k, l])
+
+    return icov
 

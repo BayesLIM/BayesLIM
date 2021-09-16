@@ -100,7 +100,7 @@ class JonesModel(torch.nn.Module):
 
         Parameters
         ----------
-        V_m : tensor
+        V_m : VisData
             Model visibilities of
             shape (Npol, Npol, Nbl, Nfreq, Ntime)
         params : tensor, optional
@@ -111,12 +111,12 @@ class JonesModel(torch.nn.Module):
 
         Returns
         -------
-        V_p : tensor
+        V_p : VisData
             Predicted visibilities, having forwarded
             V_m through the Jones parameters.
         """
         # setup empty predicted visibility
-        V_p = torch.zeros_like(V_m)
+        V_p = V_m.copy()
 
         # choose fed params or attached params
         if params is None:
@@ -148,9 +148,9 @@ class JonesModel(torch.nn.Module):
                 j2 = j2 / torch.exp(1j * torch.angle(j2))
 
             if self.polmode in ['1pol', '2pol']:
-                V_p[:, :, i] = utils.diag_matmul(utils.diag_matmul(j1, V_m[:, :, i]), j2.conj())
+                V_p.data[:, :, i] = utils.diag_matmul(utils.diag_matmul(j1, V_m.data[:, :, i]), j2.conj())
             else:
-                V_p[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m[:, :, i], j2.conj())
+                V_p.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m.data[:, :, i], j2.conj())
 
         return V_p
 
@@ -328,13 +328,13 @@ class JonesResponse:
         complex antenna gains per time and frequency
         """
         # convert sparse representation to full Ntimes, Nfreqs
-        if freq_mode == 'channel':
+        if self.freq_mode == 'channel':
             pass
-        elif freq_mode == 'poly':
+        elif self.freq_mode == 'poly':
             params = params @ self.freq_A.T
-        if time_mode == 'channel':
+        if self.time_mode == 'channel':
             pass
-        elif time_mode == 'poly':
+        elif self.time_mode == 'poly':
             params = (params.transpose(-1, -2) @ self.time_A.T).transpose(-1, -1)
 
         # convert gain types to complex gains
@@ -397,7 +397,7 @@ class RedVisModel(torch.nn.Module):
 
         Parameters
         ----------
-        V_m : tensor
+        V_m : VisData
             Starting model visibilities of
             shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a unit matrix so that the
@@ -410,21 +410,21 @@ class RedVisModel(torch.nn.Module):
 
         Returns
         -------
-        V_p : tensor
+        V_p : VisData
             The predicted visibilities, having pushed V_m through
             the redundant visibility model
         """
         # setup predicted visibility
-        V_p = torch.zeros_like(V_m)
+        V_p = V_m.copy()
 
         params = self.R(self.params)
 
         # iterate through vis and apply redundant model
         for i in range(V_p.shape[2]):
             if not undo:
-                V_p[:, :, i] = V_m[:, :, i] + params[:, :, self.vis2red[i]]
+                V_p.data[:, :, i] = V_m.data[:, :, i] + params[:, :, self.vis2red[i]]
             else:
-                V_p[:, :, i] = V_m[:, :, i] - params[:, :, self.vis2red[i]]
+                V_p.data[:, :, i] = V_m.data[:, :, i] - params[:, :, self.vis2red[i]]
 
         return V_p
 
@@ -476,7 +476,7 @@ class VisModel(torch.nn.Module):
 
         Parameters
         ----------
-        V_m : tensor
+        V_m : VisData
             Starting model visibilities
             of shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a zero tensor so that the
@@ -489,12 +489,15 @@ class VisModel(torch.nn.Module):
 
         Returns
         -------
-        V_p : tensor
+        V_p : VisData
             The predicted visibilities, having pushed V_m through
             the visibility model.
         """
+        V_p = V_m.copy()
         params = self.R(self.params)
         if not undo:
-            return V_m + params
+            V_p.data = V_p.data + params
         else:
-            return V_m - params
+            V_p.data = V_p.data - params
+
+        return V_p

@@ -7,7 +7,7 @@ import warnings
 import itertools
 import copy
 
-from . import utils, beam_model, sky_model, telescope_model, rime
+from . import utils, beam_model, sky_model, telescope_model, rime_model
 from .utils import _float, _cfloat
 
 try:
@@ -153,8 +153,8 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
         ant2beam = {ant: 0 for ant in arr.ants}
 
     # setup RIME object
-    RIME = rime.RIME(sky, tele, beam, ant2beam, arr, sim_bls, times, freqs,
-                     device=sky.device)
+    RIME = rime_model.RIME(sky, tele, beam, ant2beam, arr, sim_bls, times, freqs,
+                           device=sky.device)
 
     with torch.no_grad():
         # forward model sky, beam, and fringe to get visibilities
