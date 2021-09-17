@@ -3,7 +3,7 @@ import os
 import ast
 
 # get version from __init__.py
-init_file = os.path.join('/'.join(os.path.abspath(__file__).split('/')[:-1]), 'bayeslim/__init__.py')
+init_file = os.path.join('/'.join(os.path.abspath(__file__).split('/')[:-1]), 'bayeslim/version.py')
 with open(init_file, 'r') as f:
     lines = f.readlines()
     for l in lines:
@@ -26,14 +26,14 @@ data_files = package_files('bayeslim', 'data') + package_files('bayeslim', 'conf
 
 setup(
     name            = 'bayeslim',
-    version         = version,
     license         = 'MIT',
+    version         = version,
     description     = 'Bayesian Calibration and Signal Extraction for Line Intensity Mapping',
     author          = 'Nicholas Kern',
-    url             = "http://github.com/nkern/bayeslim",
+    url             = "http://github.com/nkern/BayesLIM",
     package_data    = {'bayeslim': data_files},
     include_package_data = True,
     packages        = ['bayeslim'],
-    package_dir     = {'bayeslim': 'bayeslim'},
+    package_dir     = {'BayesLIM': 'bayeslim'},
     zip_safe        = False
     )
