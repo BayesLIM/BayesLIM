@@ -4,10 +4,10 @@ Module for torch calibration models and relevant functions
 import torch
 import numpy as np
 
-from . import utils
+from . import utils, linalg
 
 
-class JonesModel(torch.nn.Module):
+class JonesModel(utils.Module):
     """
     A generic, antenna-based, direction-independent
     Jones term, relating the model (m) visibility to the
@@ -130,7 +130,7 @@ class JonesModel(torch.nn.Module):
             invjones = torch.zeros_like(jones)
             for i in range(jones.shape[2]):
                 if self.polmode in ['1pol', '2pol']:
-                    invjones[:, :, i] = utils.diag_inv(jones[:, :, i])
+                    invjones[:, :, i] = linalg.diag_inv(jones[:, :, i])
                 else:
                     invjones[:, :, i] = torch.pinv(jones[:, :, i])
             jones = invjones
@@ -148,7 +148,7 @@ class JonesModel(torch.nn.Module):
                 j2 = j2 / torch.exp(1j * torch.angle(j2))
 
             if self.polmode in ['1pol', '2pol']:
-                V_p.data[:, :, i] = utils.diag_matmul(utils.diag_matmul(j1, V_m.data[:, :, i]), j2.conj())
+                V_p.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, V_m.data[:, :, i]), j2.conj())
             else:
                 V_p.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m.data[:, :, i], j2.conj())
 
@@ -346,7 +346,7 @@ class JonesResponse:
         return self.forward(params)
 
 
-class RedVisModel(torch.nn.Module):
+class RedVisModel(utils.Module):
     """
     Redundant visibility model (r) relating the starting
     model visibility (m) to the data visibility (d)
@@ -429,7 +429,7 @@ class RedVisModel(torch.nn.Module):
         return V_p
 
 
-class VisModel(torch.nn.Module):
+class VisModel(utils.Module):
     """
     Visibility model (v) relating the starting
     model visibility (m) to the data visibility (d)

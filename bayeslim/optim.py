@@ -69,7 +69,7 @@ class Sequential(torch.nn.Sequential):
         return inp
 
 
-class LogGaussLikelihood(torch.nn.Module):
+class LogGaussLikelihood(utils.Module):
     """
     Negative log Gaussian likelihood
 
@@ -175,7 +175,7 @@ class LogGaussLikelihood(torch.nn.Module):
         return chisq + self.norm
 
 
-class LogPrior(torch.nn.Module):
+class LogPrior(utils.Module):
     """
     Negative log prior. See LogUniformPrior and LogGaussPrior
     for examples of prior callables.
@@ -219,7 +219,7 @@ class LogPrior(torch.nn.Module):
         return self.forward()
 
 
-class LogProb(torch.nn.Module):
+class LogProb(utils.Module):
     """
     The negative log posterior density: the likelihood times the prior,
     which is proportional to the log posterior up to a constant.

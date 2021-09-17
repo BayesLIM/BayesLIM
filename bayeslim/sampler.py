@@ -349,7 +349,7 @@ class NUTS(HMC):
         return accept
 
 
-class Potential(torch.nn.Module):
+class Potential(utils.Module):
     """
     The HMC potential, holding the full forward model
     """

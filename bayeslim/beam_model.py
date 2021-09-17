@@ -14,7 +14,7 @@ from . import utils, linalg
 D2R = utils.D2R
 
 
-class PixelBeam(torch.nn.Module):
+class PixelBeam(utils.Module):
     """
     Handles antenna primary beam models,
     which relate the directional and frequency
@@ -752,7 +752,7 @@ class YlmResponse(PixelResponse):
             self.beam_cache['beam'] = utils.push(self.beam_cache['beam'], device)
 
 
-class AlmBeam(torch.nn.Module):
+class AlmBeam(utils.Module):
     """
     A beam model representation in
     spherical harmonic space.

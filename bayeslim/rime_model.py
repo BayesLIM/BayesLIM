@@ -9,7 +9,7 @@ from .utils import _float, _cfloat
 from .visdata import VisData
 
 
-class RIME(torch.nn.Module):
+class RIME(utils.Module):
     """
     Performs the sky integral component of the radio interferometric
     measurement equation (RIME) to produce the interferometric

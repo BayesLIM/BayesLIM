@@ -9,7 +9,7 @@ from . import utils, cosmology
 from .utils import _float, _cfloat
 
 
-class SkyBase(torch.nn.Module):
+class SkyBase(utils.Module):
     """
     Base class for various sky model representations
     """
@@ -635,7 +635,7 @@ class SphHarmSky(SkyBase):
         raise NotImplementedError
 
 
-class CompositeModel(torch.nn.Module):
+class CompositeModel(utils.Module):
     """
     Multiple sky models, possibly on different devices.
     To keep graph memory as small as possible, place
@@ -896,7 +896,7 @@ def stokes2linear(S):
     return B
 
 
-class PolStokesModel(torch.nn.Module):
+class PolStokesModel(utils.Module):
     """
     A model for Stokes Q, U, V parameters of a SkyBase object
 
