@@ -533,7 +533,7 @@ class ParamDict:
 
 def train(model, opt, Nepochs=1):
     """
-    Train a Sequantial model
+    Train a Sequential model
 
     Parameters
     ----------

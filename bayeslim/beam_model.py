@@ -8,7 +8,7 @@ import warnings
 from scipy import interpolate, special as scispecial
 import copy
 
-from . import utils
+from . import utils, linalg
 
 
 D2R = utils.D2R
@@ -201,10 +201,10 @@ class PixelBeam(torch.nn.Module):
         if self.polmode in ['1pol', '2pol']:
             if self.powerbeam:
                 # assume beam is baseline beam with identical antenna beams: only use beam1
-                psky = utils.diag_matmul(beam1, sky)
+                psky = linalg.diag_matmul(beam1, sky)
             else:
                 # assume antenna beams
-                psky = utils.diag_matmul(utils.diag_matmul(beam1, sky), beam2.conj())
+                psky = linalg.diag_matmul(linalg.diag_matmul(beam1, sky), beam2.conj())
         else:
             psky = torch.einsum("ab...,bc...,dc...->ad...", beam1,
                                 sky, beam2.conj())
