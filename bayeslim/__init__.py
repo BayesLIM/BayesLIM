@@ -15,9 +15,9 @@ from . import special
 from . import uvdata_interface
 from . import visdata
 from . import io
+from . import linalg
 
 from .optim import ParamDict
 from .visdata import VisData
 
-
-__version__ = "0.0.1"
+from .version import __version__
