@@ -336,10 +336,10 @@ class PixelSky(SkyBase):
 
             .. math::
 
-                B = \left(
-                    \begin{array}{cc}I + Q & U + iV \\
-                    U - iV & I - Q \end{array}
-                \right)
+                B = \\left(
+                    \\begin{array}{cc}I + Q & U + iV \\\\
+                    U - iV & I - Q \\end{array}
+                \\right)
 
             See bayeslim.sky_model.stokes2linear() for details.
         angs : tensor
@@ -558,7 +558,7 @@ class PixelSkyResponse:
         elif self.freq_mode == 'poly':
             return (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
         elif self.freq_mode == 'powerlaw':
-            return params[..., 0, :] * (self.freqs / self.freq_kwargs['f0'])**params[..., 1, :]
+            return params[..., 0:1, :] * (self.freqs[:, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
         elif self.freq_mode == 'bessel':
             out = torch.zeros(params.shape[:-2] + (self.Nfreqs,) + params.shape[-1:],
                               device=params.device, dtype=params.dtype)
@@ -717,7 +717,7 @@ class CompositeModel(utils.Module):
         self.device = device
 
 
-def read_catalogue(catfile, freqs, device=None,
+def read_catalogue(catfile, freqs=None, device=None,
                    parameter=False, freq_interp='linear'):
     """
     Read a point source catalogue YAML file.
@@ -727,11 +727,17 @@ def read_catalogue(catfile, freqs, device=None,
     ----------
     catfile : str
         Path to a YAML point source catalogue file
-    freqs : tensor
+    freqs : tensor, optional
         Frequencies to evaluate model [Hz].
         If catalogue is 'channel' along the frequency
         axis, then it is interpolated with freq_interp
-        onto freqs bins.
+        onto freqs bins. Required for powerlaw model.
+    device : str, optional
+        Device to transport model to
+    parameter : bool, optional
+        Make params a Parameter object
+    freq_interp : str, optional
+        Kind of frequency interpolation if necessary
 
     Returns
     -------
@@ -758,11 +764,15 @@ def read_catalogue(catfile, freqs, device=None,
         S = np.array([sources['freq{}'.format(i)] for i in range(len(d['freqs']))])
 
         # interpolate onto freqs
-        interp = interpolate.interp1d(d['freqs'], S, kind=freq_interp, axis=0,
-                                      fill_value='extrapolate')
-        params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, :]
+        if freqs is not None:
+            interp = interpolate.interp1d(d['freqs'], S, kind=freq_interp, axis=0,
+                                          fill_value='extrapolate')
+            params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, :]
+        else:
+            freqs = d['freqs']
 
     elif d['freq_mode'] == 'powerlaw':
+        assert freqs is not None
         # ensure frequencies are float
         d['mode_kwargs']['f0'] = float(d['mode_kwargs']['f0'])
 

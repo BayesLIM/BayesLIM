@@ -10,6 +10,7 @@ from scipy.interpolate import interp1d
 import copy
 import warnings
 import os
+from astropy import constants
 
 from . import special, version
 
@@ -816,7 +817,7 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True):
 
     .. math::
 
-        a0 * x^0 + a1 * x^1 + a2 * x^2 + ...
+        y = Ax = a_0 * x^0 + a_1 * x^1 + a_2 * x^2 + \ldots
 
     Parameters
     ----------
@@ -1290,17 +1291,6 @@ class PixInterp:
             raise ValueError("didnt recognize interp_mode")
 
 
-class Module(torch.nn.Module):
-    """
-    A shallow wrapper around torch.nn.Module, with added
-    metadata for versioning
-    """
-    def __init__(self):
-        super().__init__()
-        # add bayeslim version
-        self._version = version.__version__
-
-
 def freq_interp(params, param_freqs, freqs, kind, axis,
                 fill_value='extrapolate'):
     """
@@ -1351,6 +1341,142 @@ def freq_interp(params, param_freqs, freqs, kind, axis,
 #################################
 ######### Miscellaneous #########
 #################################
+
+class Module(torch.nn.Module):
+    """
+    A shallow wrapper around torch.nn.Module, with added
+    metadata for versioning
+    """
+    def __init__(self):
+        super().__init__()
+        # add bayeslim version
+        self.__version__ = version.__version__
+
+    def __getitem__(self, name):
+        return get_model_attr(self, name)
+
+    def __setitem__(self, name, value):
+        with torch.no_grad():
+            set_model_attr(self, name, value)
+
+    def __delitem__(self, name):
+        del_model_attr(self, name)
+
+    def update(self, d):
+        """
+        Set model attributes from dictionary d
+
+        Parameters
+        ----------
+        d : dict or ParamDict
+            dictionary of values to assign
+            to model
+        """
+        for key, val in d.items():
+            # uses __setitem__ for no_grad context
+            self[key] = val
+
+    def unset_param(self, name):
+        """
+        Unset a Parameter tensor "name"
+        as a non-Parameter
+        """
+        param = self[name].detach()
+        del self[name]
+        self[name] = param
+
+    def set_param(self, name):
+        """
+        Set tensor "name" as a Parameter
+        """
+        param = self[name]
+        if not isinstance(param, torch.nn.Parameter):
+            self[name] = torch.nn.Parameter(param)
+
+
+def get_model_attr(model, name):
+    """
+    Get attr model.mod1.mod2.params
+    """
+    if isinstance(name, str):
+        name = name.split('.')
+    attr = getattr(model, name[0])
+    if len(name) == 1:
+        return attr
+    else:
+        return get_model_attr(attr, '.'.join(name[1:]))
+
+
+def set_model_attr(model, name, value):
+    """
+    Set name "model.mod1.mod2.params"
+
+    If name is a torch.nn.Parameter, cast
+    value as Parameter before setting.
+    """
+    with torch.no_grad():
+        if isinstance(name, str):
+            name = name.split('.')
+        if len(name) == 1:
+            device = None
+            parameter = False
+            if hasattr(model, name[0]):
+                device = getattr(model, name[0]).device
+                parameter = isinstance(getattr(model, name[0]), torch.nn.Parameter)
+            value = value.to(device)
+            if parameter:
+                value = torch.nn.Parameter(value)
+            setattr(model, name[0], value)
+        else:
+            set_model_attr(get_model_attr(model, '.'.join(name[:-1])),
+                           name[-1], value)
+
+
+def del_model_attr(model, name):
+    """
+    Delete name='mod1.mod2.params'
+    from model.mod1.mod2.params
+    """
+    if isinstance(name, str):
+        name = name.split('.')
+    if len(name) > 1:
+        model = get_model_attr(model, '.'.join(name[:-1]))
+        name = name[-1:]
+    delattr(model, name[0])
+
+
+def Jy_to_KStr(freqs):
+    """
+    Compute conversion from Jy to Kelvin-Str [K Str / Jy]
+
+    Parameters
+    ----------
+    freqs : tensor
+        Frequencies [Hz]
+
+    Returns
+    -------
+    tensor
+    """
+    return 1e-26 * (constants.c.value / freqs)**2 / (2 * constants.k_B.value)
+
+
+def white_noise(*args):
+    """
+    Generate complex white Gaussian noise
+    with unit variance
+
+    Parameters
+    ----------
+    shape : shape of tensor
+
+    Returns
+    -------
+    tensor
+    """
+    n = torch.randn(*args) + 1j * torch.randn(*args)
+    return n / np.sqrt(2)
+
 
 def ang_hash(zen):
     """
@@ -1486,3 +1612,8 @@ def _make_hex(N, D=15):
     x = np.array(x) - np.mean(x)
     y = np.array(y) - np.mean(y)
     return ants, np.vstack([x, y, np.zeros_like(x)]).T * D
+
+
+class SimpleIndex:
+    def __getitem__(self, k):
+        return 0

@@ -38,7 +38,7 @@ class PixelBeam(utils.Module):
     at boresight. Also, a single beam can be used for all
     antennas, or one can fit for per-antenna models.
     """
-    def __init__(self, params, freqs, response=None,
+    def __init__(self, params, freqs, ant2beam=None, response=None,
                  response_args=(), response_kwargs={},
                  parameter=True, polmode='1pol', pol=None,
                  powerbeam=True, fov=180):
@@ -57,8 +57,15 @@ class PixelBeam(utils.Module):
             to Npix via R(params), or feed a list of tensors (e.g. GaussResponse).
         freqs : tensor
             Observational frequency bins [Hz]
-        response : response object, optional
-            Beam response class to instantiate, which
+        ant2beam : dict
+            Dict of integers that map a antenna number to a particular
+            index in the beam model output from beam.
+            E.g. {10: 0, 11: 0, 12: 0} for 3-antennas [10, 11, 12] with
+            1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
+            [10, 11, 12] with different 3 beam models.
+            Default is all ants map to index 0.
+        response : PixelResponse class, optional
+            A PixelResponse class to instantiate with params, which
             maps the input params to the output beam.
             The instantiated object has a __call__ signature
             that takes (zen [deg], az [deg], freqs [Hz])
@@ -68,6 +75,7 @@ class PixelBeam(utils.Module):
             the Response function with the same pointer.
         response_args : tuple, optional
             arguments for instantiating response object
+            after passing params as first argument
         response_kwargs : tuple, optional
             Keyword arguments for instantiating response object
         parameter : bool, optional
@@ -117,6 +125,10 @@ class PixelBeam(utils.Module):
         if self.polmode == '1pol':
             assert self.pol is not None, "must specify pol for 1pol mode"
             assert self.pol.lower() in ['ee', 'nn'], "must be 'ee' or 'nn'"
+        if ant2beam is None:
+            assert params.shape[2] == 1, "only 1 model for default ant2beam"
+            self.ant2beam = utils.SimpleIndex()
+
         # construct _args for str repr
         self._args = dict(powerbeam=powerbeam, fov=fov, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
@@ -427,8 +439,8 @@ class GaussResponse:
         Parameters
         ----------
         params : tensor
-            Tensor of shape (2, Npol, Npol, Nmodel, Nfreqs). The tensors are
-            the Gaussian sigma in EW and NS sky directions, respectively (0th axis),
+            Tensor of shape (Npol, Npol, Nmodel, Nfreqs, 2). The tensors are
+            the Gaussian sigma in EW and NS sky directions, respectively (last axis),
             with units of the dimensionless image-plane l & m (azimuth sines & cosines).
         freqs : tensor
             frequency array of params [Hz]
@@ -437,8 +449,9 @@ class GaussResponse:
         self.freqs = freqs
         self.device = self.params.device
         self.freq_mode = 'channel'
-        self.freq_ax = 4
-        assert self.params.shape[4] == len(self.freqs)
+        self.freq_ax = 3
+        # assert params is broadcastable across freqs
+        assert self.params.shape[self.freq_ax] in [len(self.freqs), 1]
 
     def _setup(self):
         pass
@@ -450,7 +463,7 @@ class GaussResponse:
         srad[zen_rad > np.pi/2] = 1.0  # ensure sine_zen doesn't wrap around back to zero below horizon
         l = torch.as_tensor(srad * np.sin(az_rad), device=self.device)
         m = torch.as_tensor(srad * np.cos(az_rad), device=self.device)
-        beam = torch.exp(-0.5 * ((l / self.params[0][..., None])**2 + (m / self.params[1][..., None])**2))
+        beam = torch.exp(-0.5 * ((l / self.params[..., 0:1])**2 + (m / self.params[..., 1:2])**2))
         return beam
   
     def push(self, device):

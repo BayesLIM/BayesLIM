@@ -4,7 +4,7 @@ Radio Interferometric Measurement Equation (RIME) module
 import torch
 import numpy as np
 
-from . import telescope_model, calibration, beam_model, sky_model, utils
+from . import telescope_model, calibration, beam_model, sky_model, utils, io
 from .utils import _float, _cfloat
 from .visdata import VisData
 
@@ -35,7 +35,7 @@ class RIME(utils.Module):
     For the case of Npol = 1, then only a single
     element from the diagonal is used.
     """
-    def __init__(self, sky, telescope, beam, ant2beam, array, sim_bls,
+    def __init__(self, sky, telescope, beam, array, sim_bls,
                  times, freqs, data_bls=None, device=None):
         """
         RIME object. Takes a model
@@ -58,12 +58,6 @@ class RIME(utils.Module):
         beam : BeamModel object, optional
             A model of the directional and frequency response of the
             antenna primary beam. Default is a tophat response.
-        ant2beam : dict
-            Dict of integers that map each antenna number in array.ants
-            to a particular index in the beam model output from beam.
-            E.g. {10: 0, 11: 0, 12: 0} for 3-antennas [10, 11, 12] with
-            1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
-            [10, 11, 12] with different 3 beam models.
         array : ArrayModel object
             A model of the telescope location and antenna positions
         sim_bls : list of 2-tuples
@@ -90,7 +84,6 @@ class RIME(utils.Module):
         self.sky = sky
         self.telescope = telescope
         self.beam = beam
-        self.ant2beam = ant2beam
         self.array = array
         self.times = times
         self.Ntimes = len(times)
@@ -124,6 +117,13 @@ class RIME(utils.Module):
             is a parameter. Also note that redundant baselines
             must be ordered next to each other in data_bls.
         """
+        for i, bl in enumerate(sim_bls):
+            if not isinstance(bl, tuple):
+                sim_bls[i] = tuple(bl)
+        if data_bls is not None:
+            for i, bl in enumerate(data_bls):
+                if not isinstance(bl, tuple):
+                    data_bls[i] = tuple(bl)
         self.sim_bls = sim_bls
         self.Nbls = len(self.sim_bls)
         self.data_bls = None if self.array.parameter else data_bls
@@ -207,23 +207,23 @@ class RIME(utils.Module):
                 # iterate over baselines
                 for k, bl in enumerate(self.sim_bls):
                     bl_slice = self._bl2vis[bl]
-                    self._prod_and_sum(self.beam, ant_beams, cut_sky, bl[0], bl[1],
+                    self._prod_and_sum(ant_beams, cut_sky, bl[0], bl[1],
                                        kind, zen, az, vis, bl_slice, j)
 
-        history = utils.get_model_description(self)[0]
+        history = io.get_model_description(self)[0]
         vd.setup_telescope(self.telescope, self.array)
         vd.setup_data(self.sim_bls, self.times, self.freqs, pol=self.beam.pol,
                       data=vis, flags=None, cov=None, history=history)
         return vd
 
-    def _prod_and_sum(self, beam, ant_beams, cut_sky, ant1, ant2,
+    def _prod_and_sum(self, ant_beams, cut_sky, ant1, ant2,
                       kind, zen, az, vis, bl_slice, obs_ind):
         """
         Sky product and sum into vis inplace
         """
         # get beam of each antenna
-        beam1 = ant_beams[:, :, self.ant2beam[ant1]]
-        beam2 = ant_beams[:, :, self.ant2beam[ant2]]
+        beam1 = ant_beams[:, :, self.beam.ant2beam[ant1]]
+        beam2 = ant_beams[:, :, self.beam.ant2beam[ant2]]
 
         # generate fringe
         fringe = self.array.gen_fringe((ant1, ant2), zen, az)
@@ -235,10 +235,10 @@ class RIME(utils.Module):
             # first apply fringe to beam1
             beam1 = self.array.apply_fringe(fringe, beam1, kind)
             # then apply beam-weighted fringe to sky
-            psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
+            psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
         else:
             # first apply beam to sky
-            psky = beam.apply_beam(beam1, cut_sky, beam2=beam2)
+            psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
             # then apply fringe to beam-weighted sky
             psky = self.array.apply_fringe(fringe, psky, kind)
 

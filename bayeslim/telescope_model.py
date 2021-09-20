@@ -3,8 +3,9 @@ Module for instrument models and relevant functions
 """
 import torch
 import numpy as np
-from astropy import units, time, constants
+from astropy import units, constants
 from astropy.coordinates import AltAz, EarthLocation, ICRS
+from astropy.time import Time
 from scipy import special
 import copy
 import itertools
@@ -444,7 +445,7 @@ def eq2top(location, time, ra, dec):
         ra = ra.detach().numpy()
     if isinstance(dec, torch.Tensor):
         dec = dec.detach().numpy()
-    altaz = AltAz(location=location, obstime=time.Time(time, format='jd'))
+    altaz = AltAz(location=location, obstime=Time(time, format='jd'))
     icrs = ICRS(ra=ra * units.deg, dec=dec * units.deg)
     out = icrs.transform_to(altaz)
 
@@ -476,7 +477,7 @@ def top2eq(location, time, alt, az):
         alt = alt.detach().numpy()
     if isinstance(az, torch.Tensor):
         az = az.detach().numpy()
-    altaz = AltAz(location=location, obstime=time.Time(time, format='jd'),
+    altaz = AltAz(location=location, obstime=Time(time, format='jd'),
                   alt=alt * units.deg, az=az * units.deg)
     icrs = ICRS()
     out = altaz.transform_to(icrs)

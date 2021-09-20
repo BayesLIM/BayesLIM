@@ -115,52 +115,33 @@ def load_model(fname, pdict=None):
     model : torch.Module subclass object
     """
     # load the model
-    model = np.load(fname, allow_pickle=True).item()
+    model = np.load(fname, allow_pickle=True)
+    if isinstance(model, np.ndarray):
+        if model.dtype == np.object_:
+            model = model.item()
 
     # load pdict
     if pdict is not None:
         if isinstance(pdict, str):
             pdict = optim.ParamDict.load_npy(pdict)
-        # iterate over keys in pdict and fill model
-        for key in pdict:
-            set_model_attr(model, key, pdict[key])
+        update_model_pdict(model, pdict)
 
     return model
 
 
-def get_model_attr(model, name):
+def update_model_pdict(model, pdict):
     """
-    Get attr model.mod1.mod2.params
-    """
-    if isinstance(name, str):
-        name = name.split('.')
-    attr = getattr(model, name[0])
-    if len(name) == 1:
-        return attr
-    else:
-        return get_model_attr(attr, '.'.join(name[1:]))
+    Update model parameters with pdict
+    values inplace.
 
-
-def set_model_attr(model, name, value, inplace=True):
+    Parameters
+    ----------
+    model : utils.Module subclass
+    pdict : ParamDict
     """
-    Set name "model.mod1.mod2.params"
-
-    If name is a torch.nn.Parameter, cast
-    value as Parameter before setting.
-    If inplace, will try to update name inplace,
-    i.e. keeps the same memory address.
-    """
-    if isinstance(name, str):
-        name = name.split('.')
-    if len(name) == 1:
-        attr = getattr(model, name[0], None)
-        value = value.to(attr.device)
-        if isinstance(attr, torch.nn.Parameter):
-            value = torch.nn.Parameter(value)
-        setattr(model, name[0], value)
-    else:
-        set_model_attr(get_model_attr(model, '.'.join(name[:-1])),
-                    name[-1], value, inplace=inplace)
+    # iterate over keys in pdict and fill model
+    for key in pdict:
+        utils.set_model_attr(model, key, pdict[key])
 
 
 def del_model_attr(model, name):
@@ -172,218 +153,334 @@ def del_model_attr(model, name):
     if len(name) == 1:
         delattr(model, name[0])
     else:
-        delattr(get_model_attr(model, name[:-1]), name[-1])
+        delattr(utils.get_model_attr(model, name[:-1]), name[-1])
 
 
-def build_sky(sky, freqs=None):
+def build_sky(modfile=None,
+              catfile=None, parameter=False, freq_interp='linear'):
     """
-    Build a sky model
+    Build a sky model. A few different methods
+    for doing this are provided.
 
     Parameters
     ----------
-    sky : str or dict
-        Sky model .npy filepath or
-        a dict
-    kwargs : additional kwargs for certain modes
+    modfile : str or dict, optional
+        Filepath to a sky model saved as .npy. Multiple
+        sky models are passed as a dict with keys being
+        the name assigned to the model, and values as their
+        modfile path. They are then composed as a CompositeModel.
+        This takes first precedence over all other kwargs.
+    catfile : str, optional
+        Filepath(s) to a catalogue .yaml file.
+        This takes second precedence over all other kwargs.
+    parameter : bool, optional
+        Used if feeding catfile or params
+        Make the params tensor a Parameter object
+    freq_interp : str, optional
+        Kind of frequency interpolation on catalogue
+
+    Returns
+    -------
+    SkyBase or CompositeModel object
     """
-    if isinstance(sky, str):
-        # load sky
-        sky = load_model(sky)
-    elif isinstance(sky, dict):
-        raise NotImplementedError
-        # build sky
+    # model files
+    if modfile is not None:
+        if isinstance(modfile, str):
+            return load_model(modfile)
+        elif isinstance(modfile, dict):
+            models = {mod: load_model(modfile[mod]) for mod in modfile}
+        return sky_model.CompositeModel(models)
+
+    # catalogue files
+    if catfile is not None:
+        if isinstance(catfile, str):
+            return sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
+                                            parameter=parameter)
         models = {}
-        for name in sky:
-            mod = sky[name]
-            if isinstance(mod, str):
-                models[name] = load_model(mod)
-                continue
-            elif isinstance(mod, dict):
-                if 'catfile' in mod:
-                    models[name] = sky_model.read_catalogue(mod['catfile'], freqs,
-                                                            device=mod['device'],
-                                                            parameter=mod['parameter'],
-                                                            freq_interp=mod['freq_interp'])
-                    continue
-                # load params
-                p = np.load(mod['params']).item()
-                params, angs = p['params'], p['angs']
-                params = torch.tensor(params, device=mod['device'], dtype=_float())
-                angs = torch.tensor(angs, device=mod['device'], dtype=_float())
-                if mod['parameter']:
-                    params = torch.nn.Parameter(params)
-                models[name] = getattr(sky_model, mod['sky_type'])(params, angs, freqs)
-        sky = sky_model.CompositeModel(models)
+        for cat in catfile:
+            name = os.path.basename(cat).split('.')[0]
+            models[name] = sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
+                                                    parameter=parameter)
+        return sky_model.CompositeModel(models)
 
-    return sky
 
-def build_beam(beam):
+def build_beam(modfile=None):
     """
     Build a beam model
 
     Parameters
     ----------
-    beam : str or dict
-        Beam model .npy filepath or
-        a dict
+    modfile : str, optional
+        Filepath to a .npy beam model
+
+    Returns
+    -------
+    PixelBeam
+        beam model
     """
-    ant2beam = None
-    if isinstance(beam, str):
-        beam = load_model(beam)
-    elif isinstance(beam, dict):        
-        raise NotImplementedError
-        ant2beam = beam['ant2beam']
-        if isinstance(ant2beam, str):
-            ant2beam = np.load(ant2beam, allow_pickle=True).item()
+    if isinstance(modfile, str):
+        beam = load_model(modfile)
 
-    return beam, ant2beam
+    ### TODO: add more support for manual beams
 
-def build_telescope(telescope):
+    return beam
+
+
+def build_telescope(modfile=None, location=None, device=None):
     """
     Build a telescope model
 
     Parameters
     ----------
-    telescope : str or dict
-        Telescope model .npy filepath or
-        a dict
+    modfile : str, optional
+        Filepath to a .npy telescope model.
+        This takes precedence over other kwargs.
+    location : tuple
+        (lon, lat, alt) in [deg, deg, m]
+
     """
-    if isinstance(telescope, str):
-        telescope = load_model(telescope)
-    elif isinstance(telescope, dict):
-        raise NotImplementedError
-        telescope = telescope_model.TelescopeModel(telescope['location'],
-                                                   telescope['device'])
+    if isinstance(modfile, str):
+        return load_model(modfile)
+
+    if location is not None:
+        telescope = telescope_model.TelescopeModel(location, device=device)
 
     return telescope
 
-def build_array(array):
+
+def build_array(modfile=None, antpos=None, freqs=None, device=None,
+                parameter=False, cache_f=False, cache_f_angs=None,
+                interp_mode='bilinear', redtol=0.1):
     """
     Build an array model
 
     Parameters
     ----------
-    array : str or dict
-        Array model .npy filepath or
-        a dict
+    modfile : str, optional
+        Filepath to ArrayModel .npy file.
+        This takes precedence over other kwargs.
+    antpos : dict, optional
+        Dictionary of antenna number keys,
+        ENU antpos vectors [meter] values.
+        Remaining kwargs are for building an ArrayModel
+        from antpos.
+    freqs : tensor, optional
+        Frequency array [Hz]
+    device : str, optional
+        Device for model
+    parameter : bool, optional
+        Cast antpos as a Parameter
+    cache_f : bool, optional
+        If True, cache fringe response
+    cache_f_angs : tensor, optional
+        Sky angles to evaluate and cache fringe
+    interp_mode : str, optional
+        Interpolation kind for fringe caching
+    redtol : float, optional
+        Baseline redundnacy tolerance [m]
     """
-    if isinstance(array, str):
-        array = load_model(array)
-    elif isinstance(array, dict):
-        raise NotImplementedError
-        if isinstance(array['antpos'], str):
-            # ENU antpos dictionary
-            array['antpos'] = np.load(array['antpos'], allow_pickle=True).item()
-        if isinstance(array['cache_f_angs'], str):
-            array['cache_f_angs'] = toch.tensor(np.load(array['cache_f_angs']), dtype=_float())
-        array = telescope_model.ArrayModel(array['antpos'], freqs, parameter=array['parameter'],
-                                           device=array['device'], cache_s=array['cache_s'],
-                                           cache_f=array['cache_f'], cache_f_angs=array['cache_f_angs'],
-                                           interp_mode=array['nearest'], redtol=array['redtol'])
+    if isinstance(modfile, str):
+        return load_model(modfile)
+
+    if isinstance(antpos, str):
+        antpos = load_model(antpos)
+
+    if isinstance(freqs, str):
+        freqs = torch.tensor(np.load(freqs))
+
+    if isinstance(cache_f_angs, str):
+        cache_f_angs = toch.tensor(np.load(cache_f_angs))
+
+    array = telescope_model.ArrayModel(antpos, freqs, parameter=parameter,
+                                       device=device, cache_f=cache_f,
+                                       cache_f_angs=cache_f_angs,
+                                       interp_mode=interp_mode, redtol=redtol)
+
     return array
 
-def build_rime(mdict):
+
+def build_rime(modfile=None, sky=None, beam=None, array=None,
+               telescope=None, times=None, freqs=None, sim_bls=None,
+               data_bls=None, device=None, pdict=None):
     """
     Build a RIME forward model object,
-    See configs/rime_setup.yaml for an example.
 
     Parameters
     ----------
-    mdict : dict
-        model setup dictionary
+    modfile : str, optional
+        Filepath to .npy RIME object.
+        This takes precedence over other kwargs.
+    sky : SkyBase, str or dict, optional
+        Sky model to use, load, or build
+    beam : PixelBeam, str or dict, optional
+        Beam model to use, load or build
+    array : ArrayModel, str, or dict, optional
+        array model to use
+    telesocpe : TelescopeModel, str, or dict, optional
+        telescope model
+    times : tensor or str, optional
+        Observation times (julian date)
+    freqs : tensor or str, optional
+        Frequency bins [Hz]
+    sim_bls ; list or str, optional
+        Baseline (ant-pair tuples) to simulate
+    data_bls : list or str, optional
+        Baselines of the visibility, including redundancies
+    device : str, optional
+        Device of object
+    pdict : ParamDict or str, optional
+        parameter dictionary to update model
 
     Returns
     -------
     RIME object
     """
-    if isinstance(mdict, torch.nn.Module):
-        return mdict
-
-    # load yaml
-    if isinstance(mdict, str):
-        import yaml
-        with open(mdict) as f:
-            mdict = yaml.load(f, Loader=yaml.FullLoader)
+    if isinstance(modfile, str):
+        return load_model(modfile)
 
     # setup basics
-    times = mdict['times']
     if isinstance(times, str):
         times = np.load(times)
     elif isinstance(times, list):
         times = np.array(times)
 
-    freqs = mdict['freqs']
     if isinstance(freqs, str):
-        freqs = np.load(freqs)
-    elif isinstance(freqs, list):
-        freqs = torch.tensor(freqs, dtype=_float())
+        freqs = torch.tensor(np.load(freqs))
+    elif isinstance(freqs, (list, np.ndarray)):
+        freqs = torch.tensor(freqs)
 
-    sim_bls = mdict['sim_bls']
     if isinstance(sim_bls, str):
         sim_bls = [tuple(bl) for bl in np.load(sim_bls).tolist()]
-    elif isinstance(sim_bls, list):
+    elif isinstance(sim_bls, (list, np.ndarray)):
         sim_bls = [tuple(bl) for bl in sim_bls]
 
-    data_bls = mdict['data_bls']
     if isinstance(data_bls, str):
         data_bls = [tuple(bl) for bl in np.load(data_bls).tolist()]
-    elif isinstance(data_bls, list):
+    elif isinstance(data_bls, (list, np.ndarray)):
         data_bls = [tuple(bl) for bl in data_bls]
 
-    # build components
-    sky = build_sky(mdict['sky'], freqs=freqs)
-    telescope = build_telescope(mdict['telescope'])
-    array = build_array(mdict['array'], freqs=freqs)
-    beam, ant2beam = build_beam(mdict['beam'])
-    if ant2beam is None:
-        ant2beam = {ant: 0 for ant in array.ants}
+    # build sky
+    if isinstance(sky, sky_model.SkyBase):
+        pass
+    else:
+        if isinstance(sky, str):
+            sky = dict(modfile=sky)
+        sky = build_sky(**sky)
+
+    # build beam
+    if isinstance(beam, beam_model.PixelBeam):
+        pass
+    else:
+        if isinstance(beam, str):
+            beam = dict(modfile=beam)
+        beam = build_beam(**beam)
+
+    # build array
+    if isinstance(array, telescope_model.ArrayModel):
+        pass
+    else:
+        if isinstance(array, str):
+            array = dict(modfile=array)
+        array = build_array(**array)
+
+    # build telescope
+    if isinstance(telescope, telescope_model.TelescopeModel):
+        pass
+    else:
+        if isinstance(telescope, str):
+            telescope = dict(modfile=telescope)
+        telescope = build_telescope(**telescope)
 
     # instantiate
-    rime = rime_model.RIME(sky, telescope, beam, ant2beam, array, sim_bls,
+    rime = rime_model.RIME(sky, telescope, beam, array, sim_bls,
                            times, freqs, data_bls=data_bls, device=device)
 
     # update parameters if desired
-    if isinstance(mdict['pdict'], str):
-        mdict['pdict'] = optim.ParamDict.load_npy(mdict['pdict'])
-    if isinstance(mdict['pdict'], optim.ParamDict):
-        for key, val in mdict['pdict'].items():
-            set_model_attr(rime, key, val)
+    if pdict is not None:
+        if isinstance(pdict, str):
+            pdict = optim.ParamDict.load_npy(pdict)
+        if isinstance(pdict, optim.ParamDict):
+            for key, val in pdict.items():
+                utils.set_model_attr(rime, key, val)
 
     return rime
 
-def build_sequential_model(mdict):
+
+def build_calibration(modfile=None):
+    """
+    Build a Jones model
+
+    Parameters
+    ----------
+    modfile : str, optional
+        Filepath to a .npy JonesModel
+    """
+    ## TODO: add more support for manual calibration setup
+
+    return load_model(modfile)
+
+
+def build_sequential(modfile=None, order=None, kind=None, mdict=None):
     """
     Build a optim.Sequential forward model.
     See configs/model_setup.yaml for an example
 
     Parameters
     ----------
-    mdict : dict
-        Model build dictionary
+    modfile : str, optional
+        Filepath to .npy Sequential model
+    order : list, optional
+        List of module block names in models dict
+        in order of evaluation
+    kind : list, optional
+        List of model types for each model in order.
+        Can be one of ['sky', 'beam', 'telescope', 'array', 'rime',
+        'calibration', 'sequential']
+    mdict : dict, optional
+        Holds model build dictionaries as values for each
+        key in order
 
     Returns
     -------
     optim.Sequential object
     """
-    if isinstance(mdict, str):
-        import yaml
-        with open(mdict) as f:
-            mdict = yaml.load(f, Loader=yaml.FullLoader)
+    if isinstance(modfile, str):
+        return load_model(modfile)
 
-    # get order
-    order = mdict['order']
+    models = {}
+    for mod, k in zip(order, kind):
+        if k == 'sky':
+            models[mod] = build_sky(**mdict[mod])
+        elif k == 'beam':
+            models[mod] = build_beam(**mdict[mod])
+        elif k == 'telescope':
+            models[mod] = build_telescope(**mdict[mod])
+        elif k == 'array':
+            models[mod] = build_array(**mdict[mod])
+        elif k == 'rime':
+            models[mod] = build_rime(**mdict[mod])
+        elif k == 'calibration':
+            models[mod] = build_calibration(**mdict[mod])
+        elif k == 'sequential':
+            models[mod] = build_sequential(**mdict[mod])
 
-    # get model
-    model = {}
-    for block in order:
-        model[block] = load_model(mdict[block])
+    return optim.Sequential(models)
 
-    # get possible starting point
-    start = mdict['starting_input']
-    if isinstance(start, str):
-        start = np.load(start)
-        if isinstance(start, np.ndarray) and start.dtype == np.object_:
-            start = start.item()
 
-    return optim.Sequential(model, starting_input=start)
+def load_yaml(yfile):
+    """
+    Load yaml dict
 
+    Parameters
+    ----------
+    yfile : str
+
+    Returns
+    -------
+    dict
+    """
+    import yaml
+    with open(yfile) as f:
+        out = yaml.load(f, Loader=yaml.FullLoader)
+
+    return out

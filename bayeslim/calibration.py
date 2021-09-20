@@ -78,11 +78,12 @@ class JonesModel(utils.Module):
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
-            # dummy function eval
+            # default response
             R = JonesResponse()
         self.R = R
         self.polmode = polmode
         self.ants = ants
+        bls = [tuple(bl) for bl in bls]
         self.bls = bls
         if not single_ant:
             self._vis2ants = {bl: (ants.index(bl[0]), ants.index(bl[1])) for bl in bls}
@@ -296,8 +297,8 @@ class JonesResponse:
             return torch.exp(2j * np.pi * params * self.freqs / 1e9)
 
         elif self.gain_type == 'amp':
-            # assume params are gain amplitude
-            return torch.exp(params) + 0j
+            # assume params are gain amplitude: not exp(amp)!
+            return params + 0j
 
         elif self.gain_type == 'phs':
             return torch.exp(1j * params)
@@ -335,7 +336,7 @@ class JonesResponse:
         if self.time_mode == 'channel':
             pass
         elif self.time_mode == 'poly':
-            params = (params.transpose(-1, -2) @ self.time_A.T).transpose(-1, -1)
+            params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
 
         # convert gain types to complex gains
         params = self.param2gain(params)

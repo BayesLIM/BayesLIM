@@ -4,14 +4,19 @@ Optimization module
 import numpy as np
 import torch
 import os
+from collections import OrderedDict
+import time
 
 from . import utils, io
 
 
-class Sequential(torch.nn.Sequential):
+class Sequential(utils.Module):
     """
-    A shallow wrapper around torch.nn.Sequential.
-    The forward call takes a parameter dictionary as
+    A minimal mirror of torch.nn.Sequential without the
+    iterators, such that it can be converted to an object array
+    without splitting its submodules (needed for .npy IO with pickle)
+
+    Instantiation takes a parameter dictionary as
     input and updates model before evaluation. e.g.
 
     .. code-block:: python
@@ -23,32 +28,29 @@ class Sequential(torch.nn.Sequential):
     Note that the keys of the parameter dictionary
     must conform to nn.Module.named_parameters() syntax.
     """
-    def __init__(self, models, starting_input=None):
+    def __init__(self, models):
         """
         Parameters
         ----------
         models : OrderedDict
             Models to evaluate in sequential order.
-        starting_input : tensor, optional
-            If the first model in the sequence needs
-            an input, specify it here.
         """
-        super().__init__(models)
-        self.starting_input = starting_input
+        super().__init__()
+        # get ordered list of model names
+        self._models = list(models)
+        # assign models as sub modules
+        for name, model in models.items():
+            self.add_module(name, model)
 
-    def __getitem__(self, name):
-        return io.get_model_attr(self, name)
-
-    def __setitem__(self, name, value):
-        io.set_model_attr(self, name, value)
-
-    def forward(self, pdict=None):
+    def forward(self, inp=None, pdict=None):
         """
         Evaluate model in sequential order,
         optionally updating all parameters beforehand
 
         Parameters
         ----------
+        inp : tensor or VisData
+            optional input to first model
         pdict : ParamDict
             Parameter dictionary with keys
             conforming to nn.Module.get_parameter
@@ -61,16 +63,193 @@ class Sequential(torch.nn.Sequential):
                 is_parameter = isinstance(param, torch.nn.Parameter)
                 self[k] = utils.push(pdict[k], param.device, is_parameter)
 
-        # evaluate models
-        inp = self.starting_input
-        for i, model in enumerate(self):
-            inp = model(inp)
-
+        for name in self._models:
+            inp = self.get_submodule(name)(inp)
         return inp
 
 
-class LogGaussLikelihood(utils.Module):
+class LogUniformPrior:
     """
+    log uniform prior
+    """
+    def __init__(self, lower_bound, upper_bound, index=None):
+        """
+        Parameters
+        ----------
+        lower_bound, upper_bound : tensors
+            Tensors holding the min and max of the allowed
+            parameter value. Tensors should broadcast with
+            the (indexed) params input
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        """
+        self.lower_bound = torch.as_tensor(lower_bound)
+        self.upper_bound = torch.as_tensor(upper_bound)
+        self.norm = torch.sum(torch.log(1/(self.upper_bound - self.lower_bound)))
+        self.index = index
+
+    def forward(self, params):
+        """
+        Evalute uniform logprior on a parameter tensor.
+
+        Parameters
+        ----------
+        params : tensor
+            Parameter tensor to evaluate prior on.
+        """
+        # index input params tensor if necessary
+        if self.index is not None:
+            params = params[self.index]
+
+        # out of bounds if sign of residual is equal
+        lower_sign = torch.sign(self.lower_bound - params)
+        upper_sign = torch.sign(self.upper_bound - params)
+
+        # aka if sum(abs(sign)) == 2
+        out_of_bounds = torch.abs(lower_sign + upper_sign) == 2
+
+        # the returns below are awkward b/c we need to
+        # preserve the output's graph connection to params
+        if out_of_bounds.any():
+            # out of bounds
+            return torch.sum(params) * -np.inf
+        else:
+            # not out of bounds
+            lp = torch.sum(params)
+            return lp / lp * self.norm
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogTaperedUniformPrior:
+    """
+    Log of an edge-tapered uniform prior, constructed by
+    multiplying two mirrored tanh functions and taking log.
+
+    .. math ::
+        
+        c &= \alpha/(b_u - b_l) \\
+        P &= \tanh(c(x-b_l))\cdot\tanh(-c(x-b_u))
+
+    """
+    def __init__(self, lower_bound, upper_bound, alpha=100., index=None):
+        """
+        Parameters
+        ---------
+        lower_bound, upper_bound : tensors
+            Tensors holding the min and max of the allowed
+            parameter value. Tensors should broadcast with
+            the (indexed) params input
+        alpha : tensor, optional
+            A scaling coefficient that determines the amount of tapering.
+            The scaling coefficient is determined as alpha / (upper - lower)
+            where good values for alpha are 1 < alpha < 1000
+            alpha -> 1000, less edge taper (like a tophat)
+            alpha -> 1, more edge taper (like an inverted quadratic)
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        """
+        self.lower_bound = torch.as_tensor(lower_bound)
+        self.upper_bound = torch.as_tensor(upper_bound)
+        self.alpha = torch.as_tensor(alpha)
+        self.index = index
+        self.dbound = self.upper_bound - self.lower_bound
+        self.coeff = self.alpha / self.dbound
+
+    def forward(self, params):
+        """
+        Evaluate log tapered uniform prior on params
+
+        Parameters
+        ----------
+        params : tensor
+        """
+        # index input params tensor if necessary
+        if self.index is not None:
+            params = params[self.index]
+
+        prob = torch.tanh(self.coeff * (params - self.lower_bound)) \
+                          * torch.tanh(-self.coeff * (params - self.upper_bound))
+        return torch.sum(torch.log(prob))
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogGaussPrior:
+    """
+    log Gaussian prior
+    """
+    def __init__(self, mean, cov, sparse_cov=True, index=None):
+        """
+        mean and cov must match shape of params, unless
+        sparse_cov == False, in which case cov is 2D matrix
+        dotted into params.ravel()
+
+        Parameters
+        ----------
+        mean : tensor
+            mean tensor, broadcasting with (indexed) params shape
+        cov : tensor
+            covariance tensor, broadcasting with params
+        sparse_cov : bool, optional
+            If True, cov is the diagonal of the covariance matrix
+            with shape matching (indexed) data. Otherwise, cov
+            is a 2D matrix dotted into (indexed) params.ravel()
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        """
+        self.mean = torch.as_tensor(mean)
+        self.cov = torch.as_tensor(cov)
+        self.sparse_cov = sparse_cov
+        self.index = index
+        if self.sparse_cov:
+            self.icov = 1 / self.cov
+            self.logdet = torch.sum(torch.log(self.cov))
+            self.ndim = sum(self.cov.shape)
+        else:
+            self.icov = torch.linalg.pinv(self.cov)
+            self.logdet = torch.slogdet(self.cov)
+            self.ndim = len(self.cov)
+        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+
+    def forward(self, params):
+        """
+        Evaluate log Gaussian prior
+
+        Parameters
+        ----------
+        params : tensor
+            Parameter tensor
+        """
+        if self.index is not None:
+            params = params[self.index]
+        res = params - self.mean
+        if self.sparse_cov:
+            chisq = 0.5 * torch.sum(res**2 * self.icov)
+        else:
+            res = res.ravel()
+            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+
+        return -chisq - self.norm
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogProb(utils.Module):
+    """
+    The (negative) log posterior density, or the (negative)
+    of the log likelihood plus the log prior, which is
+    proportional to the log posterior up to a constant.
+
+    This object handles both the likelihood and
+    (optionally) the priors
+
     Negative log Gaussian likelihood
 
     .. math::
@@ -78,10 +257,15 @@ class LogGaussLikelihood(utils.Module):
         -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d - \mu)\\
                 &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi) 
     """
-    def __init__(self, target, cov, cov_axis, parameter=False, device=None):
+    def __init__(self, model, target, cov, cov_axis, parameter=False,
+                 param_list=None, prior_list=None, device=None,
+                 compute='post', negate=True):
         """
         Parameters
         ----------
+        model : utils.Module or optim.Sequential subclass
+            THe forward model that holds all parameters
+            as attributes (i.e. model.named_parameters())
         target : tensor
             Data tensor of shape
             (Npol, Npol, Nbls, Ntimes, Nfreqs)
@@ -94,10 +278,29 @@ class LogGaussLikelihood(utils.Module):
         parameter : bool, optional
             If fed a covariance, this makes the inverse covariance
             a parameter in the fit. (not yet implemented)
+        param_list : list
+            List of all param names (str) to pull
+            from model and to evaluate their prior
+        prior_list : list
+            List of Prior callables (e.g. LogGaussPrior)
+            for each element in param_list. For no prior on a
+            parameter, pass element as None. A param name
+            str may be repeated, e.g. in case multiple priors
+            are used for a single params tensor but with different
+            indexing.
         device : str, optional
             Set the device for this object
+        compute : str, optional
+            Distribution to compute out of ['post', 'like', 'prior'],
+            regardless of what is attached to the object. This can be
+            used to sample from either the posterior, likelihood, or prior,
+            with the same API one would use to sample from the posterior.
+        negate : bool, optional
+            Return the negative log posterior (for gradient descent minimization).
+            Otherwise return the log posterior (for MCMC)
         """
         super().__init__()
+        self.model = model
         self.target = target
         if parameter:
             raise NotImplementedError
@@ -106,10 +309,15 @@ class LogGaussLikelihood(utils.Module):
         self.cov = cov
         self.cov_axis = cov_axis
         self.icov = None
+        self.param_list = param_list
+        self.prior_list = prior_list
+        self.compute = compute
+        self.negate = negate
 
     def set_icov(self, icov=None):
         """
         Set inverse covariance as self.icov
+        and compute likelihood normalizations
 
         Parameters
         ----------
@@ -126,19 +334,19 @@ class LogGaussLikelihood(utils.Module):
             self.cov = self.cov.to(self.device)
 
         # compute likelihood normalization from self.cov
-        self.ndim = sum(self.target.shape)
+        self.like_ndim = sum(self.target.data.shape)
         if self.cov_axis is None:
-            self.logdet = torch.sum(torch.log(self.cov))
+            self.like_logdet = torch.sum(torch.log(self.cov))
         elif self.cov_axis == 'full':
-            self.logdet = torch.slogdet(self.cov).logabsdet
+            self.like_logdet = torch.slogdet(self.cov).logabsdet
         else:
-            self.logdet = 0
+            self.like_logdet = 0
             for i in range(self.cov.shape[2]):
                 for j in range(self.cov.shape[3]):
                     for k in range(self.cov.shape[4]):
                         for l in range(self.covh.shape[5]):
-                            self.logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
-        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+                            self.like_logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
+        self.like_norm = 0.5 * (self.like_ndim * torch.log(torch.tensor(2*np.pi)) + self.like_logdet)
 
         # set icov
         if icov is not None:
@@ -151,198 +359,69 @@ class LogGaussLikelihood(utils.Module):
         if self.parameter:
             self.icov = torch.nn.Parameter(self.icov.detach().clone())
 
-    def forward(self, prediction):
+    def forward_like(self, inp=None):
         """
-        Compute negative log likelihood given prediction
+        Compute negative log likelihood after a pass through model
 
         Parameters
         ----------
-        prediction : tensor
-            Forward model prediction, must match target shape
-            If covariance is a matrix, not a vector, then
-            prediction must have shape (Ndim, Nfeatures),
-            where the cov mat is Ndim x Ndim, and Nfeatures
-            is to be summed over after forming chi-square.
+        inp : tensor, optional
+            Starting input to self.model
         """
         ## TODO: allow for kwarg dynamic cov for cosmic variance
 
-        # compute residual
-        res = (prediction - self.target).to(self.device)
+        # forward pass model
+        out = self.model(inp)
+        prediction = out.data.to(self.device)
 
-        # get negative log likelihood
+        # compute residual
+        res = prediction - self.target.data
+
+        # evaluate negative log likelihood
         chisq = 0.5 * torch.sum(apply_icov(res, self.icov, self.cov_axis))
 
-        return chisq + self.norm
+        loglike = -chisq - self.like_norm
+        if self.negate:
+            return -loglike
+        else:
+            return loglike
 
-
-class LogPrior(utils.Module):
-    """
-    Negative log prior. See LogUniformPrior and LogGaussPrior
-    for examples of prior callables.
-    """
-    def __init__(self, model, params, priors):
+    def forward_prior(self):
         """
-        To set an unbounded prior (i.e. no prior)
-        pass params as an empty list.
-
-        Parameters
-        ----------
-        model : torch.nn.Module subclass
-            THe forward model that holds all parameters
-            as attributes (i.e. model.named_parameters())
-        params : list of str
-            List of all params tensors to pull dynamically
-            from model and to evaluate their prior
-        priors : dict
-            Dictionary of logprior objects, with keys
-            matching syntax of params and values as callables.
-            If a prior doesn't exist for a parameter it is assumed
-            unbounded.
+        Compute negative log prior given
+        state of model parameters
         """
-        super().__init__()
-        self.model = model
-        self.params = params
-        self.priors = priors
-
-    def forward(self):
-        """
-        Evaluate log priors for all params and sum.
-        """
+        # evaluate negative log prior
         logprior = 0
-        for p in self.params:
-            if p in self.priors:
-                logprior += self.priors[p](io.get_model_attr(self.model, p))
+        if self.param_list is not None and self.prior_list is not None:
+            for param, prior in zip(self.param_list, self.prior_list):
+                logprior += prior(utils.get_model_attr(self.model, param))
 
-        return logprior
-
-    def __call__(self):
-        return self.forward()
-
-
-class LogProb(utils.Module):
-    """
-    The negative log posterior density: the likelihood times the prior,
-    which is proportional to the log posterior up to a constant.
-    """
-    def __init__(self, target, loglike, logprior=None):
-        """
-        Parameters
-        ----------
-        loglike : LogGaussLikelihood object
-        logprior : LogPrior object
-        """
-        super().__init__()
-        self.target = target
-        self.loglike = loglike
-        self.logprior = logprior
-
-    def forward(self, prediction):
-        """
-        Evaluate the negative log likelihood and prior
-
-        Parameters
-        ----------
-        prediction : tensor
-            Model prediction to evaluate in likelihood
-        """
-        logprob = self.loglike(prediction)
-        if self.logprior is not None:
-            logprob += self.logprior()
-        return  logprob
-
-
-class LogUniformPrior:
-    """
-    Negative log uniform prior
-    """
-    def __init__(self, lower_bound, upper_bound):
-        """
-        Parameters
-        ----------
-        lower_bound, upper_bound : tensors
-            Tensors holding the min and max of the allowed
-            parameter value. Tensors should match input params
-            in shape.
-        """
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-        self.norm = torch.sum(torch.log(1/(upper_bound - lower_bound)))
-
-    def forward(self, params):
-        """
-        Evalute uniform logprior on a parameter tensor.
-
-        Parameters
-        ----------
-        params : tensor
-            Parameter tensor to evaluate prior on.
-        """
-        # out of bounds if sign of residual is equal
-        lower_sign = torch.sign(self.lower_bound - params)
-        upper_sign = torch.sign(self.upper_bound - params)
-        # aka if sum(abs(sign)) == 2
-        out = torch.abs(lower_sign + upper_sign) == 2
-        if out.any():
-            return np.inf
-        return self.norm
-
-    def __call__(self, params):
-        return self.forward(params)
-
-
-class LogGaussPrior:
-    """
-    Negative log Gaussian prior
-    """
-    def __init__(self, mean, cov, sparse_cov=True):
-        """
-        mean and cov must match shape of params, unless
-        sparse_cov == False, in which case cov is 2D matrix
-        dotted into params.ravel()
-
-        Parameters
-        ----------
-        mean : tensor
-            Parameter mean tensor, matching params shape
-        cov : tensor
-            Parameter covariance tensor
-        sparse_cov : bool, optional
-            If True, cov is the diagonal of the covariance
-            else, cov is a 2D matrix dotted into params.ravel()
-        """
-        self.mean = mean
-        self.cov = cov
-        self.sparse_cov = sparse_cov
-        if self.sparse_cov:
-            self.icov = 1 / self.cov
-            self.logdet = torch.sum(torch.log(cov))
-            self.ndim = sum(cov.shape)
+        if self.negate:
+            return -logprior
         else:
-            self.icov = torch.linalg.pinv(cov)
-            self.logdet = torch.slogdet(cov)
-            self.ndim = len(cov)
-        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+            return logprior
 
-    def forward(self, params):
+    def forward(self, inp=None):
         """
-        Evaluate negative log Gaussian prior
+        Compute negative log posterior (up to a constant)
 
         Parameters
         ----------
-        params : tensor
-            Parameter tensor
+        inp : tensor, optional
+            Starting input to self.model
+            for likelihood evaluation
         """
-        res = params - self.mean
-        if self.sparse_cov:
-            chisq = 0.5 * torch.sum(res**2 * self.icov)
-        else:
-            res = res.ravel()
-            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+        assert self.compute in ['post', 'like', 'prior']
+        prob = 0
 
-        return chisq + self.norm
+        if self.compute in ['post', 'like']:
+            prob += self.forward_like(inp)
 
-    def __call__(self, params):
-        return self.forward(params)
+        if self.compute in ['post', 'prior']:
+            prob += self.forward_prior()
+
+        return prob
 
 
 class ParamDict:
@@ -361,46 +440,54 @@ class ParamDict:
         self._setup()
 
     def _setup(self):
-        self.keys = list(self.params.keys())
-        self.devices = {k: self.params[k].device for k in self.keys}
+        self.devices = {k: self.params[k].device for k in self.keys()}
+
+    def keys(self):
+        return list(self.params.keys())
+
+    def values(self):
+        return list(self.params.values())
+
+    def items(self):
+        return list(self.params.items())
 
     def __mul__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] * other.params[k] for k in self.keys})
+            return ParamDict({k: self.params[k] * other.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: self.params[k] * other for k in self.keys})
+            return ParamDict({k: self.params[k] * other for k in self.keys()})
 
     def __rmul__(self, other):
         return self.__mul__(other)
 
     def __imul__(self, other):
         if isinstance(other, ParamDict):
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] *= other.params[k]
         else:
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] *= other
         return self
 
     def __div__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] / other.params[k] for k in self.keys})
+            return ParamDict({k: self.params[k] / other.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: self.params[k] / other for k in self.keys})
+            return ParamDict({k: self.params[k] / other for k in self.keys()})
 
     def __rdiv__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: other.params[k] / self.params[k] for k in self.keys})
+            return ParamDict({k: other.params[k] / self.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: other / self.params[k] for k in self.keys})
+            return ParamDict({k: other / self.params[k] for k in self.keys()})
         return self
 
     def __idiv__(self, other):
         if isinstance(other, ParamDict):
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] /= other.params[k]
         else:
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] /= other
 
     def __truediv__(self, other):
@@ -414,63 +501,63 @@ class ParamDict:
 
     def __add__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] + other.params[k] for k in self.keys})
+            return ParamDict({k: self.params[k] + other.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: self.params[k] + other for k in self.keys})
+            return ParamDict({k: self.params[k] + other for k in self.keys()})
 
     def __radd__(self, other):
         return self.__add__(other)
 
     def __iadd__(self, other):
         if isinstance(other, ParamDict):
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] += other.params[k]
         else:
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] += other
         return self
 
     def __sub__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] - other.params[k] for k in self.keys})
+            return ParamDict({k: self.params[k] - other.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: self.params[k] - other for k in self.keys})
+            return ParamDict({k: self.params[k] - other for k in self.keys()})
 
     def __rsub__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: other.params[k] - self.params[k] for k in self.keys})
+            return ParamDict({k: other.params[k] - self.params[k] for k in self.keys()})
         else:
-            return ParamDict({k: other - self.params[k] for k in self.keys})
+            return ParamDict({k: other - self.params[k] for k in self.keys()})
 
     def __isub__(self, other):
         if isinstance(other, ParamDict):
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] -= other.params[k]
         else:
-            for k in self.keys:
+            for k in self.keys():
                 self.params[k] -= other
         return self
 
     def __neg__(self):
-        return ParamDict({k: -self.params[k] for k in self.keys})
+        return ParamDict({k: -self.params[k] for k in self.keys()})
 
     def __pow__(self, alpha):
-        return ParamDict({k: self.params[k]**alpha for k in self.keys})
+        return ParamDict({k: self.params[k]**alpha for k in self.keys()})
 
     def __iter__(self):
         return (p for p in self.params)
 
     def clone(self):
         """clone object"""
-        return ParamDict({k: self.params[k].clone() for k in self.keys})
+        return ParamDict({k: self.params[k].detach().clone() for k in self.keys()})
 
     def copy(self):
         """copy object"""
-        return ParamDict({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys})
+        return ParamDict({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys()})
 
     def detach(self):
         """detach object"""
-        return ParamDict({k: self.params[k].detach() for k in self.keys})
+        return ParamDict({k: self.params[k].detach() for k in self.keys()})
 
     def update(self, other):
         for key in other:
@@ -482,9 +569,6 @@ class ParamDict:
 
     def __setitem__(self, key, val):
         self.params[key] = val
-
-    def __repr__(self):
-        return 'ParamDict\n{}'.format(self.params.__repr__())
 
     def write_npy(self, fname, overwrite=False):
         """
@@ -499,7 +583,7 @@ class ParamDict:
         """
         if not os.path.exists(fname) or overwrite:
             # reinstantiate with detached params
-            pd = ParamDict({k: self.params[k].detach() for k in self.keys})
+            pd = ParamDict({k: self.params[k].detach() for k in self.keys()})
             np.savez(fname, pd)
         else:
             print("{} exists, not overwriting".format(fname))
@@ -524,14 +608,14 @@ class ParamDict:
         # load pd, by default they are loaded into the cpu
         pd = np.load(fname, allow_pickle=True).item()
         if force_cpu:
-            for k in pd.keys:
+            for k in pd.keys():
                 pd.params[k] = pd.params[k].cpu()
         pd._setup()
 
         return pd
 
 
-def train(model, opt, Nepochs=1):
+def train(model, opt, Nepochs=1, loss=[], verbose=True):
     """
     Train a Sequential model
 
@@ -549,23 +633,20 @@ def train(model, opt, Nepochs=1):
     dict : convergence info
     """
     start = time.time()
-    # setup
-    train_loss = []
 
     # iterate over epochs
     for epoch in range(Nepochs):
         if verbose:
-            print('Epoch {}/{}'.format(epoch, Nepochs))
-            print('-' * 10)
+            if epoch % 100 == 0:
+                print('Epoch {}/{}'.format(epoch, Nepochs))
 
         opt.zero_grad()
         out = model()
         out.backward()
         opt.step()
-        train_loss.append(out)
+        loss.append(out.detach().clone())
     time_elapsed = time.time() - start
-    info = dict(train_loss=train_loss, valid_loss=valid_loss, train_acc=train_acc, valid_acc=valid_acc,
-                optimizer=opt)
+    info = dict(duraction=time_elapsed, loss=loss)
 
     return info
 
@@ -613,7 +694,7 @@ def apply_icov(data, icov, cov_axis):
     """
     if cov_axis is None:
         # icov is just diagonal
-        out = data**2 * icov
+        out = torch.abs(data)**2 * icov
     elif cov_axis == 'full':
         # icov is full inv cov
         out = data.ravel().conj() @ icov @ data.ravel()

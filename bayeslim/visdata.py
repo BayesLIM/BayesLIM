@@ -136,6 +136,32 @@ class VisData:
             return [self._bl2ind(b) for b in bl]
         return self.bls.index(bl[:2])
 
+    def _bl2uniq_blpol(self, bl):
+        """
+        Given an antpair or antpair pol tuple "bl",
+        or list of such, return unique bls and pol
+        """
+        if isinstance(bl, tuple):
+            # this is an antpair or antpairpol
+            if len(bl) == 2:
+                bls, pol = [bl], None
+            elif len(bl) == 3:
+                bls, pol = [bl[:2]], bl[2]
+        if isinstance(bl, list):
+            bls, pols = [], []
+            for _bl in bl:
+                _bls, _pol = self._bl2uniq_blpol(_bl)
+                bls.extend(_bls)
+                pols.append(_pol)
+            bls = sorted(set(bls))
+            pols = list(set(pols))
+            if len(pols) > 1 and None in pols:
+                pols.remove(None)
+            assert len(pols) == 1, "can only index 1 pol at a time"
+            pol = pols[0]
+
+        return bls, pol
+
     def _time2ind(self, time):
         """
         Time(s) to index
@@ -183,17 +209,74 @@ class VisData:
         pol : str
             Polarization to index
         """
+        if isinstance(pol, list):
+            assert len(pol) == 1
+            pol = pol[0]
         assert isinstance(pol, str)
         if self.pol is not None:
             if pol.lower() != self.pol:
                 raise ValueError("cannot index pol from 1pol {}".format(self.pol))
-            return 0
+            return slice(0, 1)
         if pol.lower() == 'ee':
-            return 0
+            return slice(0, 1)
         elif pol.lower() == 'nn':
-            return 1
+            return slice(1, 2)
         else:
             raise ValueError("cannot index cross-pols")
+
+    def get_inds(self, bl=None, times=None, freqs=None, pol=None):
+        """
+        Given data selections, return data indexing list
+
+        Parameters
+        ----------
+        bl : tuple or list of tuples, optional
+            Baseline antpair, or list of such. Can also be
+            antpair-pol, with limitations.
+        times : tensor or float, optional
+            Time(s) to index
+        freqs : tensor or float, optional
+            Frequencies to index
+        pol : str, optional
+            Polarization to index
+
+        Returns
+        -------
+        list
+            A 5-len list holding slices along axes.
+        """
+        if bl is not None:
+            # special case for antpairpols
+            bl, _pol = self._bl2uniq_blpol(bl)
+            bl_inds = self._bl2ind(bl)
+            if pol is not None:
+                if _pol is not None:
+                    assert _pol == pol
+            pol = _pol
+        else:
+            bl_inds = slice(None)
+
+        if times is not None:
+            time_inds = self._time2ind(times)
+        else:
+            time_inds = slice(None)
+
+        if freqs is not None:
+            freq_inds = self._freq2ind(freqs)
+        else:
+            freq_inds = slice(None)
+
+        if pol is not None:
+            pol_ind = self._pol2ind(pol)
+        else:
+            pol_ind = slice(None)
+
+        inds = [pol_ind, pol_ind, bl_inds, time_inds, freq_inds]
+        inds = tuple([_list2slice(ind) for ind in inds])
+        slice_num = sum([isinstance(ind, slice) for ind in inds])
+        assert slice_num > 3, "cannot fancy index more than 1 axis"
+
+        return inds
 
     def get_data(self, bl=None, times=None, freqs=None, pol=None,
                  squeeze=True, data=None):
@@ -219,22 +302,15 @@ class VisData:
         data = self.data if data is None else data
         if data is None:
             return None
-        if bl is not None:
-            inds = self._bl2ind(bl)
-            data = data[:, :, inds]
-        elif times is not None:
-            inds = self._time2ind(times)
-            data = data[:, :, :, inds]
-        elif freqs is not None:
-            inds = self._freq2ind(freqs)
-            data = data[:, :, :, :, inds]
-        elif pol is not None:
-            ind = self._pol2ind(pol)
-            data = data[ind:ind+1, ind:ind+1]
-        else:
-            data = data[:]
+
+        # get indexing
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+        data = data[inds]
+
+        # squeeze if desired
         if squeeze:
             data = data.squeeze()
+
         return data
 
     def get_flags(self, bl=None, times=None, freqs=None, pol=None,
@@ -261,22 +337,15 @@ class VisData:
         flags = self.flags if flags is None else flags
         if flags is None:
             return None
-        if bl is not None:
-            inds = self._bl2ind(bl)
-            flags = flags[:, :, inds]
-        elif times is not None:
-            inds = self._time2ind(times)
-            flags = flags[:, :, :, inds]
-        elif freqs is not None:
-            inds = self._freq2ind(freqs)
-            flags = flags[:, :, :, :, inds]
-        elif pol is not None:
-            ind = self._pol2ind(pol)
-            flags = flags[ind:ind+1, ind:ind+1]
-        else:
-            flags = flags[:]
+
+        # get indexing
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+        flags = flags[inds]
+
+        # squeeze if desired
         if squeeze:
             flags = flags.squeeze()
+
         return flags
 
     def get_cov(self, bl=None, times=None, freqs=None, pol=None,
@@ -304,39 +373,48 @@ class VisData:
         cov = self.cov if cov is None else cov
         if cov is None:
             return None
-        if bl is not None:
-            inds = self._bl2ind(bl)
-            if self.cov_axis == 'bl':
-                cov = cov[inds][:, inds]
-            elif self.cov_axis in ['time', 'freq']:
-                cov = cov[:, :, :, :, inds]
-            else:
-                raise NotImplementedError
-        elif times is not None:
-            inds = self._time2ind(times)
-            if self.cov_axis == 'time':
-                cov = cov[inds][:, inds]
-            elif self.cov_axis == 'bl':
-                cov = cov[:, :, :, :, inds]
-            elif self.cov_axis == 'freq':
-                cov = cov[:, :, :, :, :, inds]
-            else:
-                raise NotImplementedError
-        elif freqs is not None:
-            inds = self._freq2ind(freqs)
-            if self.cov_axis == 'freq':
-                cov = cov[inds][:, inds]
-            elif self.cov_axis in ['bl', 'time']:
-                cov = cov[:, :, :, :, :, inds]
-            else:
-                raise NotImplementedError
-        elif pol is not None:
-            ind = self._pol2ind(pol)
-            cov = cov[:, :, ind:ind+1, ind:ind+1]
+
+        # get indexing
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+
+        if self.cov_axis is None:
+            # cov is same shape as data
+            cov = cov[inds]
         else:
-            cov = cov[:]
+            # cov is not the same shape as data
+            if bl is not None:
+                if self.cov_axis == 'bl':
+                    cov = cov[inds[2]][:, inds[2]]
+                elif self.cov_axis in ['time', 'freq']:
+                    cov = cov[:, :, :, :, inds[2]]
+                elif self.cov_axis == 'full':
+                    raise NotImplementedError
+            elif times is not None:
+                if self.cov_axis == 'time':
+                    cov = cov[inds[3]][:, inds[3]]
+                elif self.cov_axis == 'bl':
+                    cov = cov[:, :, :, :, inds[3]]
+                elif self.cov_axis == 'freq':
+                    cov = cov[:, :, :, :, :, inds[3]]
+                elif self.cov_axis == 'full':
+                    raise NotImplementedError
+            elif freqs is not None:
+                if self.cov_axis == 'freq':
+                    cov = cov[inds[4]][:, inds[4]]
+                elif self.cov_axis in ['bl', 'time']:
+                    cov = cov[:, :, :, :, :, inds[4]]
+                elif self.cov_axis == 'full':
+                    raise NotImplementedError
+            elif pol is not None:
+                # pol-pol covariance not yet implemented
+                cov = cov[:, :, inds[0], inds[0]]
+            else:
+                cov = cov[:]
+
+        # squeeze
         if squeeze:
             cov = cov.squeeze()
+
         return cov
 
     def set_icov(self, icov=None, pinv=True, rcond=1e-15):
@@ -480,7 +558,7 @@ class VisData:
             # load metadata
             _bls = [tuple(bl) for bl in f['bls'][:]]
             _times = f['times'][:]
-            _freqs = f['freqs'][:]
+            _freqs = torch.tensor(f['freqs'][:])
             _pol = f.attrs['pol'] if 'pol' in f.attrs else None
             time = f.attrs['time']
             cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
@@ -495,12 +573,15 @@ class VisData:
             if read_data:
                 data = self.get_data(bl=bls, times=times, freqs=freqs, pol=pol,
                                      squeeze=False, data=f['data'])
+                data = torch.tensor(data)
                 if 'flags' in f:
                     flags = self.get_flags(bl=bls, times=times, freqs=freqs, pol=pol,
                                           squeeze=False, flags=f['flags'])
+                    flags = torch.tensor(flags)
                 if 'cov' in f:
                     cov = self.get_cov(bl=bls, times=times, freqs=freqs, pol=pol,
                                        squeeze=False, cov=f['cov'])
+                    cov = torch.tensor(cov)
 
             # downselect metadata to selection
             self.select(bls=bls, times=times, freqs=freqs, pol=pol)
@@ -665,6 +746,15 @@ def concat_VisData(vds, axis, run_check=True):
                    run_check=run_check)
 
     return out
+
+
+def _list2slice(inds):
+    """convert list indexing to slice if possible"""
+    if isinstance(inds, list):
+        diff = list(set(np.diff(inds)))
+        if len(diff) == 1:
+            return slice(inds[0], inds[-1]+diff[0], diff[0])
+    return inds
 
 
 class MapData:
