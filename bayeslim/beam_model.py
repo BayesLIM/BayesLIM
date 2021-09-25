@@ -108,10 +108,10 @@ class PixelBeam(utils.Module):
 
         if response is None:
             # assumes Npix axis of params is healpix
-            self.R = PixelResponse(self.params, freqs, 'healpix',
+            self.R = PixelResponse(freqs, 'healpix',
                                    params.shape[-1])
         else:
-            self.R = response(self.params, *response_args, **response_kwargs)
+            self.R = response(*response_args, **response_kwargs)
 
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -154,6 +154,8 @@ class PixelBeam(utils.Module):
 
         Parameters
         ----------
+        params : tensor
+
         zen, az : array
             zenith angle (co-latitude) and azimuth angle [deg]
 
@@ -175,7 +177,7 @@ class PixelBeam(utils.Module):
         zen, az = zen[cut], az[cut]
 
         # get beam
-        beam = self.R(zen, az, self.freqs)
+        beam = self.R(self.params, zen, az, self.freqs)
 
         if self.powerbeam:
             ## TODO: replace abs with non-neg prior on beam?
@@ -332,8 +334,8 @@ class PixelResponse(utils.PixInterp):
 
     .. code-block:: python
 
-        R = PixelResponse(params, pixtype)
-        beam = R(zen, az, freqs)
+        R = PixelResponse(freqs, pixtype, npix, **kwargs)
+        beam = R(params, zen, az, freqs)
 
     where zen, az are the zenith and azimuth angles [deg]
     to evaluate the beam, computed using nearest or bilinear
@@ -344,17 +346,12 @@ class PixelResponse(utils.PixInterp):
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
     """
-    def __init__(self, params, freqs, pixtype, npix, interp_mode='bilinear',
-                 freq_mode='channel', f0=None, poly_kwargs={}):
+    def __init__(self, freqs, pixtype, npix, interp_mode='bilinear',
+                 freq_mode='channel', device=None,
+                 f0=None, Ndeg=None, poly_kwargs={}):
         """
         Parameters
         ----------
-        params : tensor
-            The pixel beam map, of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix). Nfreqs
-            can be interchanged with Ncoeff where Ncoeff
-            is the number of coefficients used to model
-            frequency response (see freq_mode)
         freqs : tensor
             frequency array of params [Hz]
         pixtype : str
@@ -367,19 +364,22 @@ class PixelResponse(utils.PixInterp):
             Frequency parameterization model.
             channel - each freq channel is an independent parameter
             poly - low-order polynomial basis
+        device : str, optional
+            Device to put intermediary products on
         f0 : float, optional
-            Fiducial frequency for poly freq_mode
+            Fiducial frequency [Hz] for freq_mode = 'poly'
+        Ndeg : int, optional
+            Number of poly degrees for freq_mode = 'poly'
         poly_kwargs : dict, optional
             Optional kwargs to pass to utils.gen_poly_A
         """
-        device = params.device
         super().__init__(pixtype, npix, interp_mode=interp_mode,
                          device=device)
         self.freqs = freqs
-        self.params = params
         self.device = device
         self.freq_mode = freq_mode
         self.f0 = f0
+        self.Ndeg = Ndeg
         self.freq_ax = 3
         self.poly_kwargs = poly_kwargs
 
@@ -390,30 +390,29 @@ class PixelResponse(utils.PixInterp):
 
     def _setup(self):
         if self.freq_mode == 'channel':
-            assert self.params.shape[3] == len(self.freqs)
+            pass
         elif self.freq_mode == 'poly':
             # get polynomial A matrix wrt freq
             if self.f0 is None:
                 self.f0 = self.freqs.mean()
             self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
-            Ndeg = self.params.shape[3]
-            self.A = utils.gen_poly_A(self.dfreqs, Ndeg, device=self.device, **self.poly_kwargs)
+            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device,
+                                      **self.poly_kwargs)
 
     def push(self, device):
-        """push params and other attrs to device"""
-        self.params = utils.push(self.params, device)
-        self.device = self.params.device
+        """push attrs to device"""
+        self.device = device
         self.freqs = self.freqs.to(device)
         for k, interp in self.interp_cache.items():
             self.interp_cache[k] = (interp[0], interp[1].to(device))
 
-    def __call__(self, zen, az, *args):
+    def __call__(self, params, zen, az, *args):
         # interpolate or generate sky values
-        b = self.interp(self.params, zen, az)
+        b = self.interp(params, zen, az)
 
         # evaluate frequency values
         if self.freq_mode == 'poly':
-            b = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            b = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         return b
 
@@ -424,13 +423,18 @@ class GaussResponse:
 
     .. code-block:: python
 
-        R = GaussResponse(params)
-        beam = R(zen, az, freqs)
+        R = GaussResponse()
+        beam = R(params, zen, az, freqs)
 
     Recall azimuth is defined as the angle East of North.
+
+    The input params should have shape (Npol, Npol, Nmodel, Nfreqs, 2).
+    The tensors are the Gaussian sigma in EW and NS sky directions,
+    respectively (last axis), with units of the dimensionless image-plane
+    l & m (azimuth sines & cosines).
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
-    def __init__(self, params, freqs):
+    def __init__(self):
         """
         .. math::
 
@@ -438,38 +442,27 @@ class GaussResponse:
 
         Parameters
         ----------
-        params : tensor
-            Tensor of shape (Npol, Npol, Nmodel, Nfreqs, 2). The tensors are
-            the Gaussian sigma in EW and NS sky directions, respectively (last axis),
-            with units of the dimensionless image-plane l & m (azimuth sines & cosines).
         freqs : tensor
             frequency array of params [Hz]
         """
-        self.params = params
-        self.freqs = freqs
-        self.device = self.params.device
         self.freq_mode = 'channel'
         self.freq_ax = 3
-        # assert params is broadcastable across freqs
-        assert self.params.shape[self.freq_ax] in [len(self.freqs), 1]
 
     def _setup(self):
         pass
 
-    def __call__(self, zen, az, freqs):
+    def __call__(self, params, zen, az, freqs):
         # get azimuth dependent sigma
         zen_rad, az_rad = zen * D2R, az * D2R
         srad = np.sin(zen_rad)
         srad[zen_rad > np.pi/2] = 1.0  # ensure sine_zen doesn't wrap around back to zero below horizon
-        l = torch.as_tensor(srad * np.sin(az_rad), device=self.device)
-        m = torch.as_tensor(srad * np.cos(az_rad), device=self.device)
-        beam = torch.exp(-0.5 * ((l / self.params[..., 0:1])**2 + (m / self.params[..., 1:2])**2))
+        l = torch.as_tensor(srad * np.sin(az_rad), device=params.device)
+        m = torch.as_tensor(srad * np.cos(az_rad), device=params.device)
+        beam = torch.exp(-0.5 * ((l / params[..., 0:1])**2 + (m / params[..., 1:2])**2))
         return beam
   
     def push(self, device):
-        """push params and other attrs to device"""
-        self.params = utils.push(self.params, device)
-        self.device = self.params.device
+        pass
 
 
 class AiryResponse:
@@ -479,13 +472,20 @@ class AiryResponse:
 
     .. code-block:: python
 
-        R = AiryResponse(params)
-        beam = R(zen, az, freqs)
+        R = AiryResponse(**kwargs)
+        beam = R(params, zen, az, freqs)
 
     Recall azimuth is defined as the angle East of North.
+
+    params has shape (Npol, Npol, Nmodel, 1, 2). The tensors are
+    the aperture diameter [meters] in the EW and NS aperture directions,
+    respectively (last axis). The second-to-last axis is an empty slot
+    for frequency broadcasting. In case one wants a single aperture diameter
+    for both EW and NS directions, this is shape (Npol, Npol, Nmodel, 1, 1)
+
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
     """
-    def __init__(self, params, freq_ratio=1.0):
+    def __init__(self, freq_ratio=1.0):
         """
         .. math::
 
@@ -493,46 +493,37 @@ class AiryResponse:
 
         Parameters
         ----------
-        params : tensor
-            Tensor of shape (2, Npol, Npol, Nmodel). The tensors are
-            the aperture diameter [meters] in the EW and NS aperture directions,
-            respectively (0th axis). In case one wants a single aperture diameter
-            for both EW and NS directions, this is shape (1, Npol, Npol, Nmodel)
-        freqs : tensor
-            frequency array of params [Hz]
         freq_ratio : float, optional
             Multiplicative scalar acting on freqs before airy disk is
             evaluated. Makes the beam mimic a higher or lower frequency beam.
         """
         assert not params.requires_grad, "AiryResponse not differentiable"
-        self.params = params
         self.freq_ratio = 1.0
-        self.device = self.params.device
         self.freq_mode = 'other'
         self.freq_ax = None
 
     def _setup(self):
         pass
 
-    def __call__(self, zen, az, freqs):
+    def __call__(self, params, zen, az, freqs):
         """
         Parameters
         ----------
+        params : tensor
+            parameter tensor of shape (Npol, Npol, Nmodel, 2)
         zen, az : array or tensor
             zenith and azimuth arrays [deg]
         freqs : array or tensor
             Frequency array [Hz]
         """
         # get azimuth dependent sigma
-        Dew = self.params[0][..., None, None]
-        Dns = self.params[1][..., None, None] if len(self.params) > 1 else None
+        Dew = self.params[..., 0:1]
+        Dns = self.params[..., 1:2] if params.shape[-1] > 1 else None
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio)
-        return torch.as_tensor(beam, device=self.device)
+        return beam
   
     def push(self, device):
-        """push params and other attrs to device"""
-        self.params = utils.push(self.params, device)
-        self.device = self.params.device
+        pass
 
 
 class YlmResponse(PixelResponse):
@@ -543,16 +534,22 @@ class YlmResponse(PixelResponse):
 
     .. code-block:: python
 
-        R = YlmResponse(params, l, m, **kwargs)
-        beam = R(zen, az, freqs)
+        R = YlmResponse(l, m, **kwargs)
+        beam = R(params, zen, az, freqs)
 
     Warning: if mode = 'interpolate' and parameter = True,
     you need to clear_beam() after every backwards call,
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
+
+    params holds a_lm coefficients of shape
+    (Npol, Npol, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
+    of lm modes. Ndeg is the number of polynomial degree terms
+    wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
+
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
-    def __init__(self, params, l, m, freqs, mode='generate',
+    def __init__(self, l, m, freqs, mode='generate', device=None,
                  interp_mode='bilinear', interp_angs=None,
                  powerbeam=True, freq_mode='channel', f0=None,
                  Ylm_kwargs={}):
@@ -568,15 +565,10 @@ class YlmResponse(PixelResponse):
 
         Parameters
         ----------
-        params : tensor
-            Holds a_lm coefficients of shape (Npol, Npol, Nmodel, Ndeg, Ncoeff)
-            Ncoeff is the number of lm modes.
-            Ndeg is the number of polynomial degree terms wrt freqs.
-            Nmodel is the number of unique antenna models.
         l, m : ndarrays
             The l and m modes of params.
         freqs : tensor
-            frequency array of params [Hz]
+            frequency array [Hz]
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm given zen, az for each call
             interpolate - interpolate existing beam onto zen, az. See warning
@@ -601,7 +593,7 @@ class YlmResponse(PixelResponse):
         ang_cache : a cache for (zen, az) arrays [deg]
         """
         self.npix = interp_angs[0].shape[-1] if interp_angs is not None else None
-        super(YlmResponse, self).__init__(params, freqs, 'healpix', self.npix,
+        super(YlmResponse, self).__init__(freqs, 'healpix', self.npix,
                                           interp_mode=interp_mode,
                                           freq_mode=freq_mode, f0=f0)
         self.l, self.m = l, m
@@ -614,6 +606,7 @@ class YlmResponse(PixelResponse):
         self.beam_cache = None
         self.freq_ax = 3
         self.Ylm_kwargs = Ylm_kwargs
+        self.device = device
 
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
@@ -698,7 +691,7 @@ class YlmResponse(PixelResponse):
     def clear_beam(self):
         self.beam_cache = None
 
-    def forward(self, zen, az, freqs):
+    def forward(self, params, zen, az, freqs):
         """
         Perform the mapping from a_lm to pixel
         space, in addition to possible transformation
@@ -706,6 +699,8 @@ class YlmResponse(PixelResponse):
 
         Parameters
         ----------
+        params : tensor
+            Ylm coefficients of shape (Npol, Npol, Nmodel, Ndeg, Ncoeff)
         zen, az : ndarrays
             zenith and azimuth angles [deg]
         freqs : ndarray
@@ -718,10 +713,10 @@ class YlmResponse(PixelResponse):
             of shape (Npol, Npol, Nmodel, Nfreqs, Npix)
         """
         if self.freq_mode == 'channel':
-            p = self.params
+            p = params
         elif self.freq_mode == 'poly':
             # first do fast dot product along frequency axis
-            p = (self.params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            p = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         # generate Y matrix
         Ylm = self.get_Ylm(zen, az)
@@ -736,17 +731,17 @@ class YlmResponse(PixelResponse):
 
         return beam
 
-    def __call__(self, zen, az, freqs):
+    def __call__(self, params, zen, az, freqs):
         # for generate mode, forward model the beam exactly at zen, az
         if self.mode == 'generate':
-            beam = self.forward(zen, az, freqs)
+            beam = self.forward(params, zen, az, freqs)
 
         # otherwise interpolate the pre=forwarded beam at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
                 # beam must first be forwarded at self.interp_angs
                 int_zen, int_az = self.interp_angs
-                beam = self.forward(int_zen, int_az, freqs)
+                beam = self.forward(params, int_zen, int_az, freqs)
                 # now cache it for future calls
                 self.set_beam(beam, int_zen, int_az, freqs)
 
@@ -756,9 +751,8 @@ class YlmResponse(PixelResponse):
         return beam
 
     def push(self, device):
-        """push params and other attrs to device"""
-        self.params = utils.push(self.params, device)
-        self.device = self.params.device
+        """push attrs to device"""
+        self.device = device
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
@@ -771,7 +765,7 @@ class AlmBeam(utils.Module):
     spherical harmonic space.
     This takes sky models of 'alm' kind.
     """
-    def __init__(self, params, freqs, parameter=True, polmode='1pol',
+    def __init__(self, freqs, parameter=True, polmode='1pol',
                  powerbeam=False):
         raise NotImplementedError
 

@@ -231,7 +231,7 @@ class PointSky(SkyBase):
             params = self.params
 
         # pass through response
-        return dict(kind=self.kind, sky=self.R(params), angs=self.angs)
+        return dict(kind=self.kind, sky=self.R(params), angs=self.angs, name=self.name)
 
 
 class PointSkyResponse:
@@ -392,7 +392,7 @@ class PixelSky(SkyBase):
 
         # pass through response
         sky = self.R(params) * self.px_area
-        return dict(kind=self.kind, sky=sky, angs=self.angs)
+        return dict(kind=self.kind, sky=sky, angs=self.angs, name=self.name)
 
 
 class PixelSkyResponse:

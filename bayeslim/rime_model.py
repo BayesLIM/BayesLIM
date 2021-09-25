@@ -186,6 +186,7 @@ class RIME(utils.Module):
 
             kind = sky_comp['kind']
             sky = sky_comp['sky']
+            ra, dec = sky_comp['angs']
 
             # iterate over observation times
             for j, time in enumerate(self.times):
@@ -193,8 +194,8 @@ class RIME(utils.Module):
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
-                    ra, dec = sky_comp['angs']
-                    alt, az = self.telescope.eq2top(time, ra, dec, sky=kind, store=True)
+                    alt, az = self.telescope.eq2top(time, ra, dec, store=True,
+                                                    sky=(float(ra[0]), float(ra[-1])))
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)

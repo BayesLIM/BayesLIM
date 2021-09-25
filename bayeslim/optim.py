@@ -134,7 +134,8 @@ class LogTaperedUniformPrior:
         P &= \tanh(c(x-b_l))\cdot\tanh(-c(x-b_u))
 
     """
-    def __init__(self, lower_bound, upper_bound, alpha=100., index=None):
+    def __init__(self, lower_bound, upper_bound, kind='sigmoid',
+                 alpha=100., index=None):
         """
         Parameters
         ---------
@@ -142,6 +143,11 @@ class LogTaperedUniformPrior:
             Tensors holding the min and max of the allowed
             parameter value. Tensors should broadcast with
             the (indexed) params input
+        kind : str, optional
+            Kind of taper to apply, either ['sigmoid', 'tanh'].
+            Sigmoid is defined on all R and thus does not enacting strict
+            lower and upper bounds, but is well-defined and differentiable
+            over all R, whereas tanh has a hard cutoff at lower and upper bounds.
         alpha : tensor, optional
             A scaling coefficient that determines the amount of tapering.
             The scaling coefficient is determined as alpha / (upper - lower)
@@ -158,6 +164,7 @@ class LogTaperedUniformPrior:
         self.index = index
         self.dbound = self.upper_bound - self.lower_bound
         self.coeff = self.alpha / self.dbound
+        self.kind = kind
 
     def forward(self, params):
         """
@@ -171,8 +178,13 @@ class LogTaperedUniformPrior:
         if self.index is not None:
             params = params[self.index]
 
-        prob = torch.tanh(self.coeff * (params - self.lower_bound)) \
-                          * torch.tanh(-self.coeff * (params - self.upper_bound))
+        if self.kind == 'sigmoid':
+            func = torch.sigmoid
+        elif self.kind == 'tanh':
+            func = torch.tanh
+
+        prob = func(self.coeff * (params - self.lower_bound)) \
+                          * func(-self.coeff * (params - self.upper_bound))
         return torch.sum(torch.log(prob))
 
     def __call__(self, params):
@@ -615,7 +627,7 @@ class ParamDict:
         return pd
 
 
-def train(model, opt, Nepochs=1, loss=[], verbose=True):
+def train(model, opt, Nepochs=1, loss=[], closure=None, verbose=True):
     """
     Train a Sequential model
 
@@ -643,7 +655,8 @@ def train(model, opt, Nepochs=1, loss=[], verbose=True):
         opt.zero_grad()
         out = model()
         out.backward()
-        opt.step()
+        # check for nan gradients
+        opt.step(closure)
         loss.append(out.detach().clone())
     time_elapsed = time.time() - start
     info = dict(duraction=time_elapsed, loss=loss)

@@ -485,3 +485,24 @@ def top2eq(location, time, alt, az):
     return out.ra.deg, out.dec.deg
 
 
+def JD2RA(tloc, jd):
+    """
+    Convert JD to Equatorial J2000
+    Right Ascension [deg] at telescope
+    zenith pointing given a telescope
+    location and JD
+
+    Parameters
+    ----------
+    tloc : astropy.EarthLocation
+    jd : float
+        Julian Date
+
+    Returns
+    -------
+    float
+        right ascension at zenith [deg]
+    """
+    ra, dec = top2eq(tloc, jd, 90, 0)
+
+    return ra
