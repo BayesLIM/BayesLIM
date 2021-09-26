@@ -434,6 +434,13 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
             for i in range(len(cut_l)):
                 cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
 
+        # refactor cut slicing
+        cut = np.where(cut)[0]
+        if len(cut) == len(l):
+            cut = slice(None)
+        elif len(set(np.diff(cut))) == 1:
+            cut = slice(cut[0], cut[-1]+1, cut[1] - cut[0])
+
         Ylm = f['Ylm'][cut, :]
         l, m = l[cut], m[cut]
 
