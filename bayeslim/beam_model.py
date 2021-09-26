@@ -552,6 +552,7 @@ class YlmResponse(PixelResponse):
     def __init__(self, l, m, freqs, mode='generate', device=None,
                  interp_mode='bilinear', interp_angs=None,
                  powerbeam=True, freq_mode='channel', f0=None,
+                 Ndeg=None, poly_kwargs={},
                  Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -585,7 +586,13 @@ class YlmResponse(PixelResponse):
         freq_mode : str, optional
             Frequency parameterization ['channel', 'poly']
         f0 : float, optional
-            fiducial frequency [Hz] for poly freq_mode
+            fiducial frequency [Hz], for 'poly' freq_mode
+        Ndeg : int, optional
+            Number of poly terms, for 'poly' freq_mode
+        poly_kwargs : dict, optional
+            Kwargs for generating poly modes, for 'poly' freq_mode
+        Ylm_kwargs : dict, optional
+            Kwargs for generating Ylm modes
 
         Notes
         -----
@@ -595,7 +602,8 @@ class YlmResponse(PixelResponse):
         self.npix = interp_angs[0].shape[-1] if interp_angs is not None else None
         super(YlmResponse, self).__init__(freqs, 'healpix', self.npix,
                                           interp_mode=interp_mode,
-                                          freq_mode=freq_mode, f0=f0)
+                                          freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
+                                          poly_kwargs=poly_kwargs)
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
         self.powerbeam = powerbeam

@@ -19,5 +19,6 @@ from . import linalg
 
 from .optim import ParamDict
 from .visdata import VisData
+from .utils import _float, _cfloat
 
 from .version import __version__
