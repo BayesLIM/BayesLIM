@@ -393,7 +393,7 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
 
 
 def load_Ylm(fname, lmax=None, discard=None, cast=None,
-             zen_max=None, device=None):
+             zen_max=None, device=None, read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
 
@@ -414,6 +414,9 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
         assuming angs[0] is zenith (co-latitude)
     device : str, optional
         Device to place Ylm
+    read_data : bool, optional
+        If True, read and return Ylm
+        else return None, angs, l, m 
 
     Returns
     -------
@@ -426,36 +429,41 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
         l, m = f['l'][:], f['m'][:]
 
         # truncate modes
-        cut = np.ones_like(l, dtype=bool)
+        keep = np.ones_like(l, dtype=bool)
         if lmax is not None:
-            cut = cut & (l < lmax)
+            keep = keep & (l < lmax)
         if discard is not None:
             cut_l, cut_m = discard
             for i in range(len(cut_l)):
-                cut = cut & (~np.isclose(l, cut_l[i]) | ~np.isclose(m, cut_m[i]))
+                keep = keep & ~(np.isclose(l, cut_l[i]) & np.isclose(m, cut_m[i]))
 
-        # refactor cut slicing
-        cut = np.where(cut)[0]
-        if len(cut) == len(l):
-            cut = slice(None)
-        elif len(set(np.diff(cut))) == 1:
-            cut = slice(cut[0], cut[-1]+1, cut[1] - cut[0])
+        # refactor keep slicing
+        keep = np.where(keep)[0]
+        if len(keep) == len(l):
+            keep = slice(None)
+        elif len(set(np.diff(keep))) == 1:
+            keep = slice(keep[0], keep[-1]+1, keep[1] - keep[0])
 
-        Ylm = f['Ylm'][cut, :]
-        l, m = l[cut], m[cut]
+        l, m = l[keep], m[keep]
+        if read_data:
+            Ylm = f['Ylm'][keep, :]
+        else:
+            Ylm = None
 
     # truncate sky
     if zen_max is not None:
         zen, az = angs
-        cut = zen < zen_max
-        Ylm = Ylm[:, cut]
-        zen = zen[cut]
-        az = az[cut]
+        keep = zen < zen_max
+        zen = zen[keep]
+        az = az[keep]
         angs = zen, az
+        if read_data:
+            Ylm = Ylm[:, keep]
 
-    Ylm = torch.tensor(Ylm, device=device)
-    if cast is not None:
-        Ylm = Ylm.to(cast)
+    if read_data:
+        Ylm = torch.tensor(Ylm, device=device)
+        if cast is not None:
+            Ylm = Ylm.to(cast)
 
     return Ylm, angs, l, m
 
