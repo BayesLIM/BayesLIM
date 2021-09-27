@@ -110,7 +110,7 @@ class VisData:
         self.cov_axis = cov_axis
         self.history = history
 
-    def to(self, device):
+    def push(self, device):
         """
         Push data, flags, cov and icov to device
         """

@@ -109,7 +109,8 @@ def read_pkl(fname, pdict=None, device=None):
         If fname is a Module subclass, replace
         its parameter values with this ParamDict
     device : str, optional
-        If not None, device to send object to
+        If not None and if possible, send
+        object to device
 
     Returns
     -------
@@ -132,9 +133,15 @@ def read_pkl(fname, pdict=None, device=None):
     # move model, if possible
     if device is not None:
         if hasattr(model, 'push'):
+            # for models with a push() method
             model.push(device)
-        elif hasattr(model, 'to'):
+        elif hasattr(model, 'device') and isinstance(model, utils.Module):
+            # for models without push but with device (e.g. RIME)
+            model.device = device
+        elif isinstance(model, torch.Tensor):
+            # for tensor
             model = model.to(device)
+        elif isinstance
 
     return model
 
@@ -223,7 +230,7 @@ def build_sky(multi=None, modfile=None, device=None, pdict=None,
     return model
 
 
-def build_beam(modfile=None, pdict=None):
+def build_beam(modfile=None, pdict=None, device=None):
     """
     Build a beam model
 
@@ -233,6 +240,8 @@ def build_beam(modfile=None, pdict=None):
         Filepath to a .pkl beam model
     pdict : ParamDict or str, optional
         Update model with parameters in pdict
+    device : str, optional
+        Device to move model to
 
     Returns
     -------
@@ -241,6 +250,9 @@ def build_beam(modfile=None, pdict=None):
     """
     if isinstance(modfile, str):
         beam = read_pkl(modfile)
+
+    if device is not None:
+        beam.push(device)
 
     if pdict is not None:
         if isinstance(pdict, str):
@@ -266,10 +278,12 @@ def build_telescope(modfile=None, location=None, device=None):
 
     """
     if isinstance(modfile, str):
-        return read_pkl(modfile)
+        telescope = read_pkl(modfile)
+    else:
+        telescope = telescope_model.TelescopeModel(location)
 
-    if location is not None:
-        telescope = telescope_model.TelescopeModel(location, device=device)
+    if device is not None:
+        telescope.push(device)
 
     return telescope
 
@@ -306,7 +320,7 @@ def build_array(modfile=None, antpos=None, freqs=None, device=None,
         Baseline redundnacy tolerance [m]
     """
     if isinstance(modfile, str):
-        return read_pkl(modfile)
+        return read_pkl(modfile, device=device)
 
     if isinstance(antpos, str):
         antpos = read_pkl(antpos)

@@ -460,7 +460,6 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
         if read_data:
             Ylm = Ylm[:, keep]
 
-    angs = torch.tensor(angs, device=device)
     if read_data:
         Ylm = torch.tensor(Ylm, device=device)
         if cast is not None:

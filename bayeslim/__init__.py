@@ -16,8 +16,9 @@ from . import uvdata_interface
 from . import visdata
 from . import io
 from . import linalg
+from . import paramdict
 
-from .optim import ParamDict
+from .paramdict import ParamDict
 from .visdata import VisData
 from .utils import _float, _cfloat
 
