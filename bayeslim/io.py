@@ -141,7 +141,6 @@ def read_pkl(fname, pdict=None, device=None):
         elif isinstance(model, torch.Tensor):
             # for tensor
             model = model.to(device)
-        elif isinstance
 
     return model
 
