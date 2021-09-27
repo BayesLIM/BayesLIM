@@ -96,7 +96,7 @@ def save_model(fname, model, overwrite=False):
         print("{} exists, not overwriting".format(fname))
 
 
-def load_model(fname, pdict=None):
+def load_model(fname, pdict=None, device=None):
     """
     Load a BayesLIM model from a .npy file
 
@@ -104,11 +104,13 @@ def load_model(fname, pdict=None):
     ----------
     fname : str
         Filepath to .npy holding model
-    pdict : ParamDict or str
+    pdict : ParamDict or str, optional
         parameter dictionary (or .npy filepath
         to ParamDict) to initialize various
         model params with. Default is to 
         use existing params in model.
+    device : str, optional
+        If not None, device to model to
 
     Returns
     -------
@@ -125,6 +127,10 @@ def load_model(fname, pdict=None):
         if isinstance(pdict, str):
             pdict = optim.ParamDict.load_npy(pdict)
         update_model_pdict(model, pdict)
+
+    # move model
+    if device is not None:
+        model.push(device)
 
     return model
 
@@ -156,52 +162,68 @@ def del_model_attr(model, name):
         delattr(utils.get_model_attr(model, name[:-1]), name[-1])
 
 
-def build_sky(modfile=None,
-              catfile=None, parameter=False, freq_interp='linear'):
+def build_sky(multi=None, modfile=None, device=None,
+              catfile=None, freqs=None, freq_interp='linear',
+              set_param=None, unset_param=None):
     """
     Build a sky model. A few different methods
-    for doing this are provided.
+    for doing this are provided. For building a composite model,
+    use the multi kwarg.
 
     Parameters
     ----------
-    modfile : str or dict, optional
-        Filepath to a sky model saved as .npy. Multiple
-        sky models are passed as a dict with keys being
-        the name assigned to the model, and values as their
-        modfile path. They are then composed as a CompositeModel.
-        This takes first precedence over all other kwargs.
-    catfile : str, optional
-        Filepath(s) to a catalogue .yaml file.
+    multi : list of (str, dict), optional
+        A list of 2-tuples holding (name, kwargs) for
+        build_sky(**kwargs), which are then inserted into
+        a CompositeModel with their names. This takes first
+        precedence over all other kwargs in the function call.
+    modfile : str, optional
+        Filepath to a sky model saved as .npy.
         This takes second precedence over all other kwargs.
-    parameter : bool, optional
-        Used if feeding catfile or params
-        Make the params tensor a Parameter object
+    device : str, optional
+        Device to move model to.
+    catfile : str, optional
+        Filepath to a catalogue .yaml file.
+        This takes third precedence over all other kwargs.
+    freqs : tensor, optional
+        For sky models that don't have a frequency axis,
+        use this.
     freq_interp : str, optional
-        Kind of frequency interpolation on catalogue
+        Kind of frequency interpolation on the model
+        if freqs is not None.
+    set_param : str, optional
+        Attribute of model to set as a Parameter
+    unset_param : str, optional
+        Attribute of model to unset as a Parameter
 
     Returns
     -------
     SkyBase or CompositeModel object
     """
-    # model files
-    if modfile is not None:
-        if isinstance(modfile, str):
-            return load_model(modfile)
-        elif isinstance(modfile, dict):
-            models = {mod: load_model(modfile[mod]) for mod in modfile}
+    # look for multiple files
+    if multi is not None:
+        models = {}
+        for name, kwargs in multi:
+            models[name] = build_sky(**kwargs)
         return sky_model.CompositeModel(models)
 
+    # model files
+    if modfile is not None:
+        model = load_model(modfile, device=device)
+
     # catalogue files
-    if catfile is not None:
-        if isinstance(catfile, str):
-            return sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
-                                            parameter=parameter)
-        models = {}
-        for cat in catfile:
-            name = os.path.basename(cat).split('.')[0]
-            models[name] = sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
-                                                    parameter=parameter)
-        return sky_model.CompositeModel(models)
+    elif catfile is not None:
+        model = sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
+                                         device=device)[0]
+
+    if set_param is not None:
+        if hasattr(model, set_param):
+            setattr(model, set_param, torch.nn.Parameter(getattr(model, set_param)))
+    if unset_param is not None:
+        if hasattr(model, unset_param):
+            setattr(model, unset_param, getattr(model, unset_param).detach())
+
+    return model
 
 
 def build_beam(modfile=None):

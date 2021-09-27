@@ -73,6 +73,7 @@ class JonesModel(utils.Module):
         """
         super().__init__()
         self.params = params
+        self.device = params.device
         self.refant = refant
         assert refant in ants, "need a valid refant"
         if parameter:
@@ -95,7 +96,7 @@ class JonesModel(utils.Module):
         self._args = dict(refant=refant, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
-    def forward(self, V_m, params=None, undo=False):
+    def forward(self, V_m, undo=False):
         """
         Forward pass V_m through the Jones model.
 
@@ -103,10 +104,7 @@ class JonesModel(utils.Module):
         ----------
         V_m : VisData
             Model visibilities of
-            shape (Npol, Npol, Nbl, Nfreq, Ntime)
-        params : tensor, optional
-            If not None, use these jones parameters instead of
-            self.params in the forward model. Default is None.
+            shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
         undo : bool, optional
             If True, invert params and apply to V_m. 
 
@@ -116,15 +114,14 @@ class JonesModel(utils.Module):
             Predicted visibilities, having forwarded
             V_m through the Jones parameters.
         """
-        # setup empty predicted visibility
+        # push V_m to self.device
+        V_m.to(self.device)
+
+        # setup empty VisData for output
         V_p = V_m.copy()
 
-        # choose fed params or attached params
-        if params is None:
-            params = self.params
-
         # push through reponse function
-        jones = self.R(params)
+        jones = self.R(self.params)
 
         # invert jones if necessary
         if undo:
@@ -154,6 +151,14 @@ class JonesModel(utils.Module):
                 V_p.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m.data[:, :, i], j2.conj())
 
         return V_p
+
+    def push(self, device):
+        """
+        Push params and other attrs to new device
+        """
+        self.device = device
+        self.params = utils.push(self.params, device)
+        self.R.push(device)
 
 
 class JonesResponse:
@@ -346,6 +351,23 @@ class JonesResponse:
     def __call__(self, params):
         return self.forward(params)
 
+    def push(self, device):
+        """
+        Push class attrs to new device
+        """
+        self.device = device
+        self.freqs = self.freqs.to(device)
+        self.times = self.times.to(device)
+        if self.freq_mode == 'poly':
+            self.dfreqs = self.dfreqs.to(device)
+            self.freq_A = self.freq_A.to(device)
+        if self.time_mode == 'poly':
+            self.dtimes = self.dtimes.to(device)
+            self.time_A = self.time_A.to(device)
+        if self.gain_type in ['dly_slope', 'phs_slope']:
+            self.antpos_EW = self.antpos_EW.to(device) 
+            self.antpos_NS = self.antpos_NS.to(device)
+
 
 class RedVisModel(utils.Module):
     """
@@ -383,6 +405,7 @@ class RedVisModel(utils.Module):
         """
         super().__init__()
         self.params = params
+        self.device = params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         self.vis2red = vis2red
@@ -415,6 +438,9 @@ class RedVisModel(utils.Module):
             The predicted visibilities, having pushed V_m through
             the redundant visibility model
         """
+        # push to device
+        V_m.to(self.device)
+
         # setup predicted visibility
         V_p = V_m.copy()
 
@@ -428,6 +454,12 @@ class RedVisModel(utils.Module):
                 V_p.data[:, :, i] = V_m.data[:, :, i] - params[:, :, self.vis2red[i]]
 
         return V_p
+
+    def push(self, device):
+        """
+        Push to a new device
+        """
+        self.params = utils.push(self.params, device)
 
 
 class VisModel(utils.Module):
@@ -463,6 +495,7 @@ class VisModel(utils.Module):
         """
         super().__init__()
         self.params = params
+        self.device = params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
@@ -502,3 +535,9 @@ class VisModel(utils.Module):
             V_p.data = V_p.data - params
 
         return V_p
+
+    def push(self, device):
+        """
+        Push to a new device
+        """
+        self.params = utils.push(self.params, device)

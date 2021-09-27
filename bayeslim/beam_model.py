@@ -209,6 +209,9 @@ class PixelBeam(utils.Module):
             perceived sky, having mutiplied beam with sky, of shape
             (Npol, Npol, Nfreqs, Npix)
         """
+        # move sky to device
+        sky = sky.to(self.device)
+
         if beam2 is None:
             beam2 = beam1
 
@@ -401,11 +404,15 @@ class PixelResponse(utils.PixInterp):
 
     def push(self, device):
         """push attrs to device"""
-        self.device = device
+        # call PixInterp push for cache and self.device
+        super().push(device)
+        # other attrs
         self.freqs = self.freqs.to(device)
-        for k, interp in self.interp_cache.items():
-            self.interp_cache[k] = (interp[0], interp[1].to(device))
-
+        if self.freq_mode == 'poly':
+            self.dfreqs = self.dfreqs.to(device)
+            self.A = self.A.to(device)
+        self.R.push(device)
+    
     def __call__(self, params, zen, az, *args):
         # interpolate or generate sky values
         b = self.interp(params, zen, az)

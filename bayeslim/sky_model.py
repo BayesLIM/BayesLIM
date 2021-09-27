@@ -72,11 +72,12 @@ class SkyBase(utils.Module):
             List of additional attributes to push
         """
         self.params = utils.push(self.params, device)
-        self.device = self.params.device
+        self.device = device
         if hasattr(self, 'angs'):
             self.angs = self.angs.to(device)
         for attr in attrs:
-            setattr(self, attr, getattr(self, attr).to(device))
+            if hasattr(self, attr):
+                setattr(self, attr, getattr(self, attr).to(device))
         self.R.push(device)
 
     def freq_interp(self, freqs, kind='linear'):
@@ -296,9 +297,11 @@ class PointSkyResponse:
             return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
 
     def push(self, device):
-        self.A = self.A.to(device)
-        self.freqs = self.freqs.to(device)
         self.device = device
+        self.freqs = self.freqs.to(device)
+        if self.freq_mode == 'poly':
+            self.dfreqs = self.dfreqs.to(device)
+            self.A = self.A.to(device)
 
 
 class PixelSky(SkyBase):
@@ -767,9 +770,11 @@ def read_catalogue(catfile, freqs=None, device=None,
         if freqs is not None:
             interp = interpolate.interp1d(d['freqs'], S, kind=freq_interp, axis=0,
                                           fill_value='extrapolate')
-            params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, :]
+            params = torch.tensor(interp(freqs), dtype=_float())[None, None, :, None]
         else:
+            assert 'freqs' in d, "must pass freqs if not in catalogue file"
             freqs = d['freqs']
+            params = torch.ones(len(freqs), dtype=_float())[None, None, :, None]
 
     elif d['freq_mode'] == 'powerlaw':
         assert freqs is not None

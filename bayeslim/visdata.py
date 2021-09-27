@@ -23,19 +23,6 @@ class VisData:
         self.telescope, self.array = None, None
         self.atol = 1e-5
 
-    def copy(self):
-        """
-        Copy and return self. Data tensor
-        is detached and cloned.
-        """
-        vd = VisData()
-        vd.setup_telescope(telescope=self.telescope, array=self.array)
-        vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
-                      time=self.time, data=self.data.detach().clone(),
-                      flags=self.flags, cov=self.cov, icov=self.icov,
-                      cov_axis=self.cov_axis, history=self.history)
-        return vd
-
     def setup_telescope(self, telescope=None, array=None):
         """
         Set the telescope and array models
@@ -122,6 +109,32 @@ class VisData:
         self.icov = icov
         self.cov_axis = cov_axis
         self.history = history
+
+    def to(self, device):
+        """
+        Push data, flags, cov and icov to device
+        """
+        if self.data is not None:
+            self.data = self.data.to(device)
+        if self.flags is not None:
+            self.flags = self.flags.to(device)
+        if self.cov is not None:
+            self.cov = self.cov.to(device)
+        if self.icov is not None:
+            self.icov = self.icov.to(device)
+
+    def copy(self):
+        """
+        Copy and return self. Data tensor
+        is detached and cloned.
+        """
+        vd = VisData()
+        vd.setup_telescope(telescope=self.telescope, array=self.array)
+        vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
+                      time=self.time, data=self.data.detach().clone(),
+                      flags=self.flags, cov=self.cov, icov=self.icov,
+                      cov_axis=self.cov_axis, history=self.history)
+        return vd
 
     def _bl2ind(self, bl):
         """

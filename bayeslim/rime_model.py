@@ -244,5 +244,5 @@ class RIME(utils.Module):
             psky = self.array.apply_fringe(fringe, psky, kind)
 
         # sum across sky
-        vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1)
+        vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1).to(self.device)
 

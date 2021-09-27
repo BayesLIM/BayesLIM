@@ -297,12 +297,13 @@ class ArrayModel(utils.PixInterp, utils.Module):
     def reset_freqs(self, freqs):
         """reset frequency array"""
         self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
-        self.interp_cache = {}
-        self.cache = {}
+        self._clear_cache()
 
     def _clear_cache(self):
         """Clear interpolation and fringe cache"""
+        # this is PixInterp cache
         self.interp_cache = {}
+        # this is fringe caching
         self.cache = {}
 
     def _fringe(self, bl, zen, az):
@@ -317,7 +318,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
             # az is East of North
             s[0] = torch.sin(_zen) * torch.sin(_az)  # x
             s[1] = torch.sin(_zen) * torch.cos(_az)  # y
-            s[2] = torch.cos(_zen)                  # z
+            s[2] = torch.cos(_zen)                   # z
             if self.cache_s:
                 self.cache[s_h] = s
         elif self.cache_s:
@@ -398,6 +399,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
         psky : tensor
             perceived sky, having mutiplied fringe with sky
         """
+        # move sky to fringe device
+        sky = sky.to(self.device)
+
         if kind in ['point', 'pixel']:
             psky = sky * fringe
 
@@ -410,10 +414,15 @@ class ArrayModel(utils.PixInterp, utils.Module):
         return psky
 
     def push(self, device):
-        """push parameters to a new device"""
+        """push model to a new device"""
         self.antpos = utils.push(self.antpos, device)
+        # use PixInterp push for its cache
+        super().push(device)
         self.freqs = self.freqs.to(device)
         self.device = device
+        # push cache
+        for k in self.cache:
+            self.cache[k] = self.cache[k].to(device)
 
 
 def eq2top(location, time, ra, dec):

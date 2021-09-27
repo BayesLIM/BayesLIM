@@ -1250,7 +1250,6 @@ class PixInterp:
                 inds = np.concatenate([theta_inds, phi_inds], axis=1)
                 #theta_wgts = 
 
-
             # down select if using nearest interpolation
             if self.interp_mode == 'nearest':
                 wgts = np.argmax(wgts, axis=0)
@@ -1296,6 +1295,15 @@ class PixInterp:
             return torch.sum(nearest * wgts.T, axis=-1)
         else:
             raise ValueError("didnt recognize interp_mode")
+
+    def push(self, device):
+        """
+        Push cache onto a new device
+        """
+        self.device = device
+        for k in self.interp_cache:
+            cache = self.interp_cache[k]
+            self.interp_cache[k] = (cache[0], cache[1].to(device))
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,
@@ -1533,6 +1541,7 @@ def push(tensor, device, parameter=False):
         return torch.nn.Parameter(tensor.to(device))
     else:
         return tensor.to(device)
+
 
 def tensor2numpy(tensor, clone=True):
     """
