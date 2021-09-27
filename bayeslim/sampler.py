@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 
 from . import utils, optim
-from .optim import ParamDict
+from .paramdict import ParamDict
 
 
 class SamplerBase:

@@ -8,6 +8,7 @@ import pickle
 
 from . import utils, optim, rime_model, telescope_model, sky_model, beam_model
 from .utils import _float, _cfloat
+from .paramdict import ParamDict
 
 
 def model2pdict(model):
@@ -39,7 +40,7 @@ def model2pdict(model):
         for sub_key in sub_d:
             d[key + '.' + sub_key] = sub_d[sub_key]
 
-    return optim.ParamDict(d) 
+    return ParamDict(d) 
 
 
 def get_model_description(model):
@@ -127,7 +128,7 @@ def read_pkl(fname, pdict=None, device=None):
     if pdict is not None:
         assert isinstance(model, utils.Module), "fname must be a Module to apply a pdict"
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.read_pkl(pdict)
+            pdict = ParamDict.read_pkl(pdict)
         model.update(pdict)
 
     # move model, if possible
@@ -215,7 +216,7 @@ def build_sky(multi=None, modfile=None, device=None, pdict=None,
 
     if pdict is not None:
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.read_pkl(pdict)
+            pdict = ParamDict.read_pkl(pdict)
         model.update(pdict)
 
     if set_param is not None:
@@ -255,7 +256,7 @@ def build_beam(modfile=None, pdict=None, device=None):
 
     if pdict is not None:
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.read_pkl(pdict)
+            pdict = ParamDict.read_pkl(pdict)
         beam.update(pdict)
 
     ### TODO: add more support for manual beams
@@ -437,7 +438,7 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     # update parameters if desired
     if pdict is not None:
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.read_pkl(pdict)
+            pdict = ParamDict.read_pkl(pdict)
         rime.update(pdict)
 
     return rime
