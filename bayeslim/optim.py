@@ -6,6 +6,7 @@ import torch
 import os
 from collections import OrderedDict
 import time
+import pickle
 
 from . import utils, io
 
@@ -13,8 +14,7 @@ from . import utils, io
 class Sequential(utils.Module):
     """
     A minimal mirror of torch.nn.Sequential without the
-    iterators, such that it can be converted to an object array
-    without splitting its submodules (needed for .npy IO with pickle)
+    iterators and with added features (inherits from utils.Module)
 
     Instantiation takes a parameter dictionary as
     input and updates model before evaluation. e.g.
@@ -582,33 +582,29 @@ class ParamDict:
     def __setitem__(self, key, val):
         self.params[key] = val
 
-    def write_npy(self, fname, overwrite=False):
+    def wrte_pkl(self, fname, overwrite=False):
         """
-        Write ParamDict to .npy file
+        Write ParamDict to .pkl file
 
         Parameters
         ----------
         fname : str
-            Path to output .npy filename
+            Path to output .pkl filename
         overwrite : bool, optional
             If True overwrite fname if it exists
         """
-        if not os.path.exists(fname) or overwrite:
-            # reinstantiate with detached params
-            pd = ParamDict({k: self.params[k].detach() for k in self.keys()})
-            np.savez(fname, pd)
-        else:
-            print("{} exists, not overwriting".format(fname))
+        pd = ParamDict({k: self.params[k].detach() for k in self.keys()})
+        io.write_pkl(fname, pd, overwrite=overwrite)
 
     @staticmethod
-    def load_npy(fname, force_cpu=False):
+    def read_pkl(fname, force_cpu=False):
         """
-        Load .npy file and return ParamDict object
+        Load .pkl file and return ParamDict object
 
         Parameters
         ----------
         fname : str
-            .npy file to load
+            .pkl file to load as ParamDict
         force_cpu : bool, optional
             Force tensors onto CPU, even if they were
             written from a GPU
@@ -617,8 +613,7 @@ class ParamDict:
         -------
         ParamDict object
         """
-        # load pd, by default they are loaded into the cpu
-        pd = np.load(fname, allow_pickle=True).item()
+        pd = io.read_pkl(fname)
         if force_cpu:
             for k in pd.keys():
                 pd.params[k] = pd.params[k].cpu()

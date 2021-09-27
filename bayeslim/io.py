@@ -4,6 +4,7 @@ Module for generic input/output. See also utils.py
 import numpy as np
 import torch
 import os
+import pickle
 
 from . import utils, optim, rime_model, telescope_model, sky_model, beam_model
 from .utils import _float, _cfloat
@@ -77,77 +78,65 @@ def get_model_description(model):
     return tree, model_args
 
 
-def save_model(fname, model, overwrite=False):
+def write_pkl(fname, model, overwrite=False):
     """
-    Save a BayesLIM model as .npy
+    Pickle an object as fname [.pkl]
 
     Parameters
     ----------
     fname : str
-        filepath to output .npy file
-    model : torch.Module subclass
-        A BayesLIM model object
+        filepath to output .pkl file
+    model : object
     overwrite : bool, optional
         Overwrite output if it exists
     """
     if not os.path.exists(fname) or overwrite:
-        np.save(fname, model)
+        with open(fname, 'wb') as f:
+            pickle.dump(model, f, protocol=4)
     else:
         print("{} exists, not overwriting".format(fname))
 
 
-def load_model(fname, pdict=None, device=None):
+def read_pkl(fname, pdict=None, device=None):
     """
-    Load a BayesLIM model from a .npy file
+    Load a .pkl file
 
     Parameters
     ----------
     fname : str
-        Filepath to .npy holding model
-    pdict : ParamDict or str, optional
-        parameter dictionary (or .npy filepath
-        to ParamDict) to initialize various
-        model params with. Default is to 
-        use existing params in model.
+        Filepath to .pkl
+    pdict : ParamDict, optional
+        If fname is a Module subclass, replace
+        its parameter values with this ParamDict
     device : str, optional
-        If not None, device to model to
+        If not None, device to send object to
 
     Returns
     -------
-    model : torch.Module subclass object
+    object
     """
-    # load the model
-    model = np.load(fname, allow_pickle=True)
-    if isinstance(model, np.ndarray):
-        if model.dtype == np.object_:
-            model = model.item()
+    # load the model if necessary
+    if isinstance(fname, str):
+        with open(fname, 'rb') as f:
+            model = pickle.load(f)
+    else:
+        mode = fname
 
-    # load pdict
+    # load and apply pdict
     if pdict is not None:
+        assert isinstance(model, utils.Module), "fname must be a Module to apply a pdict"
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.load_npy(pdict)
-        update_model_pdict(model, pdict)
+            pdict = optim.ParamDict.read_pkl(pdict)
+        model.update(pdict)
 
-    # move model
+    # move model, if possible
     if device is not None:
-        model.push(device)
+        if hasattr(model, 'push'):
+            model.push(device)
+        elif hasattr(model, 'to'):
+            model = model.to(device)
 
     return model
-
-
-def update_model_pdict(model, pdict):
-    """
-    Update model parameters with pdict
-    values inplace.
-
-    Parameters
-    ----------
-    model : utils.Module subclass
-    pdict : ParamDict
-    """
-    # iterate over keys in pdict and fill model
-    for key in pdict:
-        utils.set_model_attr(model, key, pdict[key])
 
 
 def del_model_attr(model, name):
@@ -162,7 +151,7 @@ def del_model_attr(model, name):
         delattr(utils.get_model_attr(model, name[:-1]), name[-1])
 
 
-def build_sky(multi=None, modfile=None, device=None,
+def build_sky(multi=None, modfile=None, device=None, pdict=None,
               catfile=None, freqs=None, freq_interp='linear',
               set_param=None, unset_param=None):
     """
@@ -178,10 +167,12 @@ def build_sky(multi=None, modfile=None, device=None,
         a CompositeModel with their names. This takes first
         precedence over all other kwargs in the function call.
     modfile : str, optional
-        Filepath to a sky model saved as .npy.
+        Filepath to a sky model saved as .pkl file.
         This takes second precedence over all other kwargs.
     device : str, optional
         Device to move model to.
+    pdict : ParamDict or str, optional
+        Update model with parameters in pdict
     catfile : str, optional
         Filepath to a catalogue .yaml file.
         This takes third precedence over all other kwargs.
@@ -209,16 +200,22 @@ def build_sky(multi=None, modfile=None, device=None,
 
     # model files
     if modfile is not None:
-        model = load_model(modfile, device=device)
+        model = read_pkl(modfile, device=device)
 
     # catalogue files
     elif catfile is not None:
         model = sky_model.read_catalogue(catfile, freqs=freqs, freq_interp=freq_interp,
                                          device=device)[0]
 
+    if pdict is not None:
+        if isinstance(pdict, str):
+            pdict = optim.ParamDict.read_pkl(pdict)
+        model.update(pdict)
+
     if set_param is not None:
         if hasattr(model, set_param):
             setattr(model, set_param, torch.nn.Parameter(getattr(model, set_param)))
+
     if unset_param is not None:
         if hasattr(model, unset_param):
             setattr(model, unset_param, getattr(model, unset_param).detach())
@@ -226,14 +223,16 @@ def build_sky(multi=None, modfile=None, device=None,
     return model
 
 
-def build_beam(modfile=None):
+def build_beam(modfile=None, pdict=None):
     """
     Build a beam model
 
     Parameters
     ----------
     modfile : str, optional
-        Filepath to a .npy beam model
+        Filepath to a .pkl beam model
+    pdict : ParamDict or str, optional
+        Update model with parameters in pdict
 
     Returns
     -------
@@ -241,7 +240,12 @@ def build_beam(modfile=None):
         beam model
     """
     if isinstance(modfile, str):
-        beam = load_model(modfile)
+        beam = read_pkl(modfile)
+
+    if pdict is not None:
+        if isinstance(pdict, str):
+            pdict = optim.ParamDict.read_pkl(pdict)
+        beam.update(pdict)
 
     ### TODO: add more support for manual beams
 
@@ -255,14 +259,14 @@ def build_telescope(modfile=None, location=None, device=None):
     Parameters
     ----------
     modfile : str, optional
-        Filepath to a .npy telescope model.
+        Filepath to a .pkl telescope model.
         This takes precedence over other kwargs.
     location : tuple
         (lon, lat, alt) in [deg, deg, m]
 
     """
     if isinstance(modfile, str):
-        return load_model(modfile)
+        return read_pkl(modfile)
 
     if location is not None:
         telescope = telescope_model.TelescopeModel(location, device=device)
@@ -279,7 +283,7 @@ def build_array(modfile=None, antpos=None, freqs=None, device=None,
     Parameters
     ----------
     modfile : str, optional
-        Filepath to ArrayModel .npy file.
+        Filepath to ArrayModel .pkl file.
         This takes precedence over other kwargs.
     antpos : dict, optional
         Dictionary of antenna number keys,
@@ -302,16 +306,16 @@ def build_array(modfile=None, antpos=None, freqs=None, device=None,
         Baseline redundnacy tolerance [m]
     """
     if isinstance(modfile, str):
-        return load_model(modfile)
+        return read_pkl(modfile)
 
     if isinstance(antpos, str):
-        antpos = load_model(antpos)
+        antpos = read_pkl(antpos)
 
     if isinstance(freqs, str):
-        freqs = torch.tensor(np.load(freqs))
+        freqs = torch.as_tensor(read_pkl(freqs))
 
     if isinstance(cache_f_angs, str):
-        cache_f_angs = toch.tensor(np.load(cache_f_angs))
+        cache_f_angs = toch.as_tensor(read_pkl(cache_f_angs))
 
     array = telescope_model.ArrayModel(antpos, freqs, parameter=parameter,
                                        device=device, cache_f=cache_f,
@@ -330,7 +334,7 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     Parameters
     ----------
     modfile : str, optional
-        Filepath to .npy RIME object.
+        Filepath to .pkl RIME object.
         This takes precedence over other kwargs.
     sky : SkyBase, str or dict, optional
         Sky model to use, load, or build
@@ -358,28 +362,28 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     RIME object
     """
     if isinstance(modfile, str):
-        return load_model(modfile)
+        return read_pkl(modfile)
 
     # setup basics
     if isinstance(times, str):
-        times = np.load(times)
+        times = read_pkl(times)
     elif isinstance(times, list):
         times = np.array(times)
 
     if isinstance(freqs, str):
-        freqs = torch.tensor(np.load(freqs))
+        freqs = torch.as_tensor(read_pkl(freqs))
     elif isinstance(freqs, (list, np.ndarray)):
         freqs = torch.tensor(freqs)
 
     if isinstance(sim_bls, str):
-        sim_bls = [tuple(bl) for bl in np.load(sim_bls).tolist()]
-    elif isinstance(sim_bls, (list, np.ndarray)):
-        sim_bls = [tuple(bl) for bl in sim_bls]
+        sim_bls = read_pkl(sim_bls)
+    if sim_bls is not None:
+        sim_bls = [(int(bl[0]), int(bl[1])) for bl in sim_bls]
 
     if isinstance(data_bls, str):
-        data_bls = [tuple(bl) for bl in np.load(data_bls).tolist()]
-    elif isinstance(data_bls, (list, np.ndarray)):
-        data_bls = [tuple(bl) for bl in data_bls]
+        data_bls = read_pkl(data_bls)
+    if data_bls is not None:
+        sim_bls = [(int(bl[0]), int(bl[1])) for bl in data_bls]
 
     # build sky
     if isinstance(sky, sky_model.SkyBase):
@@ -420,10 +424,8 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     # update parameters if desired
     if pdict is not None:
         if isinstance(pdict, str):
-            pdict = optim.ParamDict.load_npy(pdict)
-        if isinstance(pdict, optim.ParamDict):
-            for key, val in pdict.items():
-                utils.set_model_attr(rime, key, val)
+            pdict = optim.ParamDict.read_pkl(pdict)
+        rime.update(pdict)
 
     return rime
 
@@ -435,11 +437,11 @@ def build_calibration(modfile=None):
     Parameters
     ----------
     modfile : str, optional
-        Filepath to a .npy JonesModel
+        Filepath to a .pkl JonesModel
     """
     ## TODO: add more support for manual calibration setup
 
-    return load_model(modfile)
+    return read_pkl(modfile)
 
 
 def build_sequential(modfile=None, order=None, kind=None, mdict=None):
@@ -450,7 +452,7 @@ def build_sequential(modfile=None, order=None, kind=None, mdict=None):
     Parameters
     ----------
     modfile : str, optional
-        Filepath to .npy Sequential model
+        Filepath to .pkl Sequential model
     order : list, optional
         List of module block names in models dict
         in order of evaluation
@@ -467,7 +469,7 @@ def build_sequential(modfile=None, order=None, kind=None, mdict=None):
     optim.Sequential object
     """
     if isinstance(modfile, str):
-        return load_model(modfile)
+        return read_pkl(modfile)
 
     models = {}
     for mod, k in zip(order, kind):
