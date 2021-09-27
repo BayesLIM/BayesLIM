@@ -435,7 +435,7 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
         if discard is not None:
             cut_l, cut_m = discard
             for i in range(len(cut_l)):
-                keep = keep & ~(np.isclose(l, cut_l[i]) & np.isclose(m, cut_m[i]))
+                keep = keep & ~(np.isclose(l, cut_l[i], atol=1e-5) & np.isclose(m, cut_m[i], atol=1e-5))
 
         # refactor keep slicing
         keep = np.where(keep)[0]
