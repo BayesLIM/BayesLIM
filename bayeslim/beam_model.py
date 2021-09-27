@@ -351,7 +351,7 @@ class PixelResponse(utils.PixInterp):
     """
     def __init__(self, freqs, pixtype, npix, interp_mode='bilinear',
                  freq_mode='channel', device=None,
-                 f0=None, Ndeg=None, poly_kwargs={}):
+                 f0=None, Ndeg=None, poly_dtype=None, poly_kwargs={}):
         """
         Parameters
         ----------
@@ -373,6 +373,8 @@ class PixelResponse(utils.PixInterp):
             Fiducial frequency [Hz] for freq_mode = 'poly'
         Ndeg : int, optional
             Number of poly degrees for freq_mode = 'poly'
+        poly_dtype : torch dtype, optional
+            Cast poly A matrix to this dtype, freq_mode = 'poly'
         poly_kwargs : dict, optional
             Optional kwargs to pass to utils.gen_poly_A
         """
@@ -383,6 +385,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_mode = freq_mode
         self.f0 = f0
         self.Ndeg = Ndeg
+        self.poly_dtype = poly_dtype
         self.freq_ax = 3
         self.poly_kwargs = poly_kwargs
 
@@ -400,7 +403,7 @@ class PixelResponse(utils.PixInterp):
                 self.f0 = self.freqs.mean()
             self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
             self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device,
-                                      **self.poly_kwargs)
+                                      **self.poly_kwargs).to(self.poly_dtype)
 
     def push(self, device):
         """push attrs to device"""
