@@ -160,18 +160,18 @@ def del_model_attr(model, name):
 
 def build_sky(multi=None, modfile=None, device=None, pdict=None,
               catfile=None, freqs=None, freq_interp='linear',
-              set_param=None, unset_param=None):
+              set_param=None, unset_param=None, comp_kwargs={}):
     """
     Build a sky model. A few different methods
     for doing this are provided. For building a composite model,
-    use the multi kwarg.
+    (or multiple composite models) use the multi kwarg.
 
     Parameters
     ----------
     multi : list of (str, dict), optional
-        A list of 2-tuples holding (name, kwargs) for
+        A list of 2-tuples holding (name, kwargs) for calls to
         build_sky(**kwargs), which are then inserted into
-        a CompositeModel with their names. This takes first
+        a CompositeModel index by their names. This takes first
         precedence over all other kwargs in the function call.
     modfile : str, optional
         Filepath to a sky model saved as .pkl file.
@@ -193,7 +193,8 @@ def build_sky(multi=None, modfile=None, device=None, pdict=None,
         Attribute of model to set as a Parameter
     unset_param : str, optional
         Attribute of model to unset as a Parameter
-
+    comp_kwargs : dict, optional
+        Kwargs for CompositeModel when feeding multi kwarg.
     Returns
     -------
     SkyBase or CompositeModel object
@@ -203,7 +204,7 @@ def build_sky(multi=None, modfile=None, device=None, pdict=None,
         models = {}
         for name, kwargs in multi:
             models[name] = build_sky(**kwargs)
-        return sky_model.CompositeModel(models)
+        return sky_model.CompositeModel(models, **comp_kwargs)
 
     # model files
     if modfile is not None:
