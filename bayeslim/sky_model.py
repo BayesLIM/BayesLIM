@@ -73,8 +73,6 @@ class SkyBase(utils.Module):
         """
         self.params = utils.push(self.params, device)
         self.device = device
-        if hasattr(self, 'angs'):
-            self.angs = (self.angs[0].to(device), self.angs[1].to(device))
         for attr in attrs:
             if hasattr(self, attr):
                 setattr(self, attr, getattr(self, attr).to(device))

@@ -128,7 +128,7 @@ class TelescopeModel:
 
 class ArrayModel(utils.PixInterp, utils.Module):
     """
-    A model for antenna layout
+    A model for antenna layout and the baseline fringe
 
     Two kinds of caching are allowed
     1. caching the unit pointing s vector
@@ -308,6 +308,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
     def _fringe(self, bl, zen, az):
         """compute fringe term"""
+        zen, az = torch.as_tensor(zen), torch.as_tensor(az)
         # check for pointing-vec s caching
         s_h = utils.ang_hash(zen), utils.ang_hash(az)
         if s_h not in self.cache and bl not in self.cache:
