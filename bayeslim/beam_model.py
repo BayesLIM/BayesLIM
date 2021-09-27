@@ -614,6 +614,7 @@ class YlmResponse(PixelResponse):
         super(YlmResponse, self).__init__(freqs, 'healpix', self.npix,
                                           interp_mode=interp_mode,
                                           freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
+                                          poly_dtype=poly_dtype,
                                           poly_kwargs=poly_kwargs)
         self.l, self.m = l, m
         self.neg_m = np.any(m < 0)
