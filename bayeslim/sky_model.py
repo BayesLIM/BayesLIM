@@ -73,6 +73,7 @@ class SkyBase(utils.Module):
         """
         self.params = utils.push(self.params, device)
         self.device = device
+        self.freqs = self.freqs.to(device)
         for attr in attrs:
             if hasattr(self, attr):
                 setattr(self, attr, getattr(self, attr).to(device))
@@ -103,9 +104,9 @@ class SkyBase(utils.Module):
                 self.params = torch.nn.Parameter(params)
             else:
                 self.params = params
-            self.freqs = freqs
+            self.freqs = freqs.to(self.device)
 
-        self.R.freqs = freqs
+        self.R.freqs = freqs.to(self.device)
         self.R._setup()
 
 
@@ -590,6 +591,7 @@ class PixelSkyResponse:
             for k in self.jl:
                 self.jl[k] = self.jl[k].to(device)
 
+        self.freqs = self.freqs.to(device)
         self.device = device
 
 
