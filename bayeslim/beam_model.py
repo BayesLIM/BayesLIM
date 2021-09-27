@@ -411,7 +411,6 @@ class PixelResponse(utils.PixInterp):
         if self.freq_mode == 'poly':
             self.dfreqs = self.dfreqs.to(device)
             self.A = self.A.to(device)
-        self.R.push(device)
     
     def __call__(self, params, zen, az, *args):
         # interpolate or generate sky values
@@ -768,6 +767,7 @@ class YlmResponse(PixelResponse):
     def push(self, device):
         """push attrs to device"""
         self.device = device
+        super().push(device)
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
