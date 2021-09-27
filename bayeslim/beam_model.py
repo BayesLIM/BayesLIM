@@ -560,9 +560,9 @@ class YlmResponse(PixelResponse):
     """
     def __init__(self, l, m, freqs, mode='generate', device=None,
                  interp_mode='bilinear', interp_angs=None,
-                 powerbeam=True, freq_mode='channel', f0=None,
-                 Ndeg=None, poly_kwargs={},
-                 Ylm_kwargs={}):
+                 powerbeam=True, freq_mode='channel',
+                 f0=None, Ndeg=None, poly_dtype=None,
+                 poly_kwargs={}, Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -598,6 +598,8 @@ class YlmResponse(PixelResponse):
             fiducial frequency [Hz], for 'poly' freq_mode
         Ndeg : int, optional
             Number of poly terms, for 'poly' freq_mode
+        poly_dtype : torch dtype, optional
+            Cast poly A matrix to this dtype, freq_mode = 'poly'
         poly_kwargs : dict, optional
             Kwargs for generating poly modes, for 'poly' freq_mode
         Ylm_kwargs : dict, optional
