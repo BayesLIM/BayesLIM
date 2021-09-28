@@ -222,11 +222,11 @@ def build_sky(multi=None, modfile=None, device=None, pdict=None,
 
     if set_param is not None:
         if hasattr(model, set_param):
-            setattr(model, set_param, torch.nn.Parameter(getattr(model, set_param)))
+            model.set_param(set_param)
 
     if unset_param is not None:
         if hasattr(model, unset_param):
-            setattr(model, unset_param, getattr(model, unset_param).detach())
+            model.unset_param(unset_param)
 
     return model
 
@@ -398,7 +398,7 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     if isinstance(data_bls, str):
         data_bls = read_pkl(data_bls)
     if data_bls is not None:
-        sim_bls = [(int(bl[0]), int(bl[1])) for bl in data_bls]
+        data_bls = [(int(bl[0]), int(bl[1])) for bl in data_bls]
 
     # build sky
     if isinstance(sky, sky_model.SkyBase):
