@@ -742,7 +742,7 @@ class YlmResponse(PixelResponse):
         Ylm = self.get_Ylm(zen, az)
 
         # next do slower dot product over Ncoeff
-        beam = p @ Ylm.transpose(-1, -2)
+        beam = p @ Ylm
 
         if self.powerbeam:
             if torch.is_complex(beam):
