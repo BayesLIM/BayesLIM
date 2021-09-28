@@ -665,48 +665,28 @@ class YlmResponse(PixelResponse):
 
         return Ylm
 
-    def load_cache(self, fname, lmax=None, discard=None, cast=None,
-                   zen_max=None):
+    def set_cache(self, Ylm, angs):
         """
-        Load an hdf5 file with Ylm and ang arrays
-        and insert into the cache
+        Insert a Ylm tensor into Ylm_cache, hashed on the
+        zenith array. We use the forward transform convention
+
+        .. math::
+
+            T = \sum_{lm} a_{lm} Y_{lm}
 
         Parameters
         ----------
-        fname : str
-            Filepath to hdf5 file with Ylm, angs, l, and m as datasets.
-        lmax : float, optional
-            Truncate all Ylm modes with l > lmax
-        discard : tensor, optional
-            Of shape (2, Nlm), holding [l, m] modes
-            to discard from fname. Discards any Ylm modes
-            that match the provided l and m.
-        cast : torch.dtype
-            Data type to cast Ylm into before caching
-        zen_max : float, optional
-            truncate Ylm response for zen > zen_max [deg]
+        Ylm : tensor
+            Ylm forward model matrix of shape (Nmodes, Npix)
+        angs : tuple
+            sky angles of Ylm pixels of shape (2, Npix)
+            holding (zenith, azimuth) in [deg]
         """
-        Ylm, angs, l, m = utils.load_Ylm(fname, lmax=lmax, discard=discard,
-                                         cast=cast, zen_max=zen_max, device=self.device)
-
+        assert len(self.l) == len(Ylm)
+        zen, az = angs
+        h = utils.ang_hash(zen)
         self.Ylm_cache[h] = Ylm
-        self.ang_cache[h] = zen, az
-        self.l, self.m = l, m
-        self.neg_m = np.any(m < 0)
-
-    def write_cache(self, fname, key, overwrite=False):
-        """
-        Write a key in the cache to fname
-
-        Parameters
-        ----------
-        fname : str
-            Filepath of output hdf5 file
-        key : int
-            key of cache
-        """
-        utils.write_Ylm(fname, self.Ylm_cache[key], self.ang_cache[key],
-                        self.l, self.m, overwrite=overwrite)
+        self.ang_cache[h] = (zen, az)
 
     def set_beam(self, beam, zen, az, freqs):
         self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
