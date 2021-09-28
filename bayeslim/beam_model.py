@@ -559,7 +559,7 @@ class YlmResponse(PixelResponse):
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
     def __init__(self, l, m, freqs, mode='generate', device=None,
-                 interp_mode='bilinear', interp_angs=None,
+                 interp_mode='bilinear', interp_angs=None, npix=None,
                  powerbeam=True, freq_mode='channel',
                  f0=None, Ndeg=None, poly_dtype=None,
                  poly_kwargs={}, Ylm_kwargs={}):
@@ -589,6 +589,9 @@ class YlmResponse(PixelResponse):
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
             calls. Must be a healpix map. Only needed if mode is 'interpolate'
+        npix : int, optional
+            Number of pixels of output map. Currently only healpix supported.
+            If a partial healpix map is used, this is the full map size given nside.
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
             beam is complex antenna farfield beam.
@@ -610,8 +613,8 @@ class YlmResponse(PixelResponse):
         Y_cache : a cache for Y_lm matrices (Npix, Ncoeff)
         ang_cache : a cache for (zen, az) arrays [deg]
         """
-        self.npix = interp_angs[0].shape[-1] if interp_angs is not None else None
-        super(YlmResponse, self).__init__(freqs, 'healpix', self.npix,
+        ## TODO: enable pix_type other than healpix
+        super(YlmResponse, self).__init__(freqs, 'healpix', npix,
                                           interp_mode=interp_mode,
                                           freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
                                           poly_dtype=poly_dtype,
