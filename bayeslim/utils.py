@@ -392,7 +392,7 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
             f.create_dataset('m', data=m)
 
 
-def load_Ylm(fname, lmax=None, discard=None, cast=None,
+def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
              zen_max=None, device=None, read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
@@ -401,6 +401,8 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
     ----------
     fname : str
         Filepath to hdf5 file with Ylm, angs, l, and m as datasets.
+    lmin : float, optional
+        Truncate all Ylm modes with l < lmin
     lmax : float, optional
         Truncate all Ylm modes with l > lmax
     discard : tensor, optional
@@ -430,8 +432,10 @@ def load_Ylm(fname, lmax=None, discard=None, cast=None,
 
         # truncate modes
         keep = np.ones_like(l, dtype=bool)
+        if lmin is not None:
+            keep = keep & (l >= lmin)
         if lmax is not None:
-            keep = keep & (l < lmax)
+            keep = keep & (l <= lmax)
         if discard is not None:
             cut_l, cut_m = discard
             for i in range(len(cut_l)):

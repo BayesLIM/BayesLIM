@@ -20,22 +20,27 @@ class VisData:
         self.icov, self.cov, self.cov_axis = None, None, None
         self.bls, self.time, self.times = None, None, None
         self.freqs, self.pol, self.history = None, None, ''
-        self.telescope, self.array = None, None
+        self.telescope = None
+        self.antpos, self.ants, self.antvec = None, None, None
         self.atol = 1e-5
 
-    def setup_telescope(self, telescope=None, array=None):
+    def setup_meta(self, telescope=None, antpos=None):
         """
-        Set the telescope and array models
+        Set the telescope and antpos dict
 
         Parameters
         ----------
         telescope : TelescopeModel, optional
             Telescope location
-        array : ArrayModel, optional
-            Array layout model
+        antpos : dict, optional
+            Antenna position dictionary in ENU [meters].
+            Antenna number int as key, position vector as key
         """
         self.telescope = telescope
-        self.array = array
+        self.antpos = antpos
+        if antpos is not None:
+            self.ants = np.array(list(antpos.keys()))
+            self.antvec = np.array(list(antpos.values()))
 
     def setup_data(self, bls, times, freqs, pol=None, time=None,
                    data=None, flags=None, cov=None, icov=None, cov_axis=None,
@@ -129,7 +134,7 @@ class VisData:
         is detached and cloned.
         """
         vd = VisData()
-        vd.setup_telescope(telescope=self.telescope, array=self.array)
+        vd.setup_meta(telescope=self.telescope, antpos=self.antpos)
         vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
                       time=self.time, data=self.data.detach().clone(),
                       flags=self.flags, cov=self.cov, icov=self.icov,
@@ -550,8 +555,8 @@ class VisData:
                 f.attrs['history'] = self.history
                 # write telescope and array objects
                 f.attrs['tloc'] = self.telescope.location
-                f.attrs['ants'] = self.array.ants
-                f.attrs['antpos'] = self.array.antpos
+                f.attrs['ants'] = self.ants
+                f.attrs['antvec'] = self.antvec
                 f.attrs['time'] = self.time
 
     def read_hdf5(self, fname, read_data=True, bls=None, times=None, freqs=None, pol=None):
@@ -577,7 +582,6 @@ class VisData:
             cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
             history = f.attrs['history'] if 'history' in f.attrs else ''
 
-
             # setup just full-size metadata
             self.setup_data(_bls, _times, _freqs, pol=_pol, time=time,
                             cov_axis=cov_axis, run_check=False)
@@ -601,12 +605,11 @@ class VisData:
 
             # setup downselected metadata and data
             ants = f.attrs['ants'].tolist()
-            antpos = f.attrs['antpos']
-            antpos_d = dict(zip(ants, antpos))
+            antvec = f.attrs['antvec']
+            antpos = dict(zip(ants, antvec))
             tloc = f.attrs['tloc']
             telescope = telescope_model.TelescopeModel(tloc)
-            array = telescope_model.ArrayModel(antpos_d, self.freqs)
-            self.setup_telescope(telescope, array)
+            self.setupmeta(telescope, antpos)
             self.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
                             data=data, flags=flags, cov=cov, time=time,
                             cov_axis=cov_axis, history=history)
@@ -672,8 +675,7 @@ class VisData:
         antpos = dict(zip(ants, antpos))
         loc = uvd.telescope_location_lat_lon_alt_degrees
         telescope = telescope_model.TelescopeModel((loc[1], loc[0], loc[2]))
-        arr = telescope_model.ArrayModel(antpos, freqs)
-        self.setup_telescope(telescope, arr)
+        self.setup_meta(telescope, antpos)
 
         if run_check:
             self.check()
@@ -683,7 +685,7 @@ class VisData:
         Run checks on data
         """
         assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        assert isinstance(self.array, telescope_model.ArrayModel)
+        assert isinstance(self.antpos, dict)
         assert isinstance(self.data, torch.Tensor)
         assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
         if self.flags is not None:
@@ -701,7 +703,7 @@ class VisData:
                 assert self.cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
                                           self.Nbls, self.Ntimes)
         for ant1, ant2 in zip(self.ant1, self.ant2):
-            assert (ant1 in self.array.ants) and (ant2 in self.array.ants)
+            assert (ant1 in self.ants) and (ant2 in self.ants)
 
 
 def concat_VisData(vds, axis, run_check=True):
@@ -752,7 +754,7 @@ def concat_VisData(vds, axis, run_check=True):
     if vd.flags is not None:
         flags = torch.cat([o.flags for o in vds], dim=dim)
 
-    out.setup_telescope(vd.telescope, vd.array)
+    out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
                    data=data, flags=flags, cov=cov,
                    cov_axis=vd.cov_axis, history=vd.history,

@@ -212,8 +212,10 @@ class RIME(utils.Module):
                                        kind, zen, az, vis, bl_slice, j)
 
         history = io.get_model_description(self)[0]
-        vd.setup_telescope(self.telescope, self.array)
-        vd.setup_data(self.sim_bls, self.times, self.freqs, pol=self.beam.pol,
+        vd.setup_meta(self.telescope,
+                      dict(zip(self.array.ants, self.array.antpos.cpu().detach().numpy())))
+        bls = self.sim_bls if self.data_bls is None else self.data_bls
+        vd.setup_data(bls, self.times, self.freqs, pol=self.beam.pol,
                       data=vis, flags=None, cov=None, history=history)
         return vd
 
