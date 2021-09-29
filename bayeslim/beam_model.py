@@ -560,9 +560,9 @@ class YlmResponse(PixelResponse):
     """
     def __init__(self, l, m, freqs, mode='generate', device=None,
                  interp_mode='bilinear', interp_angs=None, npix=None,
-                 powerbeam=True, freq_mode='channel',
-                 f0=None, Ndeg=None, poly_dtype=None,
-                 poly_kwargs={}, Ylm_kwargs={}):
+                 powerbeam=True, freq_mode='channel', f0=None,
+                 Ndeg=None, poly_dtype=None, poly_kwargs={},
+                 Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -620,7 +620,9 @@ class YlmResponse(PixelResponse):
                                           poly_dtype=poly_dtype,
                                           poly_kwargs=poly_kwargs)
         self.l, self.m = l, m
-        self.neg_m = np.any(m < 0)
+        self.mult = torch.ones(len(m), dtype=utils._cfloat(), device=device)
+        if np.all(m >= 0):
+            self.mult[m > 0] = 2.0
         self.powerbeam = powerbeam
         self.Ylm_cache = {}
         self.ang_cache = {}
@@ -725,7 +727,7 @@ class YlmResponse(PixelResponse):
         Ylm = self.get_Ylm(zen, az)
 
         # next do slower dot product over Ncoeff
-        beam = p @ Ylm
+        beam = (p * self.mult) @ Ylm
 
         if self.powerbeam:
             if torch.is_complex(beam):

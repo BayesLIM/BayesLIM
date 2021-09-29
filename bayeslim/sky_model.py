@@ -343,7 +343,7 @@ class PixelSky(SkyBase):
                     U - iV & I - Q \\end{array}
                 \\right)
 
-            See bayeslim.sky_model.stokes2linear() for details.
+            See sky_model.stokes2linear() for details.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -426,7 +426,7 @@ class PixelSkyResponse:
             options = ['pixel', 'alm']
         freq_mode : str, optional
             Choose the freq parameterization (default is channel)
-            options = ['channel', 'poly', 'bessel']
+            options = ['channel', 'poly', 'powerlaw', 'bessel']
         device : str, optional
             Device to put model on
         transform_order : int, optional
@@ -476,7 +476,8 @@ class PixelSkyResponse:
         # freq setup
         self.A, self.jl = None, None
         if self.freq_mode == 'poly':
-            self.dfreqs = (self.freqs - self.freq_kwargs['f0']) / 1e6  # MHz
+            f0 = getattr(self.freq_kwargs, 'f0', self.freqs.mean())
+            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
             self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
                                       basis=getattr(self.freq_kwargs, 'basis', 'direct'),
                                       whiten=getattr(self.freq_kwargs, 'whiten', None),
@@ -493,14 +494,14 @@ class PixelSkyResponse:
             else:
                 jl, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
-                                                  kmax=getattr(freq_kwargs, 'kmax'),
-                                                  decimate=getattr(freq_kwargs, 'decimate', True),
-                                                  dk_factor=getattr(freq_kwargs, 'dk_factor', 1e-1),
+                                                  kmax=getattr(self.freq_kwargs, 'kmax'),
+                                                  decimate=getattr(self.freq_kwargs, 'decimate', True),
+                                                  dk_factor=getattr(self.freq_kwargs, 'dk_factor', 1e-1),
                                                   device=self.device,
-                                                  method=getattr(freq_kwargs, 'radial_method', 'default'),
-                                                  Nproc=getattr(freq_kwargs, 'Nproc', None),
-                                                  Ntask=getattr(freq_kwargs, 'Ntask', 10),
-                                                  renorm=getattr(freq_kwargs, 'renorm', False))
+                                                  method=getattr(self.freq_kwargs, 'radial_method', 'default'),
+                                                  Nproc=getattr(self.freq_kwargs, 'Nproc', None),
+                                                  Ntask=getattr(self.freq_kwargs, 'Ntask', 10),
+                                                  renorm=getattr(self.freq_kwargs, 'renorm', False))
                 self.jl = jl
                 self.kbins = kbins
 
@@ -515,6 +516,9 @@ class PixelSkyResponse:
                                              self.spatial_kwargs['l'],
                                              self.spatial_kwargs['m'],
                                              device=self.device, real_field=True)
+            self.alm_mult = torch.ones(len(self.spatial_kwargs['m']), dtype=utils._cfloat(), device=self.device)
+            if np.all(self.spatial_kwargs['m'] >= 0):
+                self.alm_mult[self.spatial_kwargs['m'] > 0] = 2.0
 
     def spatial_transform(self, params):
         """
@@ -536,7 +540,7 @@ class PixelSkyResponse:
         if self.spatial_mode == 'pixel':
             return params
         elif self.spatial_mode == 'alm':
-            return params @ self.Ylm
+            return (params * self.alm_mult) @ self.Ylm
 
     def freq_transform(self, params):
         """
@@ -579,7 +583,7 @@ class PixelSkyResponse:
             params = self.freq_transform(params)
             params = self.spatial_transform(params)
 
-        return params
+        return params.real
 
     def push(self, device):
         if self.spatial_mode == 'alm':
