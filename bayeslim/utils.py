@@ -393,7 +393,7 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
 
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
-             zen_max=None, device=None, read_data=True):
+             colat_min=None, colat_max=None, device=None, read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
 
@@ -411,9 +411,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         that match the provided l and m.
     cast : torch.dtype
         Data type to cast Ylm into
-    zen_max : float, optional
-        truncate Ylm response for zen > zen_max [deg]
-        assuming angs[0] is zenith (co-latitude)
+    colat_min : float, optional
+        truncate Ylm response for colat < colat_min [deg]
+        assuming angs[0] is colatitude (zenith)
+    colat_max : float, optional
+        truncate Ylm response for colat > colat_max [deg]
+        assuming angs[0] is colatitude (zenith)
     device : str, optional
         Device to place Ylm
     read_data : bool, optional
@@ -455,12 +458,20 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             Ylm = None
 
     # truncate sky
-    if zen_max is not None:
-        zen, az = angs
-        keep = zen < zen_max
-        zen = zen[keep]
+    if colat_min is not None:
+        colat, az = angs
+        keep = colat >= colat_min
+        colat = colat[keep]
         az = az[keep]
-        angs = zen, az
+        angs = colat, az
+        if read_data:
+            Ylm = Ylm[:, keep]
+    if colat_max is not None:
+        colat, az = angs
+        keep = colat <= colat_max
+        colat = colat[keep]
+        az = az[keep]
+        angs = colat, az
         if read_data:
             Ylm = Ylm[:, keep]
 
