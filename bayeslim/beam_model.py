@@ -759,6 +759,7 @@ class YlmResponse(PixelResponse):
         """push attrs to device"""
         self.device = device
         super().push(device)
+        self.mult = self.mult.to(device)
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
