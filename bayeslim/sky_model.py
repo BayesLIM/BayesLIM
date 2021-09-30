@@ -588,6 +588,7 @@ class PixelSkyResponse:
     def push(self, device):
         if self.spatial_mode == 'alm':
             self.Ylm = self.Ylm.to(device)
+            self.alm_mult = self.alm_mult.to(device)
 
         if self.freq_mode == 'poly':
             self.A = self.A.to(device)
