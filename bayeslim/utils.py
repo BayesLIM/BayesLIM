@@ -11,6 +11,7 @@ import copy
 import warnings
 import os
 from astropy import constants
+import time as timer
 
 from . import special, version
 
@@ -1656,3 +1657,20 @@ def _make_hex(N, D=15):
 class SimpleIndex:
     def __getitem__(self, k):
         return 0
+
+
+def smi(name, fname='nvidia_mem.txt'):
+    os.system("nvidia-smi -f {}".format(fname))
+    with open(fname) as f: lines = f.readlines()
+    date = lines[0].strip()
+    output = []
+    for i, line in enumerate(lines):
+        if name in line:
+            gpu = line[4]
+            mems = lines[i+1].split('|')[2].strip().split('/')
+            alloc = "{:>6} MiB".format("{:,}".format(int(mems[0].strip()[:-3])))
+            total = "{:>6} MiB".format("{:,}".format(int(mems[1].strip()[:-3])))
+            mem = "{} / {}".format(alloc, total)
+            output.append("| GPU {} | {} |".format(gpu, mem))
+    print('\n'.join([date] + ['o' + '-'*33 + 'o'] + output + ['o' + '-'*33 + 'o']))
+

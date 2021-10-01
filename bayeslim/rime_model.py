@@ -102,19 +102,18 @@ class RIME(utils.Module):
         ----------
         sim_bls : list of 2-tuples
             A list of baselines, i.e. antenna-pair tuples,
-            to simulate, which hold the antenna numbers
-            of each baseline in array.ants.
+            to simulate, which hold antenna numbers from self.array.ants
+            of the simulated baseline.
             If array.ants = [1, 3, 5], then bls could be, for e.g.,
             bls = [(1, 3), (1, 5), (3, 5)]. Note sim_bls must
             be a subset of array.bls.
         data_bls : list, optional
             List of baselines in the output visibilities.
             Default is just sim_bls. However, if simulating redundant
-            baseline groups and array.antpos is not a parameter
+            baseline groups and array.antpos is not a parameter, then
             data_bls can contain bls not in sim_bls, and the
-            redundant bl in sim_bls will be copied over to data_bls
-            appropriately. Note this will not work if array.antpos
-            is a parameter. Also note that redundant baselines
+            redundant bls in data_bls will be copied over to from each
+            unique bl in sim_bls appropriately. Note that redundant baselines
             must be ordered next to each other in data_bls.
         """
         for i, bl in enumerate(sim_bls):
@@ -205,7 +204,7 @@ class RIME(utils.Module):
                 elif kind == 'alm':
                     raise NotImplementedError
 
-                # iterate over baselines
+                # iterate over baselines: generate and apply fringe, apply beam, sum
                 for k, bl in enumerate(self.sim_bls):
                     bl_slice = self._bl2vis[bl]
                     self._prod_and_sum(ant_beams, cut_sky, bl[0], bl[1],

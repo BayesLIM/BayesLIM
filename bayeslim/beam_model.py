@@ -209,11 +209,14 @@ class PixelBeam(utils.Module):
             perceived sky, having mutiplied beam with sky, of shape
             (Npol, Npol, Nfreqs, Npix)
         """
-        # move sky to device
+        # move objects to device
+        beam1 = beam1.to(self.device)
         sky = sky.to(self.device)
 
         if beam2 is None:
             beam2 = beam1
+        else:
+            beam2 = beam2.to(self.device)
 
         if self.polmode in ['1pol', '2pol']:
             if self.powerbeam:

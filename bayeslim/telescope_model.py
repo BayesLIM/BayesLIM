@@ -177,8 +177,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
             If parameter is False, then redundant baseline groups
             are built. This is the bl vector redundancy tolerance [m]
         """
-        # init
+        # init Module
         super(utils.PixInterp, self).__init__()
+        # init PixInterp
         npix = cache_f_angs.shape[-1] if cache_f else None
         super().__init__('healpix', npix, interp_mode=interp_mode,
                          device=device)
@@ -303,7 +304,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         """Clear interpolation and fringe cache"""
         # this is PixInterp cache
         self.interp_cache = {}
-        # this is fringe caching
+        # this is fringe cache
         self.cache = {}
 
     def _fringe(self, bl, zen, az):
