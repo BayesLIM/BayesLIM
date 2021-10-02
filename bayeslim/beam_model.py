@@ -293,7 +293,7 @@ class PixelBeam(utils.Module):
                 psky[:, :, k] = self.apply_beam(beam1, sky, beam2=beam2)
 
             sky_comp['sky'] = psky
-            sky_comp['angs'] = sky_comp['angs'][:, cut]
+            sky_comp['angs'] = sky_comp['angs'][0][cut], sky_comp['angs'][1][cut]
             sky_comp['altaz'] = torch.vstack([alt, az])
 
         else:
