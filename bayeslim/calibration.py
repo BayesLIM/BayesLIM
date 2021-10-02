@@ -84,17 +84,21 @@ class JonesModel(utils.Module):
         self.R = R
         self.polmode = polmode
         self.ants = ants
+        self.single_ant = single_ant
+        self._setup(bls)
+        # construct _args for str repr
+        self._args = dict(refant=refant, polmode=polmode)
+        self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
+
+    def _setup(self, bls):
         bls = [tuple(bl) for bl in bls]
         self.bls = bls
-        if not single_ant:
+        if not self.single_ant:
             self._vis2ants = {bl: (ants.index(bl[0]), ants.index(bl[1])) for bl in bls}
         else:
             # a single antenna for all baselines
             assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
             self._vis2ants = {bl: (0, 0) for bl in bls}
-        # construct _args for str repr
-        self._args = dict(refant=refant, polmode=polmode)
-        self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
     def forward(self, V_m, undo=False):
         """
@@ -114,8 +118,12 @@ class JonesModel(utils.Module):
             Predicted visibilities, having forwarded
             V_m through the Jones parameters.
         """
+        # setup if needed
+        if V_m.bls != self.bls:
+            self._setup(V_m.bls)
+
         # push V_m to self.device
-        V_m.to(self.device)
+        V_m.push(self.device)
 
         # setup empty VisData for output
         V_p = V_m.copy()
@@ -439,7 +447,7 @@ class RedVisModel(utils.Module):
             the redundant visibility model
         """
         # push to device
-        V_m.to(self.device)
+        V_m.push(self.device)
 
         # setup predicted visibility
         V_p = V_m.copy()
