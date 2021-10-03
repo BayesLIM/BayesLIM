@@ -230,19 +230,15 @@ class RIME(utils.Module):
         # generate fringe
         fringe = self.array.gen_fringe((ant1, ant2), zen, az)
 
-        # apply fringe to beam and/or sky depending on params.
-        # when using autograd, this can reduce memory of graph
-        sky_is_param = cut_sky.requires_grad
-        if sky_is_param:
-            # first apply fringe to beam1
-            beam1 = self.array.apply_fringe(fringe, beam1, kind)
-            # then apply beam-weighted fringe to sky
-            psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
-        else:
-            # first apply beam to sky
-            psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
-            # then apply fringe to beam-weighted sky
-            psky = self.array.apply_fringe(fringe, psky, kind)
+        # first apply beam to sky
+        psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
+
+        # then apply fringe to beam-weighted sky
+        psky = self.array.apply_fringe(fringe, psky, kind)
+
+        # LEGACY: this seems to consume more memory...
+        #beam1 = self.array.apply_fringe(fringe, beam1, kind)
+        #psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # sum across sky
         vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1).to(self.device)

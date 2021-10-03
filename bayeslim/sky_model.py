@@ -574,8 +574,8 @@ class PixelSkyResponse:
             return out
 
     def __call__(self, params):
-        if params.device != self.device:
-            params = utils.push(params, self.device)
+        if torch.device(params.device) != torch.device(self.device):
+            params = params.to(self.device)
         if self.transform_order == 0:
             params = self.spatial_transform(params)
             params = self.freq_transform(params)

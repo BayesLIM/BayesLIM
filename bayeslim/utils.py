@@ -1587,7 +1587,7 @@ def tensor2numpy(tensor, clone=True):
     """
     if isinstance(tensor, torch.Tensor):
         tensor = tensor.detach()
-        if tensor.device != 'cpu':
+        if torch.device(tensor.device) != torch.device('cpu'):
             tensor = tensor.cpu()
         if clone:
             tensor = tensor.clone()
