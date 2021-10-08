@@ -171,7 +171,7 @@ class RIME(utils.Module):
 
         # turn into dict if neccessary
         if not isinstance(times, dict):
-            if isinstance(times, list):
+            if isinstance(times, list) or (isinstance(times, np.ndarray) and times.ndim > 1):
                 # this is a list of time arrays
                 times = {k: _times for k, _times in enumerate(times)}
             else:
