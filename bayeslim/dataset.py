@@ -810,7 +810,7 @@ def concat_VisData(vds, axis, run_check=True):
 
     elif axis == 'time':
         dim = 3
-        times = torch.cat([o.times for o in vds])
+        times = torch.cat([torch.as_tensor(o.times) for o in vds])
         freqs = vd.freqs
         pol = vd.pol
         bls = vd.bls
@@ -820,7 +820,7 @@ def concat_VisData(vds, axis, run_check=True):
     elif axis == 'freq':
         dim = 4
         times = vd.times
-        freqs = torch.cat([o.freqs for o in vds])
+        freqs = torch.cat([torch.as_tensor(o.freqs) for o in vds])
         pol = vd.pol
         bls = vd.bls
         if vd.cov is not None:
