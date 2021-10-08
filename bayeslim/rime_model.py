@@ -3,10 +3,11 @@ Radio Interferometric Measurement Equation (RIME) module
 """
 import torch
 import numpy as np
+from collections.abc import Iterable
 
 from . import telescope_model, calibration, beam_model, sky_model, utils, io
 from .utils import _float, _cfloat
-from .visdata import VisData
+from .dataset import VisData
 
 
 class RIME(utils.Module):
@@ -60,15 +61,18 @@ class RIME(utils.Module):
             antenna primary beam. Default is a tophat response.
         array : ArrayModel object
             A model of the telescope location and antenna positions
-        sim_bls : list of 2-tuples
+        sim_bls : list of 2-tuples or list of lists
             A list of baselines, i.e. antenna-pair tuples,
-            to simulate, which hold the antenna numbers
-            of each baseline in array.ants.
-            If array.ants = [1, 3, 5], then bls could be, for e.g.,
-            bls = [(1, 3), (1, 5), (3, 5)]. Note sim_bls must
-            be a subset of array.bls.
-        times : tensor
-            Array of observation times in Julian Date
+            to simulate, which hold the antenna numbers of each baseline
+            in array.ants. If array.ants = [1, 3, 5], then sim_bls could
+            be, for e.g., sim_bls = [(1, 3), (1, 5), (3, 5)]. Note
+            sim_bls must be a subset of array.bls.
+            This can also be passed as a list of lists, specifying groups of 
+            bls to simulate independently.
+        times : tensor or list of tensors
+            Array of observation times in Julian Date. Can also be passed
+            as a list of tensors holding time groups to simulate
+            independently (e.g. for minibatching).
         freqs : tensor
             Array of observational frequencies [Hz]
         data_bls : list, optional
@@ -85,88 +89,156 @@ class RIME(utils.Module):
         self.telescope = telescope
         self.beam = beam
         self.array = array
-        self.times = times
-        self.Ntimes = len(times)
         self.device = device
         self.freqs = freqs
         self.Nfreqs = len(freqs)
-        self.set_sim_bls(sim_bls, data_bls)
+        self.setup_sim_bls(sim_bls, data_bls)
+        self.setup_sim_times(times=times)
 
-    def set_sim_bls(self, sim_bls, data_bls=None):
+    def setup_sim_bls(self, sim_bls, data_bls=None):
         """
         Set the active set of baselines for sim_bls,
         which is iterated over in forward().
-        Sets self._bl2vis mapping.
+        Also sets self._bl2vis mapping, which maps a baseline
+        tuple to its indices in the output visibility.
 
         Parameters
         ----------
-        sim_bls : list of 2-tuples
-            A list of baselines, i.e. antenna-pair tuples,
-            to simulate, which hold antenna numbers from self.array.ants
-            of the simulated baseline.
-            If array.ants = [1, 3, 5], then bls could be, for e.g.,
-            bls = [(1, 3), (1, 5), (3, 5)]. Note sim_bls must
-            be a subset of array.bls.
+        sim_bls : list of 2-tuples or list of lists
+            See class init docstring.
         data_bls : list, optional
-            List of baselines in the output visibilities.
-            Default is just sim_bls. However, if simulating redundant
-            baseline groups and array.antpos is not a parameter, then
-            data_bls can contain bls not in sim_bls, and the
-            redundant bls in data_bls will be copied over to from each
-            unique bl in sim_bls appropriately. Note that redundant baselines
-            must be ordered next to each other in data_bls.
+            See class init docstring.
         """
-        for i, bl in enumerate(sim_bls):
-            if not isinstance(bl, tuple):
-                sim_bls[i] = tuple(bl)
+        self.bl_group_id = 0
+        # turn sim_bls into a dictionary if necessary
+        if not isinstance(sim_bls, dict):
+            # sim_bls is either list of bl tuples, or list of list of bl tuples
+            assert isinstance(sim_bls[0][0], int) or isinstance(sim_bls[0][0][0], int), \
+                "sim_bls must be list of 2-tuples or list of list of 2-tuples"
+            if isinstance(sim_bls[0], tuple):
+                sim_bls = {0: sim_bls}
+            elif isinstance(sim_bls[0], list):
+                sim_bls = {i: sim_bls[i] for i in range(len(sim_bls))}
+
+        # type checks
+        for k in sim_bls:
+            for i, bl in enumerate(sim_bls[k]):
+                if not isinstance(bl, tuple):
+                    sim_bls[k][i] = tuple(bl)
         if data_bls is not None:
             for i, bl in enumerate(data_bls):
                 if not isinstance(bl, tuple):
                     data_bls[i] = tuple(bl)
-        self.sim_bls = sim_bls
-        self.Nbls = len(self.sim_bls)
-        self.data_bls = None if self.array.parameter else data_bls
-        if self.data_bls is None:
-            self._bl2vis = {bl: i for i, bl in enumerate(self.sim_bls)}
-            self.Ndata_bls = self.Nbls
-        else:
-            # get redundant group indices
-            self.Ndata_bls = len(self.data_bls)
-            sim_red_inds = [self.array.bl2red[bl] for bl in self.sim_bls]
-            data_red_inds = [self.array.bl2red[bl] for bl in self.data_bls]
-            assert set(sim_red_inds) == set(data_red_inds), "Found non-redundant baselines"
-            self._bl2vis = {}
-            for si, bl in zip(sim_red_inds, self.sim_bls):
-                indices = [i for i, di in enumerate(data_red_inds) if di == si]
-                assert np.all(np.diff(indices) == 1), "redundant bls must be adjacent each other in data_bls"
-                self._bl2vis[bl] = slice(indices[0], indices[-1] + 1)
 
-    def forward(self, sky_components=None):
+        self.sim_bl_groups = sim_bls
+        self.all_bls = [bl for k in self.sim_bl_groups for bl in self.sim_bl_groups[k]]
+        data_bls = None if self.array.parameter else data_bls
+
+        # _bl2vis: maps baseline tuple to output visibility indices along bl dimension
+        if data_bls is None:
+            # output visibility is same shape as sim_bls
+            self._bl2vis = {k: {bl: i for i, bl in enumerate(self.sim_bl_groups[k])} for k in self.sim_bl_groups}
+            self.data_bl_groups = self.sim_bl_groups
+        else:
+            # output visibility has extra redundant baselines
+            self._bl2vis = {}
+            self.data_bl_groups = {}
+            for k in self.sim_bl_groups:
+                sim_red_inds = [self.array.bl2red[bl] for bl in self.sim_bl_groups[k]]
+                data_red_inds = [self.array.bl2red[bl] for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
+                assert set(sim_red_inds) == set(data_red_inds), "Non-redundant baselines in data_bls wrt sim_bls"
+                self.data_bl_groups[k] = [bl for i, bl in enumerate(data_bls) if data_red_inds[i] in sim_red_inds]
+                # iterate over every bl in sim_bl_groups and compute its index in data_bls
+                for si, bl in zip(sim_red_inds, self.sim_bl_groups[k]):
+                    indices = [i for i, di in enumerate(data_red_inds) if di == si]
+                    assert np.all(np.diff(indices) == 1), "redundant bls must be adjacent each other in data_bls"
+                    self._bl2vis[k][bl] = slice(indices[0], indices[-1] + 1)
+
+        self._set_group()
+
+    def setup_sim_times(self, times):
+        """
+        Set the active times to simulate.
+
+        Parameters
+        ----------
+        times : tensor or list of tensor
+            See class init docstring
+        """
+        self.time_group_id = 0
+
+        # turn into dict if neccessary
+        if not isinstance(times, dict):
+            if isinstance(times, list):
+                # this is a list of time arrays
+                times = {k: _times for k, _times in enumerate(times)}
+            else:
+                # this is just a time array
+                times = {0: times}
+
+        self.sim_time_groups = times
+        self.all_times = torch.tensor([time for k in self.sim_time_groups for time in self.sim_time_groups[k]])
+        self._set_group()
+
+    @property
+    def Nbatch(self):
+        """Get the total number of batches in this model"""
+        if hasattr(self, 'sim_bl_groups') and hasattr(self, 'sim_time_groups'):
+            return len(self.sim_bl_groups) * len(self.sim_time_groups)
+        else:
+            return None
+
+    @property
+    def batch_idx(self):
+        """Get the current batch index: time_group_id + bl_group_id"""
+        if hasattr(self, 'bl_group_id') and hasattr(self, 'time_group_id'):
+            return self.time_group_id + self.bl_group_id
+        else:
+            return None
+
+    def set_batch_idx(self, idx):
+        """
+        Set the batch index
+
+        Parameters
+        ----------
+        idx : int
+            Index of current batch from 0 to Nbatch-1
+        """
+        assert idx < self.Nbatch and idx >= 0
+        self.bl_group_id = int(np.floor(idx / len(self.sim_time_groups)))
+        self.time_group_id = idx % len(self.sim_time_groups)
+
+    def _set_group(self):
+        """
+        Given group_ids, set sim parameters
+        """
+        if hasattr(self, 'sim_bl_groups'):
+            self.sim_bls = self.sim_bl_groups[self.bl_group_id]
+            self.Nsim_bls = len(self.sim_bls)
+            self.data_bls = self.data_bl_groups[self.bl_group_id]
+            self.Ndata_bls = len(self.data_bls)
+
+        if hasattr(self, 'sim_time_groups'):
+            self.sim_times = self.sim_time_groups[self.time_group_id]
+            self.Ntimes = len(self.sim_times)
+
+    def forward(self, *args):
         """
         Forward pass sky components through the beam,
         the fringes, and then integrate to
         get the visibilities.
-
-        Parameters
-        ----------
-        sky_components : list of dictionaries
-            Default is to use self.sky.forward()
-            Each dictionary is an output from a
-            SkyBase subclass, containing:
-                'kind' : str, kind of sky model
-                'sky' : tensor, sky representation
-                Extra kwargs given 'kind', including possibly
-                    'angs' : tensor, optional, RA and Dec [deg] of pixels
-                    'lms' : tensor, optional, l and m modes of a_lm coeffs
 
         Returns
         -------
         vis : VisData object
             Measured visibilities, shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
         """
+        # set sim group given batch index
+        self._set_group()
+
         # get sky components
-        if sky_components is None:
-            sky_components = self.sky.forward()
+        sky_components = self.sky.forward()
         if not isinstance(sky_components, list):
             sky_components = [sky_components]
 
@@ -188,7 +260,7 @@ class RIME(utils.Module):
             ra, dec = sky_comp['angs']
 
             # iterate over observation times
-            for j, time in enumerate(self.times):
+            for j, time in enumerate(self.sim_times):
 
                 # get beam tensor
                 if kind in ['pixel', 'point']:
@@ -206,16 +278,16 @@ class RIME(utils.Module):
 
                 # iterate over baselines: generate and apply fringe, apply beam, sum
                 for k, bl in enumerate(self.sim_bls):
-                    bl_slice = self._bl2vis[bl]
+                    bl_slice = self._bl2vis[self.bl_group_id][bl]
                     self._prod_and_sum(ant_beams, cut_sky, bl[0], bl[1],
                                        kind, zen, az, vis, bl_slice, j)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope,
                       dict(zip(self.array.ants, self.array.antpos.cpu().detach().numpy())))
-        bls = self.sim_bls if self.data_bls is None else self.data_bls
-        vd.setup_data(bls, self.times, self.freqs, pol=self.beam.pol,
+        vd.setup_data(self.data_bls, self.sim_times, self.freqs, pol=self.beam.pol,
                       data=vis, flags=None, cov=None, history=history)
+
         return vd
 
     def _prod_and_sum(self, ant_beams, cut_sky, ant1, ant2,
@@ -242,4 +314,3 @@ class RIME(utils.Module):
 
         # sum across sky
         vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1).to(self.device)
-

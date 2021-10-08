@@ -574,7 +574,7 @@ class PixelSkyResponse:
             return out
 
     def __call__(self, params):
-        if torch.device(params.device) != torch.device(self.device):
+        if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
         if self.transform_order == 0:
             params = self.spatial_transform(params)
@@ -583,7 +583,10 @@ class PixelSkyResponse:
             params = self.freq_transform(params)
             params = self.spatial_transform(params)
 
-        return params.real
+        if torch.is_complex(params):
+            params = params.real
+
+        return params
 
     def push(self, device):
         if self.spatial_mode == 'alm':
@@ -800,7 +803,7 @@ def read_catalogue(catfile, freqs=None, device=None,
         Nsources = params.shape[-1]
         sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
         stokes = PolStokesModel(sparams, parameter=parameter)
-        sky = torch.nn.Sequential(sky, stokes)
+        sky = utils.Sequential(dict(sky=sky, stokes=stokes))
 
     return sky, sources['name']
 

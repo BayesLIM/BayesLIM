@@ -1377,19 +1377,24 @@ def freq_interp(params, param_freqs, freqs, kind, axis,
         return torch.tensor(interp_param, device=params.device, dtype=params.dtype)
 
 
-#################################
-######### Miscellaneous #########
-#################################
+###########################
+######### Modules #########
+###########################
 
 class Module(torch.nn.Module):
     """
     A shallow wrapper around torch.nn.Module, with added
-    metadata for versioning
+    utility features. Subclasses should overload
+    self.forward, which will propagate to self.__call__
+    and self.generator (a replacement for self.__iter__)
     """
     def __init__(self):
         super().__init__()
         # add bayeslim version
         self.__version__ = version.__version__
+
+    def forward(self, inp=None):
+        raise NotImplementedError
 
     def __getitem__(self, name):
         return get_model_attr(self, name)
@@ -1431,6 +1436,84 @@ class Module(torch.nn.Module):
         param = self[name]
         if not isinstance(param, torch.nn.Parameter):
             self[name] = torch.nn.Parameter(param)
+
+
+class Sequential(Module):
+    """
+    A minimal mirror of torch.nn.Sequential with added features.
+    Inherits from bayeslim.utils.Module
+
+    Instantiation takes a parameter dictionary as
+    input and updates model before evaluation. e.g.
+
+    .. code-block:: python
+
+        S = Sequential(OrderedDict(model1=model1, model2=model2))
+
+    where evaluation order is S(params) -> model2( model1( params ) )
+
+    Note that the keys of the parameter dictionary
+    must conform to nn.Module.named_parameters() syntax.
+    """
+    def __init__(self, models):
+        """
+        Parameters
+        ----------
+        models : OrderedDict
+            Models to evaluate in sequential order.
+        """
+        super().__init__()
+        # get ordered list of model names
+        self._models = list(models)
+        # assign models as sub modules
+        for name, model in models.items():
+            self.add_module(name, model)
+
+    def forward(self, inp=None, pdict=None):
+        """
+        Evaluate model in sequential order,
+        optionally updating all parameters beforehand
+
+        Parameters
+        ----------
+        inp : object, optional
+            Starting input
+        pdict : ParamDict, optional
+            Parameter dictionary with keys
+            conforming to nn.Module.get_parameter
+            syntax, and values as tensors
+        """
+        # update parameters of module and sub-modules
+        if pdict is not None:
+            self.update(pdict)
+
+        for name in self._models:
+            inp = self.get_submodule(name)(inp)
+
+        return inp
+
+    @property
+    def Nbatch(self):
+        """get total number of batches in model"""
+        if hasattr(self.get_submodule(self._models[0]), 'Nbatch'):
+            return self.get_submodule(self._models[0]).Nbatch
+        else:
+            return 1
+
+    @property
+    def batch_idx(self):
+        """return current batch index"""
+        if hasattr(self.get_submodule(self._models[0]), 'batch_idx'):
+            return self.get_submodule(self._models[0]).batch_idx
+        else:
+            return 0
+
+    def set_batch_idx(self, idx):
+        """Set the current batch index"""
+        if hasattr(self.get_submodule(self._models[0]), 'set_batch_idx'):
+            self.get_submodule(self._models[0]).set_batch_idx(idx)
+        elif idx > 0:
+            raise ValueError("No method set_batch_idx and requested idx > 0")
 
 
 def get_model_attr(model, name):
@@ -1482,6 +1565,11 @@ def del_model_attr(model, name):
         model = get_model_attr(model, '.'.join(name[:-1]))
         name = name[-1:]
     delattr(model, name[0])
+
+
+#################################
+######### Miscellaneous #########
+#################################
 
 
 def Jy_to_KStr(freqs):
@@ -1587,13 +1675,24 @@ def tensor2numpy(tensor, clone=True):
     """
     if isinstance(tensor, torch.Tensor):
         tensor = tensor.detach()
-        if torch.device(tensor.device) != torch.device('cpu'):
+        if device(tensor.device) != device('cpu'):
             tensor = tensor.cpu()
         if clone:
             tensor = tensor.clone()
         return tensor.numpy()
     return tensor
 
+def device(d):
+    """
+    parse a device into a standard pytorch format
+
+    Parameters
+    ----------
+    d : str or torch.device object
+    """
+    if d is None:
+        d = 'cpu'
+    return torch.device(d)
 
 def fit_zero(x, y):
     """fit a quadratic and solve for roots"""

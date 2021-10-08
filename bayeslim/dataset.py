@@ -1,12 +1,13 @@
 """
-Module for visibility data and other formats
+Module for visibility and map data formats, and a torch style data loader
 """
 import torch
+from torch.utils.data import Dataset
 import numpy as np
 import os
 import copy
 
-from . import utils, telescope_model
+from . import utils, telescope_model, version, optim
 from .utils import _float, _cfloat
 
 
@@ -18,7 +19,7 @@ class VisData:
     def __init__(self):
         self.data, self.flags = None, None
         self.icov, self.cov, self.cov_axis = None, None, None
-        self.bls, self.time, self.times = None, None, None
+        self.bls, self.times = None, None
         self.freqs, self.pol, self.history = None, None, ''
         self.telescope = None
         self.antpos, self.ants, self.antvec = None, None, None
@@ -42,9 +43,9 @@ class VisData:
             self.ants = np.array(list(antpos.keys()))
             self.antvec = np.array(list(antpos.values()))
 
-    def setup_data(self, bls, times, freqs, pol=None, time=None,
-                   data=None, flags=None, cov=None, icov=None, cov_axis=None,
-                   history='', run_check=True):
+    def setup_data(self, bls, times, freqs, pol=None,
+                   data=None, flags=None, cov=None, cov_axis=None,
+                   icov=None, history='', run_check=True):
         """
         Setup metadata and optionally data tensors.
 
@@ -54,16 +55,13 @@ class VisData:
             List of baseline tuples (antpairs) matching
             ordering of Nbl axis of data.
         times : tensor
-            Julian date of unique times in the data,
-            relative to time.
+            Julian date of unique times in the data.
         freqs : tensor
             Frequency array [Hz] of the data
         pol : str, optional
             If data Npol == 1, this is the name
             of the dipole polarization, one of ['ee', 'nn'].
             If None, it is assumed Npol == 2
-        time : float, optional
-            Anchor point for times (reduces neccesary precision)
         data : tensor, optional
             Complex visibility data tensor of shape
             (Npol, Npol, Nbls, Ntimes, Nfreqs), where
@@ -82,12 +80,13 @@ class VisData:
                 cov_axis = 'bl': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
                 cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
                 cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nbl, Nfreq)
-        icov : tensor, optional
-            Inverse covariance. must match shape of cov.
         cov_axis : str, optional
             If cov represents on and off diagonal components, this is the
             axis over which off-diagonal is modeled.
             One of ['bl', 'time', 'freq'].
+        icov : tensor, optional
+            Inverse covariance. Must have same shape as cov.
+            Recommended to call self.set_cov() and then self.compute_icov()
         history : str, optional
             data history string
         """
@@ -95,12 +94,7 @@ class VisData:
         self.Nbls = len(bls)
         self.ant1 = [bl[0] for bl in bls]
         self.ant2 = [bl[1] for bl in bls]
-        if time is None:
-            # try to get it from times
-            time = int(times[0])
-            times = torch.tensor(times - time, dtype=_float())
         self.times = times
-        self.time = time
         self.Ntimes = len(times)
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -110,9 +104,7 @@ class VisData:
         self.Npol = 2 if self.pol is None else 1
         self.data = data
         self.flags = flags
-        self.cov = cov
-        self.icov = icov
-        self.cov_axis = cov_axis
+        self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
     def push(self, device):
@@ -136,7 +128,7 @@ class VisData:
         vd = VisData()
         vd.setup_meta(telescope=self.telescope, antpos=self.antpos)
         vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
-                      time=self.time, data=self.data.detach().clone(),
+                      data=self.data.detach().clone(),
                       flags=self.flags, cov=self.cov, icov=self.icov,
                       cov_axis=self.cov_axis, history=self.history)
         return vd
@@ -371,7 +363,7 @@ class VisData:
         """
         Slice into cov tensor and return values.
         Only one axis can be specified at a time.
-        See optim.apply_cov() for details on shape.
+        See optim.apply_icov() for details on shape.
 
         Parameters
         ----------
@@ -435,26 +427,61 @@ class VisData:
 
         return cov
 
-    def set_icov(self, icov=None, pinv=True, rcond=1e-15):
+    def set_cov(self, cov, cov_axis, icov=None):
         """
-        Set inverse covariance as self.icov.
-        See optim.apply_cov() for details on shape.
+        Set the covariance matrix as self.cov and
+        compute covariance properties (ndim and log-det)
 
         Parameters
         ----------
+        cov : tensor
+            Covariance of data in a form that conforms
+            to cov_axis specification. See optim.apply_icov
+            for details on shape of cov.
+        cov_axis : str
+            The data axis along which the covariance is modeled.
+            This specifies the type of covariance being supplied.
+            Options are [None, 'bl', 'time', 'freq', 'full'].
+            See optim.apply_icov() for details
         icov : tensor, optional
-            Pre-computed inverse covariance to set. Must
-            match shape of self.cov. Default is to compute
-            icov given self.cov
+            pre-computed inverse covariance to set.
+            Recommended to first set cov and then call compute_icov()
+        """
+        # set covariance
+        self.cov = cov
+        self.icov = icov
+        self.cov_axis = cov_axis
+        self.cov_ndim, self.cov_logdet = None, None
+
+        if self.cov is not None:
+            # compute covariance properties
+            self.cov_ndim = sum(self.data.shape)
+            if self.cov_axis is None:
+                self.cov_logdet = torch.sum(torch.log(self.cov))
+            elif self.cov_axis == 'full':
+                self.cov_logdet = torch.slogdet(self.cov).logabsdet
+            else:
+                self.cov_logdet = 0
+                for i in range(self.cov.shape[2]):
+                    for j in range(self.cov.shape[3]):
+                        for k in range(self.cov.shape[4]):
+                            for l in range(self.cov.shape[5]):
+                                self.cov_logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
+
+    def compute_icov(self, pinv=True, rcond=1e-15):
+        """
+        Compute and set inverse covariance as self.icov.
+        See optim.compute_cov and apply_icov() for shape.
+
+        Parameters
+        ----------
         pinv : bool, optional
             Use pseudo-inverse to compute covariance,
             otherwise use direct inversion
         rcond : float, optional
             rcond kwarg for pinverse
         """
-        if icov is None:
-            icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
-        self.icov = icov
+        self.icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
 
     def get_icov(self, bl=None, icov=None, **kwargs):
         """
@@ -468,14 +495,14 @@ class VisData:
     def __getitem__(self, bl):
         return self.get_data(bl, squeeze=True)
 
-    def select(self, bls=None, times=None, freqs=None, pol=None):
+    def select(self, bl=None, times=None, freqs=None, pol=None):
         """
         Downselect on data tensor. Can only specify one axis at a time.
         Operates in place.
 
         Parameters
         ----------
-        bls : list, optional
+        bl : list, optional
             List of baselines to downselect
         times : tensor, optional
             List of Julian Date times to downselect
@@ -486,14 +513,14 @@ class VisData:
         atol : float, optional
             absolute tolerance for matching times or freqs
         """
-        assert sum([bls is not None, times is not None, freqs is not None,
+        assert sum([bl is not None, times is not None, freqs is not None,
                     pol is not None]) < 2, "only one axis can be fed at a time"
 
-        if bls is not None:
-            data = self.get_data(bls, squeeze=False)
-            cov = self.get_cov(bls, squeeze=False)
-            flags = self.get_flags(bls, squeeze=False)
-            self.setup_data(bls, self.times, self.freqs, pol=self.pol, 
+        if bl is not None:
+            data = self.get_data(bl, squeeze=False)
+            cov = self.get_cov(bl, squeeze=False)
+            flags = self.get_flags(bl, squeeze=False)
+            self.setup_data(bl, self.times, self.freqs, pol=self.pol, 
                             data=data, flags=self.flags, cov=cov,
                             cov_axis=self.cov_axis, history=self.history,
                             run_check=True)
@@ -547,6 +574,8 @@ class VisData:
                     f.create_dataset('cov', data=self.cov)
                 if self.cov_axis is not None:
                     f.attr['cov_axis'] = self.cov_axis
+                if self.icov is not None:
+                    f.create_dataset('icov', data=self.icov)
                 f.create_dataset('bls', data=self.bls)
                 f.create_dataset('times', data=self.times)
                 f.create_dataset('freqs', data=self.freqs)
@@ -557,11 +586,13 @@ class VisData:
                 f.attrs['tloc'] = self.telescope.location
                 f.attrs['ants'] = self.ants
                 f.attrs['antvec'] = self.antvec
-                f.attrs['time'] = self.time
+                f.attrs['obj'] = 'VisData'
+                f.attrs['version'] = version.__version__
 
-    def read_hdf5(self, fname, read_data=True, bls=None, times=None, freqs=None, pol=None):
+    def read_hdf5(self, fname, read_data=True, bl=None, times=None, freqs=None, pol=None,
+                  suppress_nonessential=False):
         """
-        Read HDF5
+        Read HDF5 VisData object
 
         Parameters
         ----------
@@ -569,39 +600,46 @@ class VisData:
             File to read
         read_data : bool, optional
             If True, read data arrays as well as metadata
-        bls, times, freqs, pol : read options. see select for details
+        bl, times, freqs, pol : read options. see self.select() for details
+        suppress_nonessential : bool, optional
+            If True, suppress reading-in flags and cov, as only data and icov
+            are essential for inference.
         """
         import h5py
         with h5py.File(fname, 'r') as f:
             # load metadata
-            _bls = [tuple(bl) for bl in f['bls'][:]]
+            assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
+            _bls = [tuple(_bl) for _bl in f['bls'][:]]
             _times = f['times'][:]
-            _freqs = torch.tensor(f['freqs'][:])
+            _freqs = torch.as_tensor(f['freqs'][:])
             _pol = f.attrs['pol'] if 'pol' in f.attrs else None
-            time = f.attrs['time']
             cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
             history = f.attrs['history'] if 'history' in f.attrs else ''
 
             # setup just full-size metadata
-            self.setup_data(_bls, _times, _freqs, pol=_pol, time=time,
+            self.setup_data(_bls, _times, _freqs, pol=_pol,
                             cov_axis=cov_axis, run_check=False)
 
-            data, flags, cov = None, None, None
+            data, flags, cov, icov = None, None, None, None
             if read_data:
-                data = self.get_data(bl=bls, times=times, freqs=freqs, pol=pol,
+                data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
                                      squeeze=False, data=f['data'])
-                data = torch.tensor(data)
-                if 'flags' in f:
-                    flags = self.get_flags(bl=bls, times=times, freqs=freqs, pol=pol,
+                data = torch.as_tensor(data)
+                if 'flags' in f and not suppress_nonessential:
+                    flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
                                           squeeze=False, flags=f['flags'])
-                    flags = torch.tensor(flags)
-                if 'cov' in f:
-                    cov = self.get_cov(bl=bls, times=times, freqs=freqs, pol=pol,
+                    flags = torch.as_tensor(flags)
+                if 'cov' in f and not suppress_nonessential:
+                    cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
                                        squeeze=False, cov=f['cov'])
-                    cov = torch.tensor(cov)
+                    cov = torch.as_tensor(cov)
+                if 'icov' in f:
+                    icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
+                                         squeeze=False, icov=f['icov'])
+                    icov = torch.as_tensor(icov)
 
             # downselect metadata to selection
-            self.select(bls=bls, times=times, freqs=freqs, pol=pol)
+            self.select(bl=bl, times=times, freqs=freqs, pol=pol)
 
             # setup downselected metadata and data
             ants = f.attrs['ants'].tolist()
@@ -609,10 +647,10 @@ class VisData:
             antpos = dict(zip(ants, antvec))
             tloc = f.attrs['tloc']
             telescope = telescope_model.TelescopeModel(tloc)
-            self.setupmeta(telescope, antpos)
+            self.setup_meta(telescope, antpos)
             self.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
-                            data=data, flags=flags, cov=cov, time=time,
-                            cov_axis=cov_axis, history=history)
+                            data=data, flags=flags, cov=cov,
+                            cov_axis=cov_axis, icov=icov, history=history)
 
     def read_uvdata(self, fname, run_check=True, **kwargs):
         """
@@ -638,9 +676,7 @@ class VisData:
         # extract data and metadata
         bls = uvd.get_antpairs()
         Nbls = uvd.Nbls
-        times = np.unique(uvd.time_array)
-        time = int(times[0])
-        times = torch.tensor(times - time, dtype=_float())
+        times = torch.as_tensor(np.unique(uvd.time_array))
         Ntimes = uvd.Ntimes
         freqs = torch.tensor(uvd.freq_array[0], dtype=_float())
         Nfreqs = uvd.Nfreqs
@@ -668,7 +704,7 @@ class VisData:
         flags = torch.tensor(flags, dtype=torch.bool)
 
         # setup data
-        self.setup_data(bls, times, freqs, pol=pol, time=time,
+        self.setup_data(bls, times, freqs, pol=pol,
                         data=data, flags=flags, history=uvd.history)
         # configure telescope data
         antpos, ants = uvd.get_ENU_antpos()
@@ -704,6 +740,46 @@ class VisData:
                                           self.Nbls, self.Ntimes)
         for ant1, ant2 in zip(self.ant1, self.ant2):
             assert (ant1 in self.ants) and (ant2 in self.ants)
+
+
+class VisDataset(Dataset):
+    """
+    Dataset iterator for VisData
+    """
+    def __init__(self, vdata, read_fn=None, read_kwargs={}):
+        """VisData dataset object
+
+        Parameters
+        ----------
+        vdata : list of str or VisData
+            List of data objects to read and iterate over.
+            Niter of vdata should match Niter of the
+            posterior model. vdata passed as str will
+            only be read when iterated on.
+        read_fn : callable, optional
+            Read function when iterating over vdata.
+            If vdata is passed as pre-loaded VisData(s), use
+            pass_data method for read_fn (default).
+        read_kwargs : dict or list of dict
+            If vdata is kept as a str, these are the
+            kwargs passed to the read method. This can
+            be a list of kwarg dicts for each file
+            of vdata.
+        """
+        if isinstance(vdata, (str, VisData)):
+            vdata = [vdata]
+        self.vdata = vdata
+        self.Ndata = len(self.vdata)
+        self.read_fn = read_fn if read_fn is not None else pass_data
+        if isinstance(read_kwargs, dict):
+            read_kwargs = [read_kwargs for vd in self.vdata]
+        self.read_kwargs = read_kwargs
+
+    def __len__(self):
+        return len(self.vdata)
+
+    def __getitem__(self, idx):
+        return self.read_fn(self.vdata[idx], **self.read_kwargs[idx])
 
 
 def concat_VisData(vds, axis, run_check=True):
@@ -763,6 +839,75 @@ def concat_VisData(vds, axis, run_check=True):
     return out
 
 
+class MapData:
+    """
+    An object for holding image or map data of shape
+    (Npol, Npol, Nfreqs, Npix)
+    """
+    def __init__(self):
+        raise NotImplementedError 
+
+
+class MapDataset(Dataset):
+    """
+    Dataset for MapData
+    """
+    def __init__(self, *args, **kwargs):
+        """Mapdata dataset object
+        """
+        raise NotImplementedError
+
+
+def load_visdata(fname, concat_ax=None, copy=False, **kwargs):
+    """
+    Load a VisData HDF5 file(s)
+
+    Parameters
+    ----------
+    fname : str or list of str
+        If list of str, concatenate data along
+        concat_ax
+    concat_ax : str, optional
+        Concatenation axis if fname is a list
+    copy : bool, optional
+        If True copy data before returning
+    kwargs : dict
+        Read kwargs. See VisData.select()
+    
+    Returns
+    -------
+    VisData object
+    """
+    if isinstance(fname, (list, tuple)):
+        vds = [load_visdata(fn, **kwargs) for fn in fname]
+        vd = concat_VisData(vds, concat_ax)
+    elif isinstance(fname, VisData):
+        vd = fname
+    else:
+        vd = VisData()
+        vd.read_hdf5(fname, **kwargs)
+    if copy:
+        vd = copy.deepcopy(vd)
+
+    return vd
+
+
+def load_mapdata(fname, concat_ax=None, copy=False, **Kwargs):
+    """
+    Load a MapData HDF5 file(s)
+    """
+    raise NotImplementedError
+
+
+def pass_data(fname, copy=False, **kwargs):
+    """Dummy load function. Use this when storing data in memory,
+    rather than performing dynamic IO"""
+    if copy:
+        return deepcopy(fname)
+    else:
+        return fname
+
+
 def _list2slice(inds):
     """convert list indexing to slice if possible"""
     if isinstance(inds, list):
@@ -771,11 +916,3 @@ def _list2slice(inds):
             return slice(inds[0], inds[-1]+diff[0], diff[0])
     return inds
 
-
-class MapData:
-    """
-    An object for holding image or map data of shape
-    (Npol, Npol, Npix, Nfreqs)
-    """
-    def __init__(self):
-        raise NotImplementedError 

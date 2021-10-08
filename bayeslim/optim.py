@@ -7,65 +7,9 @@ import os
 from collections import OrderedDict
 import time
 import pickle
+from collections.abc import Iterable
 
 from . import utils, io
-
-
-class Sequential(utils.Module):
-    """
-    A minimal mirror of torch.nn.Sequential without the
-    iterators and with added features (inherits from utils.Module)
-
-    Instantiation takes a parameter dictionary as
-    input and updates model before evaluation. e.g.
-
-    .. code-block:: python
-
-        S = Sequential(OrderedDict(model1=model1, model2=model2))
-
-    where evaluation order is S(params) -> model2( model1( params ) )
-
-    Note that the keys of the parameter dictionary
-    must conform to nn.Module.named_parameters() syntax.
-    """
-    def __init__(self, models):
-        """
-        Parameters
-        ----------
-        models : OrderedDict
-            Models to evaluate in sequential order.
-        """
-        super().__init__()
-        # get ordered list of model names
-        self._models = list(models)
-        # assign models as sub modules
-        for name, model in models.items():
-            self.add_module(name, model)
-
-    def forward(self, inp=None, pdict=None):
-        """
-        Evaluate model in sequential order,
-        optionally updating all parameters beforehand
-
-        Parameters
-        ----------
-        inp : tensor or VisData
-            optional input to first model
-        pdict : ParamDict
-            Parameter dictionary with keys
-            conforming to nn.Module.get_parameter
-            syntax, and values as tensors
-        """
-        # update parameters of module and sub-modules
-        if pdict is not None:
-            for k in pdict:
-                param = self[k]
-                is_parameter = isinstance(param, torch.nn.Parameter)
-                self[k] = utils.push(pdict[k], param.device, is_parameter)
-
-        for name in self._models:
-            inp = self.get_submodule(name)(inp)
-        return inp
 
 
 class LogUniformPrior:
@@ -269,25 +213,25 @@ class LogProb(utils.Module):
         -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d - \mu)\\
                 &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi) 
     """
-    def __init__(self, model, target, cov, cov_axis, parameter=False,
+    def __init__(self, model, target, start_inp=None, cov_parameter=False,
                  param_list=None, prior_list=None, device=None,
                  compute='post', negate=True):
         """
         Parameters
         ----------
-        model : utils.Module or optim.Sequential subclass
+        model : utils.Module or utils.Sequential subclass
             THe forward model that holds all parameters
             as attributes (i.e. model.named_parameters())
-        target : tensor
-            Data tensor of shape
-            (Npol, Npol, Nbls, Ntimes, Nfreqs)
-        cov : tensor
-            Covariance of the target data.
-            See optim.apply_icov() for shape details.
-        cov_axis : str
-            This specifies the kind of covariance. See optim.apply_icov()
-            for details.
-        parameter : bool, optional
+        target : dataset object
+            Dataset object holding (mini-batch) data tensors
+            of shape (Npol, Npol, Nbls, Ntimes, Nfreqs).
+            This should have the same Nbatch as the model.
+            This should also hold the inverse covariance,
+            otherwise icov is assumed to be ones.
+        start_inp : dataset object or iterable object, optional
+            Starting input to model. This should have the same
+            Nbatch as the model.
+        cov_parameter : bool, optional
             If fed a covariance, this makes the inverse covariance
             a parameter in the fit. (not yet implemented)
         param_list : list
@@ -308,26 +252,150 @@ class LogProb(utils.Module):
             used to sample from either the posterior, likelihood, or prior,
             with the same API one would use to sample from the posterior.
         negate : bool, optional
-            Return the negative log posterior (for gradient descent minimization).
-            Otherwise return the log posterior (for MCMC)
+            Return the negative log posterior for grad descent (default).
+            Otherwise return the log posterior for MCMC.
         """
         super().__init__()
         self.model = model
         self.target = target
-        if parameter:
+        self.start_inp = start_inp
+        if cov_parameter:
             raise NotImplementedError
-        self.parameter = parameter
+        self.cov_parameter = cov_parameter
         self.device = device
-        self.cov = cov
-        self.cov_axis = cov_axis
-        self.icov = None
         self.param_list = param_list
         self.prior_list = prior_list
         self.compute = compute
         self.negate = negate
 
-    def set_icov(self, icov=None):
+    def forward_like(self, target, inp=None):
         """
+        Compute negative log likelihood after a pass through model
+
+        Parameters
+        ----------
+        target : VisData or MapData object
+            Data to compare against model output.
+            Must have a target.data attribute that
+            holds the data tensor, and a target.icov
+            tensor that holds its inverse covariance.
+        inp : object, optional
+            Starting input to self.model
+        """
+        ## TODO: allow for kwarg dynamic cov for cosmic variance
+
+        # forward pass model
+        out = self.model(inp)
+        prediction = out.data.to(self.device)
+
+        # compute residual
+        res = prediction - target.data
+
+        # get inverse covariance
+        if target.icov is not None:
+            icov = target.icov
+            cov_axis = target.cov_axis
+            like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
+        else:
+            icov = torch.ones_like(res, device=res.device)
+            cov_axis = None
+            like_norm = 0
+
+        # evaluate negative log likelihood
+        chisq = 0.5 * torch.sum(apply_icov(res, icov, cov_axis))
+        loglike = -chisq - like_norm
+
+        if self.negate:
+            return -loglike
+        else:
+            return loglike
+
+    def forward_prior(self, *args, **kwargs):
+        """
+        Compute negative log prior given
+        state of model parameters
+        """
+        # evaluate negative log prior
+        logprior = 0
+        if self.param_list is not None and self.prior_list is not None:
+            for param, prior in zip(self.param_list, self.prior_list):
+                logprior += prior(utils.get_model_attr(self.model, param))
+
+        if self.negate:
+            return -logprior
+        else:
+            return logprior
+
+    def forward(self, target, inp=None):
+        """
+        Compute negative log posterior (up to a constant).
+        Note that the value of self.negate determines
+        if output is log posterior or negative log posterior
+
+        Parameters
+        ----------
+        target : VisData or MapData object
+            Data to compare against model output.
+            Must have a target.data attribute that
+            holds the data tensor, and a target.icov
+            tensor that holds its inverse covariance.
+        inp : object, optional
+            Starting input to self.model
+        """
+        assert self.compute in ['post', 'like', 'prior']
+        prob = 0
+
+        if self.compute in ['post', 'like']:
+            prob += self.forward_like(target, inp=inp)
+
+        if self.compute in ['post', 'prior']:
+            prob += self.forward_prior()
+
+        return prob
+
+    @property
+    def Nbatch(self):
+        """get total number of batches in model"""
+        if hasattr(self.model, 'Nbatch'):
+            return self.model.Nbatch
+        else:
+            return 1
+
+    @property
+    def batch_idx(self):
+        """return current batch index in model"""
+        if hasattr(self.model, 'batch_idx'):
+            return self.model.batch_idx
+        else:
+            return 0
+
+    def set_batch_idx(self, idx):
+        """Set the current batch index"""
+        if hasattr(self.model, 'set_batch_idx'):
+            self.model.set_batch_idx(idx)
+        elif idx > 0:
+            raise ValueError("No method set_batch_idx and requested idx > 0")
+
+    def __call__(self, idx=None):
+        """
+        Evaluate forward model given starting input, and
+        compute posterior given target for a particular
+        minibatch index.
+
+        Parameters
+        ----------
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Defautl is self.batch_idx.
+            Otherwise just evaluate prob.
+        """
+        idx = idx if idx is not None else self.batch_idx
+        inp = None if self.start_inp is None else self.start_inp[idx]
+        return self.forward(self.target[idx], inp)
+
+    def set_icov(self, icov):
+        """
+        LEGACY
         Set inverse covariance as self.icov
         and compute likelihood normalizations
 
@@ -341,6 +409,7 @@ class LogProb(utils.Module):
             and self.cov is used for normalization. The
             two should therefore be consistent.
         """
+        ### LEGACY ###
         # push cov to device is needed
         if self.cov.device is not self.device:
             self.cov = self.cov.to(self.device)
@@ -371,106 +440,96 @@ class LogProb(utils.Module):
         if self.parameter:
             self.icov = torch.nn.Parameter(self.icov.detach().clone())
 
-    def forward_like(self, inp=None):
+
+class Trainer:
+    """Object for training a model wrapped around a LogProb
+    posterior loss function"""
+    def __init__(self, prob, opt, grad_type='accumulate'):
         """
-        Compute negative log likelihood after a pass through model
+        Parameters
+        ----------
+        prob : LogProb object
+        opt : torch.Optimizer object
+        grad_type : str, optional
+            Kind of gradient evaluation, ['accumulate', 'stochastic']
+            accumulate : gradient is accumulated across minibatches
+            stochastic : gradient is used and zeroed after every minibatch
+        """
+        self.prob = prob
+        self.opt = opt
+        self.grad_type = grad_type
+        self.loss = []
+        self.closure_eval = 0
+        if grad_type == 'accumulate':
+            self.Nbatch = 1
+        elif grad_type == 'stochastic':
+            self.Nbatch = self.prob.Nbatch
+
+    def closure(self):
+        """
+        Function for evaluating the model, performing
+        backprop, and returning output
+        """
+        self.closure_eval += 1
+        if torch.is_grad_enabled():
+            self.opt.zero_grad()
+
+        # if accumulating, run all minibatches and backprop
+        if self.grad_type == 'accumulate':
+            loss = 0
+            for i in range(self.prob.Nbatch):
+                out = self.prob(i)
+                if out.requires_grad:
+                    out.backward()
+                loss += out.detach()
+            return loss / self.prob.Nbatch
+
+        # if stochastic, just run current batch, then backprop
+        elif self.grad_type == 'stochastic':
+            out = self.prob()
+            if out.requires_grad:
+                out.backward()
+            return out.detach()
+
+    def train(self, Nepochs=1):
+        """
+        Train the model. Results of loss are stored
+        in self.loss
 
         Parameters
         ----------
-        inp : tensor, optional
-            Starting input to self.model
+        Nepochs : int
+            Number of training epochs
+
+        Returns
+        -------
+        info : dict
+            information about the run
         """
-        ## TODO: allow for kwarg dynamic cov for cosmic variance
+        start = time.time()
 
-        # forward pass model
-        out = self.model(inp)
-        prediction = out.data.to(self.device)
+        for epoch in range(Nepochs):
+            self.opt.zero_grad()
 
-        # compute residual
-        res = prediction - self.target.data
+            # iterate over minibatches
+            _loss = 0
+            for i in range(self.Nbatch):
+                # evaluate forward model and backprop
+                out = self.closure().detach()
 
-        # evaluate negative log likelihood
-        chisq = 0.5 * torch.sum(apply_icov(res, self.icov, self.cov_axis))
+                # add to loss
+                _loss += out
 
-        loglike = -chisq - self.like_norm
-        if self.negate:
-            return -loglike
-        else:
-            return loglike
+                # make a step
+                self.opt.step(self.closure)
 
-    def forward_prior(self):
-        """
-        Compute negative log prior given
-        state of model parameters
-        """
-        # evaluate negative log prior
-        logprior = 0
-        if self.param_list is not None and self.prior_list is not None:
-            for param, prior in zip(self.param_list, self.prior_list):
-                logprior += prior(utils.get_model_attr(self.model, param))
+            # append batch-averaged loss
+            self.loss.append(_loss / self.Nbatch) 
 
-        if self.negate:
-            return -logprior
-        else:
-            return logprior
+        time_elapsed = time.time() - start
+        info = dict(duration=time_elapsed)
 
-    def forward(self, inp=None):
-        """
-        Compute negative log posterior (up to a constant)
-
-        Parameters
-        ----------
-        inp : tensor, optional
-            Starting input to self.model
-            for likelihood evaluation
-        """
-        assert self.compute in ['post', 'like', 'prior']
-        prob = 0
-
-        if self.compute in ['post', 'like']:
-            prob += self.forward_like(inp)
-
-        if self.compute in ['post', 'prior']:
-            prob += self.forward_prior()
-
-        return prob
-
-
-def train(model, opt, Nepochs=1, loss=[], closure=None, verbose=True):
-    """
-    Train a Sequential model
-
-    Parameters
-    ----------
-    model : optim.Sequential object
-        A sky / visibility / instrument model that ends
-        with evaluation of the negative log-posterior
-    opt : torch.nn.optimization object
-    Nepochs : int, optional
-        Number of epochs to run
-
-    Returns
-    -------
-    dict : convergence info
-    """
-    start = time.time()
-
-    # iterate over epochs
-    for epoch in range(Nepochs):
-        if verbose:
-            if epoch % 100 == 0:
-                print('Epoch {}/{}'.format(epoch, Nepochs))
-
-        opt.zero_grad()
-        out = model()
-        out.backward()
-        # check for nan gradients
-        opt.step(closure)
-        loss.append(out.detach().clone())
-    time_elapsed = time.time() - start
-    info = dict(duraction=time_elapsed, loss=loss)
-
-    return info
+        return info
 
 
 def apply_icov(data, icov, cov_axis):
@@ -504,7 +563,7 @@ def apply_icov(data, icov, cov_axis):
     cov_axis : 'full'
         icov is 2D of shape (data.size, data.size) and
         represents the full inv cov of data.ravel()
-    For the following, data is of shape
+    For the following, data is assumed to be of shape
     (Npol, Npol, Nbls, Ntimes, Nfreqs). See VisData for
     more details.
     cov_axis : 'bl'
@@ -543,9 +602,9 @@ def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
     Parameters
     ----------
     cov : tensor
-        data covariance. See optim.apply_cov() for shapes
+        data covariance. See optim.apply_icov() for shapes
     cov_axis : str
-        covariance type. See optim.apply_cov() for options
+        covariance type. See optim.apply_icov() for options
     pinv : bool, optional
         Use pseudo inverse, otherwise use direct inverse
     rcond : float, optional

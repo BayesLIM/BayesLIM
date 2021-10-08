@@ -244,6 +244,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 # create tag
                 tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
 
+            # bl2red: maps baseline tuple to the index of its redundant group in reds
             self.reds, self.redvec, self.bl2red, self.bls = reds, rvec, bl2red, bls
             self.redlens, self.redangs, self.redtags = lens, angs, tags
 

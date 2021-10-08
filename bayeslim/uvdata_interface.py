@@ -130,7 +130,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
                                     parameter=False, polmode=polmode,
                                     powerbeam=True, fov=180)
 
-    assert torch.device(sky.device) == torch.device(beam.device)    
+    assert utils.device(sky.device) == utils.device(beam.device)    
     if len(pols) == 1:
         assert beam.polmode == '1pol'
     elif len(pols) == 2:

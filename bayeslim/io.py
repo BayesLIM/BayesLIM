@@ -6,7 +6,7 @@ import torch
 import os
 import pickle
 
-from . import utils, optim, rime_model, telescope_model, sky_model, beam_model
+from . import utils, rime_model, telescope_model, sky_model, beam_model
 from .utils import _float, _cfloat
 from .paramdict import ParamDict
 
@@ -461,27 +461,28 @@ def build_calibration(modfile=None):
 
 def build_sequential(modfile=None, order=None, kind=None, mdict=None):
     """
-    Build a optim.Sequential forward model.
+    Build a utils.Sequential forward model.
     See configs/model_setup.yaml for an example
 
     Parameters
     ----------
     modfile : str, optional
-        Filepath to .pkl Sequential model
+        Filepath to .pkl Sequential model. This supercedes all other
+        kwargs.
     order : list, optional
-        List of module block names in models dict
-        in order of evaluation
+        If building a Sequential object, this is a list of module
+        block names in models dict in the order of their evaluation.
     kind : list, optional
         List of model types for each model in order.
         Can be one of ['sky', 'beam', 'telescope', 'array', 'rime',
         'calibration', 'sequential']
     mdict : dict, optional
         Holds model build dictionaries as values for each
-        key in order
+        key in the "order" list
 
     Returns
     -------
-    optim.Sequential object
+    utils.Sequential object
     """
     if isinstance(modfile, str):
         return read_pkl(modfile)
@@ -503,7 +504,7 @@ def build_sequential(modfile=None, order=None, kind=None, mdict=None):
         elif k == 'sequential':
             models[mod] = build_sequential(**mdict[mod])
 
-    return optim.Sequential(models)
+    return utils.Sequential(models)
 
 
 def load_yaml(yfile):

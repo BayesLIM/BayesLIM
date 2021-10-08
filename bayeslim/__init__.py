@@ -13,13 +13,13 @@ from . import cosmology
 from . import sampler
 from . import special
 from . import uvdata_interface
-from . import visdata
+from . import dataset
 from . import io
 from . import linalg
 from . import paramdict
 
 from .paramdict import ParamDict
-from .visdata import VisData
+from .dataset import VisData, VisDataset
 from .utils import _float, _cfloat
 
 from .version import __version__

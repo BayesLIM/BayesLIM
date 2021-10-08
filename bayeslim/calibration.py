@@ -94,7 +94,7 @@ class JonesModel(utils.Module):
         bls = [tuple(bl) for bl in bls]
         self.bls = bls
         if not self.single_ant:
-            self._vis2ants = {bl: (ants.index(bl[0]), ants.index(bl[1])) for bl in bls}
+            self._vis2ants = {bl: (self.ants.index(bl[0]), self.ants.index(bl[1])) for bl in bls}
         else:
             # a single antenna for all baselines
             assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
@@ -141,11 +141,17 @@ class JonesModel(utils.Module):
                     invjones[:, :, i] = torch.pinv(jones[:, :, i])
             jones = invjones
 
+        # get time select (in case we are mini-batching over time axis)
+        if V_m.Ntimes == jones.shape[-2]:
+            tselect = slice(None)
+        else:
+            tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in V_m.times]).tolist()
+
         # iterate through visibility and apply Jones terms
         for i, bl in enumerate(self.bls):
             # pick out jones terms
-            j1 = jones[:, :, self._vis2ants[bl][0]]
-            j2 = jones[:, :, self._vis2ants[bl][1]]
+            j1 = jones[:, :, self._vis2ants[bl][0], tselect]
+            j2 = jones[:, :, self._vis2ants[bl][1], tselect]
 
             # set reference antenna phase to zero
             if bl[0] == self.refant:
