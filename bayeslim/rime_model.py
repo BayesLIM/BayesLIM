@@ -144,6 +144,8 @@ class RIME(utils.Module):
             self._bl2vis = {}
             self.data_bl_groups = {}
             for k in self.sim_bl_groups:
+                if k not in self._bl2vis:
+                    self._bl2vis[k] = {}
                 sim_red_inds = [self.array.bl2red[bl] for bl in self.sim_bl_groups[k]]
                 data_red_inds = [self.array.bl2red[bl] for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
                 assert set(sim_red_inds) == set(data_red_inds), "Non-redundant baselines in data_bls wrt sim_bls"

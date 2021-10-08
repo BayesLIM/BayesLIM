@@ -204,9 +204,8 @@ class LogProb(utils.Module):
     proportional to the log posterior up to a constant.
 
     This object handles both the likelihood and
-    (optionally) the priors
-
-    Negative log Gaussian likelihood
+    (optionally) any priors. It assumes a Gaussian
+    likelihood of the form
 
     .. math::
 
@@ -270,7 +269,9 @@ class LogProb(utils.Module):
 
     def forward_like(self, target, inp=None):
         """
-        Compute negative log likelihood after a pass through model
+        Compute negative log (Gaussian) likelihood
+        by evaluating the forward model and comparing
+        against the target data
 
         Parameters
         ----------
@@ -282,7 +283,7 @@ class LogProb(utils.Module):
         inp : object, optional
             Starting input to self.model
         """
-        ## TODO: allow for kwarg dynamic cov for cosmic variance
+        ## TODO: allow for kwarg dynamic icov for cosmic variance
 
         # forward pass model
         out = self.model(inp)
@@ -442,8 +443,8 @@ class LogProb(utils.Module):
 
 
 class Trainer:
-    """Object for training a model wrapped around a LogProb
-    posterior loss function"""
+    """Object for training a model wrapped with
+    the LogProb posterior class"""
     def __init__(self, prob, opt, grad_type='accumulate'):
         """
         Parameters
