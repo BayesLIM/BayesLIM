@@ -143,14 +143,19 @@ class RIME(utils.Module):
             # output visibility has extra redundant baselines
             self._bl2vis = {}
             self.data_bl_groups = {}
+            # iterate over sim baseline groups
             for k in self.sim_bl_groups:
                 if k not in self._bl2vis:
                     self._bl2vis[k] = {}
+                # get redundant group indices for all sim_bls
                 sim_red_inds = [self.array.bl2red[bl] for bl in self.sim_bl_groups[k]]
-                data_red_inds = [self.array.bl2red[bl] for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
+                # reject any data_bls that don't share a redundant group with sim_bls
+                _data_bls = [bl for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
+                # now get redundant group indices for data_bls
+                data_red_inds = [self.array.bl2red[bl] for bl in _data_bls]
                 assert set(sim_red_inds) == set(data_red_inds), "Non-redundant baselines in data_bls wrt sim_bls"
-                self.data_bl_groups[k] = [bl for i, bl in enumerate(data_bls) if data_red_inds[i] in sim_red_inds]
-                # iterate over every bl in sim_bl_groups and compute its index in data_bls
+                self.data_bl_groups[k] = [bl for i, bl in enumerate(_data_bls) if data_red_inds[i] in sim_red_inds]
+                # iterate over every bl in sim_bl_groups and compute its index in data_bl_groups
                 for si, bl in zip(sim_red_inds, self.sim_bl_groups[k]):
                     indices = [i for i, di in enumerate(data_red_inds) if di == si]
                     assert np.all(np.diff(indices) == 1), "redundant bls must be adjacent each other in data_bls"
