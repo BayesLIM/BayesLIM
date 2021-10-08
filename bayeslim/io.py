@@ -393,7 +393,7 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     if isinstance(sim_bls, str):
         sim_bls = read_pkl(sim_bls)
     if sim_bls is not None:
-        if np.as_array(sim_bls).ndim > 2:
+        if np.asarray(sim_bls).ndim > 2:
             # this is a list of sublists
             sim_bls = [[(int(bl[0]), int(bl[1])) for bl in sim_grp] for sim_grp in sim_bls]
         else:
