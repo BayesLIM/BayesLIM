@@ -23,7 +23,7 @@ class VisData:
         self.freqs, self.pol, self.history = None, None, ''
         self.telescope = None
         self.antpos, self.ants, self.antvec = None, None, None
-        self.atol = 1e-5
+        self.atol = 1e-10
 
     def setup_meta(self, telescope=None, antpos=None):
         """

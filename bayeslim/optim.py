@@ -256,6 +256,7 @@ class LogProb(utils.Module):
         """
         super().__init__()
         self.model = model
+        assert isinstance(target, torch.utils.data.Dataset)
         self.target = target
         self.start_inp = start_inp
         if cov_parameter:
@@ -320,7 +321,8 @@ class LogProb(utils.Module):
         logprior = 0
         if self.param_list is not None and self.prior_list is not None:
             for param, prior in zip(self.param_list, self.prior_list):
-                logprior += prior(utils.get_model_attr(self.model, param))
+                if prior is not None:
+                    logprior += prior(utils.get_model_attr(self.model, param))
 
         if self.negate:
             return -logprior

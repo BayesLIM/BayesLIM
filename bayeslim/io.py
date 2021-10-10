@@ -11,19 +11,19 @@ from .utils import _float, _cfloat
 from .paramdict import ParamDict
 
 
-def model2pdict(model):
+def model2pdict(model, parameters=True):
     """
     Build ParamDict from a model.
     Note that dict values are just pointers to the
     actual parameter tensors in the model.
 
-    Only params from torch Modules in
-    model.named_children() are returned.
-
     Parameters
     ----------
-    model : torch.Module subclass
-
+    model : utils.Module subclass
+    parameters : bool, optional
+        If True, only return model params
+        that are Parameter objects, otherwise
+        return all model params tensors
     Returns
     -------
     ParamDict object
@@ -33,8 +33,9 @@ def model2pdict(model):
         key, mod = child
         # append params from this module if exists
         if hasattr(mod, 'params'):
-            ## TODO: this won't work for ArrayModel antpos params
-            d[key + '.params'] = mod.params
+            if not parameters or mod.params.requires_grad:
+                ## TODO: this won't work for ArrayModel antpos params
+                d[key + '.params'] = mod.params
         # add sub modules as well
         sub_d = model2pdict(mod)
         for sub_key in sub_d:
