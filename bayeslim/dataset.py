@@ -92,8 +92,8 @@ class VisData:
         """
         self.bls = bls
         self.Nbls = len(bls)
-        self.ant1 = [bl[0] for bl in bls]
-        self.ant2 = [bl[1] for bl in bls]
+        self.ant1 = np.array([bl[0] for bl in bls])
+        self.ant2 = np.array([bl[1] for bl in bls])
         self.times = times
         self.Ntimes = len(times)
         self.freqs = freqs
@@ -144,7 +144,7 @@ class VisData:
         """
         if isinstance(bl, list):
             return [self._bl2ind(b) for b in bl]
-        return self.bls.index(bl[:2])
+        return np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0]
 
     def _bl2uniq_blpol(self, bl):
         """

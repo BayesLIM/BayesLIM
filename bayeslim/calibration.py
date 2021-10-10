@@ -232,7 +232,11 @@ class JonesResponse:
         self.time_mode = time_mode
         self.gain_type = gain_type
         self.device = device
+        if freqs is not None:
+            freqs = torch.as_tensor(freqs)
         self.freqs = freqs
+        if times is not None:
+            times = torch.as_tensor(times)
         self.times = times
         self.setup_kwargs = setup_kwargs
         self._setup(**setup_kwargs)
@@ -370,8 +374,10 @@ class JonesResponse:
         Push class attrs to new device
         """
         self.device = device
-        self.freqs = self.freqs.to(device)
-        self.times = self.times.to(device)
+        if self.freqs is not None:
+            self.freqs = self.freqs.to(device)
+        if self.times is not None:
+            self.times = self.times.to(device)
         if self.freq_mode == 'poly':
             self.dfreqs = self.dfreqs.to(device)
             self.freq_A = self.freq_A.to(device)
