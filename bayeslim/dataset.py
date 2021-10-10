@@ -144,7 +144,7 @@ class VisData:
         """
         if isinstance(bl, list):
             return [self._bl2ind(b) for b in bl]
-        return np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0]
+        return np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0][0]
 
     def _bl2uniq_blpol(self, bl):
         """
