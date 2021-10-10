@@ -142,16 +142,18 @@ class JonesModel(utils.Module):
             jones = invjones
 
         # get time select (in case we are mini-batching over time axis)
-        if V_m.Ntimes == jones.shape[-2]:
-            tselect = slice(None)
-        else:
+        if V_m.Ntimes != jones.shape[-2]:
             tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in V_m.times]).tolist()
+#            diff = list(set(np.diff(tselect)))
+#            if len(diff) == 1:
+#                tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
+            jones = jones[..., tselect, :]
 
         # iterate through visibility and apply Jones terms
         for i, bl in enumerate(self.bls):
             # pick out jones terms
-            j1 = jones[:, :, self._vis2ants[bl][0], tselect]
-            j2 = jones[:, :, self._vis2ants[bl][1], tselect]
+            j1 = jones[:, :, self._vis2ants[bl][0]]
+            j2 = jones[:, :, self._vis2ants[bl][1]]
 
             # set reference antenna phase to zero
             if bl[0] == self.refant:
