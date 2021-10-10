@@ -232,11 +232,7 @@ class JonesResponse:
         self.time_mode = time_mode
         self.gain_type = gain_type
         self.device = device
-        if freqs is not None:
-            freqs = torch.as_tensor(freqs)
         self.freqs = freqs
-        if times is not None:
-            times = torch.as_tensor(times)
         self.times = times
         self.setup_kwargs = setup_kwargs
         self._setup(**setup_kwargs)
@@ -270,7 +266,8 @@ class JonesResponse:
             assert f_Ndeg is not None, "need f_Ndeg for poly freq_mode"
             if f0 is None:
                 f0 = self.freqs.mean()
-            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
+            # MHz
+            self.dfreqs = torch.as_tensor((self.freqs - f0) / 1e6, device=self.device)
             self.freq_A = utils.gen_poly_A(self.dfreqs, f_Ndeg,
                                            basis=freq_poly_basis, device=self.device)
 
@@ -281,7 +278,7 @@ class JonesResponse:
             assert t_Ndeg is not None, "need t_Ndeg for poly time_mode"
             if t0 is None:
                 t0 = self.times.mean()
-            self.dtimes = self.times - t0
+            self.dtimes = torch.as_tensor(self.times - t0, device=self.device)
             self.time_A = utils.gen_poly_A(self.dtimes, t_Ndeg,
                                            basis=time_poly_basis, device=self.device)
 
@@ -374,10 +371,6 @@ class JonesResponse:
         Push class attrs to new device
         """
         self.device = device
-        if self.freqs is not None:
-            self.freqs = self.freqs.to(device)
-        if self.times is not None:
-            self.times = self.times.to(device)
         if self.freq_mode == 'poly':
             self.dfreqs = self.dfreqs.to(device)
             self.freq_A = self.freq_A.to(device)
