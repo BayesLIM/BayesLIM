@@ -221,7 +221,7 @@ if not import_healpy:
         warnings.warn("could not import healpy")
 
 
-def cube2hpx(simfile, freq, nside=1024, sim_res, sim_size,
+def cube2hpx(simfile, freq, sim_res, sim_size, nside=1024,
              cosmo=None):
     """
     Project simulation cube onto a healpix map.
@@ -235,13 +235,13 @@ def cube2hpx(simfile, freq, nside=1024, sim_res, sim_size,
         A 3D temperature simulation cube or str path to .npy file
     freq: float
         Frequency of interest in MHz.
-    nside: integer
-        NSIDE of the output HEALPix image. Must be a valid NSIDE for HEALPix.
-    sim_res : float
+   sim_res : float
         Simulation voxel resolution in cMpc
     sim_size : tuple
         3-tuple containing Npixels for box along x,y,z axes
         e.g. (128, 128, 128)
+    nside: integer
+        NSIDE of the output HEALPix image. Must be a valid NSIDE for HEALPix.
     cosmo : Cosmology object, optional
 
     Returns
