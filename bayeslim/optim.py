@@ -303,8 +303,8 @@ class LogProb(utils.Module):
             cov_axis = None
             like_norm = 0
 
-        # evaluate negative log likelihood
-        chisq = 0.5 * torch.sum(apply_icov(res, icov, cov_axis))
+        # evaluate negative log likelihood: take real component
+        chisq = 0.5 * torch.sum(apply_icov(res, icov, cov_axis)).real
         loglike = -chisq - like_norm
 
         if self.negate:
