@@ -392,9 +392,10 @@ class LogProb(utils.Module):
             is batched. Defautl is self.batch_idx.
             Otherwise just evaluate prob.
         """
-        idx = idx if idx is not None else self.batch_idx
-        inp = None if self.start_inp is None else self.start_inp[idx]
-        return self.forward(self.target[idx], inp)
+        if idx is not None:
+            self.set_batch_idx(idx)
+        inp = None if self.start_inp is None else self.start_inp[self.batch_idx]
+        return self.forward(self.target[self.batch_idx], inp)
 
     def push(self, device):
         """
