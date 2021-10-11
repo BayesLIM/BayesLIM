@@ -144,9 +144,9 @@ class JonesModel(utils.Module):
         # get time select (in case we are mini-batching over time axis)
         if V_m.Ntimes != jones.shape[-2]:
             tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in V_m.times]).tolist()
-#            diff = list(set(np.diff(tselect)))
-#            if len(diff) == 1:
-#                tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
+            diff = list(set(np.diff(tselect)))
+            if len(diff) == 1:
+                tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
             jones = jones[..., tselect, :]
 
         # iterate through visibility and apply Jones terms
@@ -162,7 +162,7 @@ class JonesModel(utils.Module):
                 j2 = j2 / torch.exp(1j * torch.angle(j2))
 
             if self.polmode in ['1pol', '2pol']:
-                V_p.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, V_m.data[:, :, i]), j2.conj())
+                V_p.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), V_m.data[:, :, i])
             else:
                 V_p.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m.data[:, :, i], j2.conj())
 
@@ -268,8 +268,7 @@ class JonesResponse:
             assert f_Ndeg is not None, "need f_Ndeg for poly freq_mode"
             if f0 is None:
                 f0 = self.freqs.mean()
-            # MHz
-            self.dfreqs = torch.as_tensor((self.freqs - f0) / 1e6, device=self.device)
+            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
             self.freq_A = utils.gen_poly_A(self.dfreqs, f_Ndeg,
                                            basis=freq_poly_basis, device=self.device)
 
@@ -280,7 +279,7 @@ class JonesResponse:
             assert t_Ndeg is not None, "need t_Ndeg for poly time_mode"
             if t0 is None:
                 t0 = self.times.mean()
-            self.dtimes = torch.as_tensor(self.times - t0, device=self.device)
+            self.dtimes = self.times - t0
             self.time_A = utils.gen_poly_A(self.dtimes, t_Ndeg,
                                            basis=time_poly_basis, device=self.device)
 
