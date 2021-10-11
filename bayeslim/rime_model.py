@@ -199,7 +199,7 @@ class RIME(utils.Module):
     def batch_idx(self):
         """Get the current batch index: time_group_id + bl_group_id"""
         if hasattr(self, 'bl_group_id') and hasattr(self, 'time_group_id'):
-            return self.time_group_id + self.bl_group_id
+            return self.time_group_id + self.bl_group_id * len(self.sim_time_groups)
         else:
             return None
 

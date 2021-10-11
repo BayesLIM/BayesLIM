@@ -502,7 +502,7 @@ class Trainer:
                 out.backward()
             return out.detach()
 
-    def train(self, Nepochs=1):
+    def train(self, Nepochs=1, Nreport=None):
         """
         Train the model. Results of loss are stored
         in self.loss
@@ -520,6 +520,11 @@ class Trainer:
         start = time.time()
 
         for epoch in range(Nepochs):
+            if Nreport is not None:
+                if (epoch > 0) and (epoch % Nreport == 0):
+                    print("epoch {}, {:.1f} sec".format(epoch, time.time() - start))
+
+            # zero grads
             self.opt.zero_grad()
 
             # iterate over minibatches
