@@ -746,40 +746,40 @@ class VisDataset(Dataset):
     """
     Dataset iterator for VisData
     """
-    def __init__(self, vdata, read_fn=None, read_kwargs={}):
+    def __init__(self, data, read_fn=None, read_kwargs={}):
         """VisData dataset object
 
         Parameters
         ----------
-        vdata : list of str or VisData
+        data : list of str or VisData
             List of data objects to read and iterate over.
-            Niter of vdata should match Niter of the
-            posterior model. vdata passed as str will
+            Niter of data should match Niter of the
+            posterior model. data passed as str will
             only be read when iterated on.
         read_fn : callable, optional
-            Read function when iterating over vdata.
-            If vdata is passed as pre-loaded VisData(s), use
+            Read function when iterating over data.
+            If data is passed as pre-loaded VisData(s), use
             pass_data method for read_fn (default).
         read_kwargs : dict or list of dict
-            If vdata is kept as a str, these are the
+            If data is kept as a str, these are the
             kwargs passed to the read method. This can
             be a list of kwarg dicts for each file
-            of vdata.
+            of data.
         """
-        if isinstance(vdata, (str, VisData)):
-            vdata = [vdata]
-        self.vdata = vdata
-        self.Ndata = len(self.vdata)
+        if isinstance(data, (str, VisData)):
+            data = [data]
+        self.data = data
+        self.Ndata = len(self.data)
         self.read_fn = read_fn if read_fn is not None else pass_data
         if isinstance(read_kwargs, dict):
-            read_kwargs = [read_kwargs for vd in self.vdata]
+            read_kwargs = [read_kwargs for vd in self.data]
         self.read_kwargs = read_kwargs
 
     def __len__(self):
-        return len(self.vdata)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        return self.read_fn(self.vdata[idx], **self.read_kwargs[idx])
+        return self.read_fn(self.data[idx], **self.read_kwargs[idx])
 
 
 def concat_VisData(vds, axis, run_check=True):

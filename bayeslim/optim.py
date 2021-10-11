@@ -396,6 +396,14 @@ class LogProb(utils.Module):
         inp = None if self.start_inp is None else self.start_inp[idx]
         return self.forward(self.target[idx], inp)
 
+    def push(self, device):
+        """
+        Transfer target data to device
+        """
+        self.device = device
+        for d in self.target.data:
+            d.push(device)
+
     def set_icov(self, icov):
         """
         LEGACY
