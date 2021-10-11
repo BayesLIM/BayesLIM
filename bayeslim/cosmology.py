@@ -10,7 +10,6 @@ class Cosmology(FlatLambdaCDM):
     """
     Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
     """
-
     def __init__(self, H0=67.7, Om0=0.3075, Ob0=0.0486):
         """
         Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
@@ -203,3 +202,126 @@ class Cosmology(FlatLambdaCDM):
             Conversion factor [Mpc^-1 / seconds]
         """
         return 2 * np.pi / self.dRpara_df(z)
+
+
+# try to import healpy
+import warnings
+try:
+    import healpy as hp
+    import_healpy = True
+except ImportError:
+    import_healpy = False
+if not import_healpy:
+    try:
+        # note this will have more limited capability
+        # than healpy, but can do what we need
+        from astropy_healpix import healpy as hp
+        import_healpy = True
+    except ImportError:
+        warnings.warn("could not import healpy")
+
+
+def cube2hpx(simfile, freq, nside=1024, sim_res, sim_size,
+             cosmo=None):
+    """
+    Project simulation cube onto a healpix map.
+
+    Adapted from P. Kittisiwit's cosmotile
+    github.com/piyanatk/cosmotile
+
+    Parameters
+    ----------
+    simfile: ndarray or str
+        A 3D temperature simulation cube or str path to .npy file
+    freq: float
+        Frequency of interest in MHz.
+    nside: integer
+        NSIDE of the output HEALPix image. Must be a valid NSIDE for HEALPix.
+    sim_res : float
+        Simulation voxel resolution in cMpc
+    sim_size : tuple
+        3-tuple containing Npixels for box along x,y,z axes
+        e.g. (128, 128, 128)
+    cosmo : Cosmology object, optional
+
+    Returns
+    -------
+    array
+        Healpix maps
+    """
+    if cosmo is None:
+        cosmo = Cosmology()
+
+    # Read in and interpolate simulation cubes to the redshift of interest.
+    if isinstance(simfile, str):
+        cube = np.load(simfile)
+    else:
+        cube = simfile
+
+    # Determine the radial comoving distance r to the comoving shell at the
+    # frequency of interest.
+    f21 = 1420.40575177  # MHz
+    z21 = f21 / freq - 1
+    dc = cosmo.comoving_distance(z21).value
+
+    # Get the vector coordinates (vx, vy, vz) of the HEALPIX pixels.
+    vx, vy, vz = hp.pix2vec(nside, np.arange(hp.nside2npix(nside)))
+
+    # Translate vector coordinates to comoving coordinates and determine the
+    # corresponding cube indexes (xi, yi, zi). For faster operation, we will
+    # use the mod function to determine the nearest neighboring pixels and
+    # just grab the data points from those pixels instead of doing linear
+    # interpolation.
+    xi = np.mod(np.around(vx * dc / sim_res).astype(int), sim_size[0])
+    yi = np.mod(np.around(vy * dc / sim_res).astype(int), sim_size[1])
+    zi = np.mod(np.around(vz * dc / sim_res).astype(int), sim_size[2])
+    out = np.asarray(cube[xi, yi, zi])
+
+    return out
+
+
+def cube2slice(simfile, freq, sim_res, sim_size, cosmo=None):
+    """
+    Project simulation cube onto a transverse slice
+    orthogonal to the line-of-sight (e.g. for lightcones).
+
+    Adapted from P. Kittisiwit's cosmotile
+    github.com/piyanatk/cosmotile
+
+    Parameters
+    ----------
+    simfile: ndarray or str
+        A 3D temperature simulation cube or str path to .npy file
+    freq: float
+        Frequency of interest in MHz.
+    sim_res : float
+        Simulation voxel resolution in cMpc
+    sim_size : tuple
+        3-tuple containing Npixels for box along x,y,z axes
+        e.g. (128, 128, 128)
+    cosmo : Cosmology object, optional
+
+    Returns
+    -------
+    array
+        slice maps
+    """
+    if cosmo is None:
+        cosmo = Cosmology()
+
+    # Read in and interpolate simulation cubes to the redshift of interest.
+    if isinstance(simfile, str):
+        cube = np.load(simfile)
+    else:
+        cube = simfile
+
+    # Determine the radial comoving distance r to the comoving slice at the
+    # frequency of interest.
+    f21 = 1420.40575177  # MHz
+    z21 = f21 / freq - 1
+    dc = cosmo.comoving_distance(z21).value
+
+    zi = np.mod(np.around(dc / sim_res).astype(int), sim_size[2])
+    out = np.asarray(cube[..., zi])
+
+    return out
