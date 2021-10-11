@@ -533,14 +533,8 @@ class Trainer:
             # iterate over minibatches
             _loss = 0
             for i in range(self.Nbatch):
-                # evaluate forward model and backprop
-                out = self.closure().detach()
-
-                # add to loss
-                _loss += out
-
-                # make a step
-                self.opt.step(self.closure)
+                # evaluate forward model, backprop, make a step
+                _loss += self.opt.step(self.closure)
 
             # append batch-averaged loss
             self.loss.append(_loss / self.Nbatch) 
