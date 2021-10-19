@@ -153,7 +153,7 @@ class RIME(utils.Module):
                 _data_bls = [bl for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
                 # now get redundant group indices for data_bls
                 data_red_inds = [self.array.bl2red[bl] for bl in _data_bls]
-                assert set(sim_red_inds) == set(data_red_inds), "Non-redundant baselines in data_bls wrt sim_bls"
+                assert set(sim_red_inds) == set(data_red_inds), "unique bl type(s) in data_bls wrt sim_bls or vice versa"
                 self.data_bl_groups[k] = [bl for i, bl in enumerate(_data_bls) if data_red_inds[i] in sim_red_inds]
                 # iterate over every bl in sim_bl_groups and compute its index in data_bl_groups
                 for si, bl in zip(sim_red_inds, self.sim_bl_groups[k]):

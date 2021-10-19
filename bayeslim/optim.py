@@ -458,12 +458,15 @@ class LogProb(utils.Module):
 class Trainer:
     """Object for training a model wrapped with
     the LogProb posterior class"""
-    def __init__(self, prob, opt, grad_type='accumulate'):
+    def __init__(self, prob, opt, track=False, grad_type='accumulate'):
         """
         Parameters
         ----------
         prob : LogProb object
         opt : torch.Optimizer object
+        track : bool, optional
+            If True, track value of all prob.parameters and append to
+            a list during optimization.
         grad_type : str, optional
             Kind of gradient evaluation, ['accumulate', 'stochastic']
             accumulate : gradient is accumulated across minibatches
@@ -474,6 +477,10 @@ class Trainer:
         self.grad_type = grad_type
         self.loss = []
         self.closure_eval = 0
+        self.track = track
+        self.params = {}
+        for k in prob.named_parameters():
+            self.params[k[0]] = []
         if grad_type == 'accumulate':
             self.Nbatch = 1
         elif grad_type == 'stochastic':
@@ -533,6 +540,11 @@ class Trainer:
             # iterate over minibatches
             _loss = 0
             for i in range(self.Nbatch):
+                # append current params
+                if self.track:
+                    for k, p in self.prob.named_parameters():
+                        self.params[k].append(p.detach().clone())
+
                 # evaluate forward model, backprop, make a step
                 _loss += self.opt.step(self.closure)
 

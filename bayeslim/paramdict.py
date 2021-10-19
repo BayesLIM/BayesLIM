@@ -192,3 +192,42 @@ class ParamDict:
 
         return pd
 
+
+def model2pdict(model, parameters=True, clone=False):
+    """
+    Build ParamDict from a model.
+    Note that dict values are just pointers to the
+    actual parameter tensors in the model,
+    unless clone is True
+
+    Parameters
+    ----------
+    model : utils.Module subclass
+    parameters : bool, optional
+        If True, only return model params
+        that are Parameter objects, otherwise
+        return all model params tensors
+    clone : bool, optional
+        If True, detach and clone the tensors.
+        Default is False.
+    Returns
+    -------
+    ParamDict object
+    """
+    d = {}
+    for child in model.named_children():
+        key, mod = child
+        # append params from this module if exists
+        if hasattr(mod, 'params'):
+            if not parameters or mod.params.requires_grad:
+                ## TODO: this won't work for ArrayModel antpos params
+                params = mod.params
+                if clone:
+                    params = params.detach().clone()
+                d[key + '.params'] = params
+        # add sub modules as well
+        sub_d = model2pdict(mod)
+        for sub_key in sub_d:
+            d[key + '.' + sub_key] = sub_d[sub_key]
+
+    return ParamDict(d)

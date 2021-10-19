@@ -720,6 +720,10 @@ class YlmResponse(PixelResponse):
             pixelized beam on the sky
             of shape (Npol, Npol, Nmodel, Nfreqs, Npix)
         """
+        # detect if params needs to be casted into complex
+        if not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
         if self.freq_mode == 'channel':
             p = params
         elif self.freq_mode == 'poly':

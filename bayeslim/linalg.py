@@ -179,7 +179,6 @@ def diag_inv(a):
     else:
         raise ValueError("only 1x1 or 2x2 tensors")
 
-
 def angle(z):
     """
     Compute phase of the 2-real tensor z

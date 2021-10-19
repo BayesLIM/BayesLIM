@@ -537,6 +537,11 @@ class PixelSkyResponse:
         tensor
             Sky model of shape (Npol, Npol, Ndeg, Npix)
         """
+        # detect if params needs to be casted into complex
+        if self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+            if not torch.is_complex(params):
+                params = utils.viewcomp(params)
+
         if self.spatial_mode == 'pixel':
             return params
         elif self.spatial_mode == 'alm':
@@ -559,6 +564,11 @@ class PixelSkyResponse:
         tensor
             Sky model of shape (Npol, Npol, Nfreqs, Ncoeff)
         """
+        # detect if params needs to be casted into complex
+        if self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+            if not torch.is_complex(params):
+                params = utils.viewcomp(params)
+
         if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':

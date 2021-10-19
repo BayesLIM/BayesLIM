@@ -31,7 +31,7 @@ class JonesModel(utils.Module):
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
     """
-    def __init__(self, params, ants, bls, refant, R=None, parameter=True,
+    def __init__(self, params, ants, bls, refant=None, R=None, parameter=True,
                  polmode='1pol', single_ant=False):
         """
         Antenna-based Jones model.
@@ -50,9 +50,10 @@ class JonesModel(utils.Module):
         bls : list
             List of ant-pair tuples that hold the baselines of the
             input visibilities, matched ordering to baseline ax of V
-        refant : int
+        refant : int, optional
             Reference antenna number from ants list for fixing the gain
-            phase
+            phase. Only needed if JonesResponse gain_type is
+            'com', 'phs', or 'dly'.
         R : callable, optional
             An arbitrary response function for the Jones parameters.
             This is a function that takes the params tensor and maps it
@@ -74,8 +75,11 @@ class JonesModel(utils.Module):
         super().__init__()
         self.params = params
         self.device = params.device
-        self.refant = refant
-        assert refant in ants, "need a valid refant"
+        self.refant, self.refant_idx = refant, None
+        self.ants = ants
+        if self.refant is not None:
+            assert self.refant in ants, "need a valid refant"
+            self.refant_idx = ants.index(self.refant)
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
@@ -83,7 +87,6 @@ class JonesModel(utils.Module):
             R = JonesResponse()
         self.R = R
         self.polmode = polmode
-        self.ants = ants
         self.single_ant = single_ant
         self._setup(bls)
         # construct _args for str repr
@@ -99,6 +102,29 @@ class JonesModel(utils.Module):
             # a single antenna for all baselines
             assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
             self._vis2ants = {bl: (0, 0) for bl in bls}
+
+    def fix_refant_phs(self):
+        """
+        Ensure that the reference antenna phase
+        is set to zero: operates inplace.
+        This only has an effect if the JonesResponse
+        gain_type is ['com', 'dly', 'phs'],
+        otherwise params is unaffected.
+        """
+        with torch.no_grad():
+            if self.R.gain_type == 'com':
+                if torch.is_complex(self.params):
+                    # params is represented as a complex tensor
+                    phs = torch.angle(self.params[:, :, self.refant_idx:self.refant_idx+1])
+                    self.params /= torch.exp(1j * phs)
+                else:
+                    # params is represented as a view_real tensor
+                    g = self.params[:, :, self.refant_idx:self.refant_idx+1]
+                    amp = linalg.abs(g)
+                    self.params -= (g - amp)
+
+            elif self.R.gain_type in ['dly', 'phs']:
+                self.params -= self.params[:, :, self.refant_idx:self.refant_idx+1]
 
     def forward(self, V_m, undo=False):
         """
@@ -118,6 +144,9 @@ class JonesModel(utils.Module):
             Predicted visibilities, having forwarded
             V_m through the Jones parameters.
         """
+        # fix reference antenna if needed
+        self.fix_refant_phs()
+
         # setup if needed
         if V_m.bls != self.bls:
             self._setup(V_m.bls)
@@ -155,12 +184,6 @@ class JonesModel(utils.Module):
             j1 = jones[:, :, self._vis2ants[bl][0]]
             j2 = jones[:, :, self._vis2ants[bl][1]]
 
-            # set reference antenna phase to zero
-            if bl[0] == self.refant:
-                j1 = j1 / torch.exp(1j * torch.angle(j1))
-            if bl[1] == self.refant:
-                j2 = j2 / torch.exp(1j * torch.angle(j2))
-
             if self.polmode in ['1pol', '2pol']:
                 V_p.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), V_m.data[:, :, i])
             else:
@@ -185,7 +208,7 @@ class JonesResponse:
     and for a gain type of complex, amplitude, phase, delay, EW & NS delay slope,
     and EW & NS phase slope (the latter two are relevant for redundant calibration) 
     """
-    def __init__(self, freq_mode='channel', time_mode='channel', gain_type='complex',
+    def __init__(self, freq_mode='channel', time_mode='channel', gain_type='amp',
                  device=None, freqs=None, times=None, **setup_kwargs):
         """
         Parameters
@@ -195,8 +218,13 @@ class JonesResponse:
         time_mode : str, optional
             Time parameterization, ['channel', 'poly']
         gain_type : str, optional
-            Type of gain parameter
-            ['complex', 'dly', 'amp', 'phs', 'dly_slope', 'phs_slope']
+            Type of gain parameter. One of
+            ['com', 'dly', 'amp', 'phs', 'dly_slope', 'phs_slope']
+                'com' : complex gains
+                'dly' : delay g = exp(2i * pi * freqs * delay)
+                'amp' : amplitude g = amp
+                'phs' : phase  g = exp(i * phs)
+                '*_slope' : spatial gradient across the array
         device : str, optional
             Device to place class attributes if needed
         freqs : tensor, optional
@@ -261,6 +289,7 @@ class JonesResponse:
         antpos : dict
             Antenna position dictionary for dly_slope or phs_slope
         """
+        assert self.gain_type in ['com', 'amp', 'phs', 'dly', 'phs_slope', 'dly_slope']
         if self.freq_mode == 'channel':
             pass  # nothing to do
         elif self.freq_mode == 'poly':
@@ -295,13 +324,16 @@ class JonesResponse:
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
                           gain_type=self.gain_type)
 
-    def param2gain(self, params):
+    def param2gain(self, jones):
         """
-        Convert parameter to complex gain given gain_type
+        Convert params to complex gain given gain_type.
+        Note this should be after passing params through
+        its response function, such that the jones tensor
+        is a function of time and frequency.
 
         Parameters
         ----------
-        params : tensor
+        jones : tensor
             jones parameter of shape (Npol, Npol, Nant, Ntimes, Nfreqs)
 
         Returns
@@ -309,25 +341,26 @@ class JonesResponse:
         tensor
             Complex gain tensor (Npol, Npol, Nant, Ntimes, Nfreqs)
         """
-        if self.gain_type == 'complex':
+        # convert to gains
+        if self.gain_type == 'com':
             # assume params are complex gains
-            return params
+            return jones
 
         elif self.gain_type == 'dly':
             # assume params are in delay [nanosec]
-            return torch.exp(2j * np.pi * params * self.freqs / 1e9)
+            return torch.exp(2j * np.pi * jones * self.freqs / 1e9)
 
         elif self.gain_type == 'amp':
             # assume params are gain amplitude: not exp(amp)!
-            return params + 0j
+            return jones + 0j
 
         elif self.gain_type == 'phs':
-            return torch.exp(1j * params)
+            return torch.exp(1j * jones)
 
         elif self.gain_type == 'dly_slope':
             # extract EW and NS delay slopes: ns / meter
-            EW = params[:, :, :1]
-            NS = params[:, :, 1:]
+            EW = jones[:, :, :1]
+            NS = jones[:, :, 1:]
             # get total delay per antenna
             tot_dly = EW * self.antpos_EW \
                       + NS * self.antpos_NS
@@ -336,8 +369,8 @@ class JonesResponse:
 
         elif self.gain_type == 'phs_slope':
             # extract EW and NS phase slopes: rad / meter
-            EW = params[:, :, :1]
-            NS = params[:, :, 1:]
+            EW = jones[:, :, :1]
+            NS = jones[:, :, 1:]
             # get total phase per antenna
             tot_phs = EW * self.antpos_EW \
                       + NS * self.antpos_NS
@@ -349,7 +382,11 @@ class JonesResponse:
         Forward pass params through response to get
         complex antenna gains per time and frequency
         """
-        # convert sparse representation to full Ntimes, Nfreqs
+        # detect if params needs to be casted into complex
+        if self.gain_type == 'com' and not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
+        # convert representation to full Ntimes, Nfreqs
         if self.freq_mode == 'channel':
             pass
         elif self.freq_mode == 'poly':
@@ -360,9 +397,9 @@ class JonesResponse:
             params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
 
         # convert gain types to complex gains
-        params = self.param2gain(params)
+        jones = self.param2gain(params)
 
-        return params
+        return jones
 
     def __call__(self, params):
         return self.forward(params)

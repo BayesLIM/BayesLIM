@@ -11,39 +11,6 @@ from .utils import _float, _cfloat
 from .paramdict import ParamDict
 
 
-def model2pdict(model, parameters=True):
-    """
-    Build ParamDict from a model.
-    Note that dict values are just pointers to the
-    actual parameter tensors in the model.
-
-    Parameters
-    ----------
-    model : utils.Module subclass
-    parameters : bool, optional
-        If True, only return model params
-        that are Parameter objects, otherwise
-        return all model params tensors
-    Returns
-    -------
-    ParamDict object
-    """
-    d = {}
-    for child in model.named_children():
-        key, mod = child
-        # append params from this module if exists
-        if hasattr(mod, 'params'):
-            if not parameters or mod.params.requires_grad:
-                ## TODO: this won't work for ArrayModel antpos params
-                d[key + '.params'] = mod.params
-        # add sub modules as well
-        sub_d = model2pdict(mod)
-        for sub_key in sub_d:
-            d[key + '.' + sub_key] = sub_d[sub_key]
-
-    return ParamDict(d) 
-
-
 def get_model_description(model):
     """
     Iterate through a torch Module or Sequential
@@ -511,7 +478,6 @@ def build_sequential(modfile=None, order=None, kind=None, mdict=None):
             models[mod] = build_sequential(**mdict[mod])
 
     return utils.Sequential(models)
-
 
 def load_yaml(yfile):
     """
