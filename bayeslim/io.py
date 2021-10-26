@@ -6,7 +6,7 @@ import torch
 import os
 import pickle
 
-from . import utils, rime_model, telescope_model, sky_model, beam_model
+from . import utils, rime_model, telescope_model, sky_model, beam_model, dataset, optim
 from .utils import _float, _cfloat
 from .paramdict import ParamDict
 
@@ -218,7 +218,7 @@ def build_beam(modfile=None, pdict=None, device=None):
         beam model
     """
     if isinstance(modfile, str):
-        beam = read_pkl(modfile)
+        beam = read_pkl(modfile, device=device)
 
     if device is not None:
         beam.push(device)
@@ -244,10 +244,9 @@ def build_telescope(modfile=None, location=None, device=None):
         This takes precedence over other kwargs.
     location : tuple
         (lon, lat, alt) in [deg, deg, m]
-
     """
     if isinstance(modfile, str):
-        telescope = read_pkl(modfile)
+        telescope = read_pkl(modfile, device=device)
     else:
         telescope = telescope_model.TelescopeModel(location)
 
@@ -345,7 +344,7 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     RIME object
     """
     if isinstance(modfile, str):
-        return read_pkl(modfile)
+        return read_pkl(modfile, device=device)
 
     # setup basics
     if isinstance(times, str):
@@ -418,9 +417,9 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     return rime
 
 
-def build_calibration(modfile=None):
+def build_calibration(modfile=None, device=None):
     """
-    Build a Jones model
+    Build a direction-independent Jones model
 
     Parameters
     ----------
@@ -428,8 +427,7 @@ def build_calibration(modfile=None):
         Filepath to a .pkl JonesModel
     """
     ## TODO: add more support for manual calibration setup
-
-    return read_pkl(modfile)
+    return read_pkl(modfile, device=device)
 
 
 def build_sequential(modfile=None, order=None, kind=None, mdict=None):
@@ -478,6 +476,57 @@ def build_sequential(modfile=None, order=None, kind=None, mdict=None):
             models[mod] = build_sequential(**mdict[mod])
 
     return utils.Sequential(models)
+
+
+def build_prob(modfile=None, seq_dict=None, data=None, start_inp=None, prior_dict=None,
+               device=None, compute='post', negate=True):
+    """
+    Build a LogProb posterior probability object
+
+    Parameters
+    ----------
+    modfile : str, optional
+        Path to LobProb .pkl file. Takes precedence over
+        all other kwargs.
+    seq_dict : dict, optional
+        Setup dictionary for sequential object
+        that will be the main "model"
+    data : str or list, optional
+        Filepath to hdf5 data object of either
+        VisData or MapData format, or list of strs
+        for mini-batching.
+    prior_dict : str or list, optional
+        Prior dictionary to use instead of priors
+        built-into the models
+    device : str, optional
+    compute : str, optional
+        Compute posterior, likelihood or prior
+        ['post', 'like', 'prior']
+    negate : bool, optional
+        If True return negative log-likelihood (gradient descent)
+        otherwise return log-likelihood (MCMC)
+    """
+    if isinstance(modfile, str):
+        return read_pkl(modfile, device=device)
+    
+    # build forward model
+    model = build_sequential(**seq_dict)
+
+    # load data, wrap as Dataset
+    target = dataset.Dataset(dataset.load_data(data))
+
+    # load others
+    if isinstance(start_inp, str):
+        start_inp = read_pkl(start_inp)
+    if isinstance(prior_dict, str):
+        prior_dict = read_pkl(prior_dict)
+
+    prob = optim.LogProb(model, target, start_inp=start_inp,
+                         prior_dict=prior_dict, device=device,
+                         compute=compute, negate=negate)
+
+    return prob
+
 
 def load_yaml(yfile):
     """

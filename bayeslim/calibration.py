@@ -4,7 +4,7 @@ Module for torch calibration models and relevant functions
 import torch
 import numpy as np
 
-from . import utils, linalg
+from . import utils, linalg, dataset
 
 
 class JonesModel(utils.Module):
@@ -32,7 +32,7 @@ class JonesModel(utils.Module):
     where the off-diagonal are the so called "D-terms".
     """
     def __init__(self, params, ants, bls, refant=None, R=None, parameter=True,
-                 polmode='1pol', single_ant=False):
+                 polmode='1pol', single_ant=False, name=None):
         """
         Antenna-based Jones model.
 
@@ -71,8 +71,10 @@ class JonesModel(utils.Module):
             If True, solve for a single gain for all antennas.
             Nant of params must be one, but ants can still be
             the size of the array.
+        name : str, optional
+            Name for this object, stored as self.name
         """
-        super().__init__()
+        super().__init__(name=name)
         self.params = params
         self.device = params.device
         self.refant, self.refant_idx = refant, None
@@ -126,36 +128,38 @@ class JonesModel(utils.Module):
             elif self.R.gain_type in ['dly', 'phs']:
                 self.params -= self.params[:, :, self.refant_idx:self.refant_idx+1]
 
-    def forward(self, V_m, undo=False):
+    def forward(self, vd, undo=False, prior_cache=None):
         """
-        Forward pass V_m through the Jones model.
+        Forward pass vd through the Jones model.
 
         Parameters
         ----------
-        V_m : VisData
-            Model visibilities of
-            shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
+        vd : VisData
+            Holds model visibilities of shape
+            (Npol, Npol, Nbl, Ntimes, Nfreqs).
         undo : bool, optional
-            If True, invert params and apply to V_m. 
+            If True, invert params and apply to vd. 
+        prior_cache : dict, optional
+            Cache for storing computed priors
 
         Returns
         -------
-        V_p : VisData
+        VisData
             Predicted visibilities, having forwarded
-            V_m through the Jones parameters.
+            vd through the Jones parameters.
         """
         # fix reference antenna if needed
         self.fix_refant_phs()
 
         # setup if needed
-        if V_m.bls != self.bls:
-            self._setup(V_m.bls)
+        if vd.bls != self.bls:
+            self._setup(vd.bls)
 
-        # push V_m to self.device
-        V_m.push(self.device)
+        # push vd to self.device
+        vd.push(self.device)
 
         # setup empty VisData for output
-        V_p = V_m.copy()
+        vout = vd.copy()
 
         # push through reponse function
         jones = self.R(self.params)
@@ -171,8 +175,8 @@ class JonesModel(utils.Module):
             jones = invjones
 
         # get time select (in case we are mini-batching over time axis)
-        if V_m.Ntimes != jones.shape[-2]:
-            tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in V_m.times]).tolist()
+        if vd.Ntimes != jones.shape[-2]:
+            tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in vd.times]).tolist()
             diff = list(set(np.diff(tselect)))
             if len(diff) == 1:
                 tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
@@ -185,11 +189,14 @@ class JonesModel(utils.Module):
             j2 = jones[:, :, self._vis2ants[bl][1]]
 
             if self.polmode in ['1pol', '2pol']:
-                V_p.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), V_m.data[:, :, i])
+                vout.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), vd.data[:, :, i])
             else:
-                V_p.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, V_m.data[:, :, i], j2.conj())
+                vout.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, vd.data[:, :, i], j2.conj())
 
-        return V_p
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
+
+        return vout
 
     def push(self, device):
         """
@@ -431,7 +438,7 @@ class RedVisModel(utils.Module):
         V^{d}_{jk} = V^{r} + V^{m}_{jk}
 
     """
-    def __init__(self, params, vis2red, R=None, parameter=True):
+    def __init__(self, params, vis2red, R=None, parameter=True, name=None):
         """
         Redundant visibility model
 
@@ -442,69 +449,73 @@ class RedVisModel(utils.Module):
             of shape (Npol, Npol, Nredvis, Ntimes, Nfreqs) where Nredvis
             is the number of unique baseline types.
         vis2red : list of int
-            A list of length Nvis--the length of V_m input to
-            self.forward()--whose elements index red.
-        R : callable, optional
-            An arbitrary response function for the redundant
-            visibility model, mapping the parameters
-            to the space of V_m (input to self.forward).
-            Default (None) is unit response.
-            Note this must use torch functions.
+            A list of length Nvis--the length of vd input to
+            self.forward()--whose elements index self.params Nredvis axis.
+        R : VisModelResponse object, optional
+            A response function for the redundant visibility
+            model parameterization. Default is freq and time channels.
         parameter : bool, optional
             If True, treat params as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
+        name : str, optional
+            Name for this object, stored as self.name
         """
-        super().__init__()
+        super().__init__(name=name)
         self.params = params
         self.device = params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         self.vis2red = vis2red
         if R is None:
-            # dummy function eval
-            R = lambda x: x
+            # default response is per freq channel and time bin
+            R = VisModelResponse()
         self.R = R
 
-    def forward(self, V_m, undo=False):
+    def forward(self, vd, undo=False, prior_cache=None):
         """
-        Forward pass V_m through redundant
+        Forward pass vd through redundant
         model term.
 
         Parameters
         ----------
-        V_m : VisData
-            Starting model visibilities of
-            shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
+        vd : VisData
+            Starting model visibilities of shape
+            (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a unit matrix so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
-            them into V_m.
+            them into vd.
         undo : bool, optional
-            If True, push V_m backwards through the model.
+            If True, push vd backwards through the model.
+        prior_cache : dict, optional
+            Cache for holding computed priors.
 
         Returns
         -------
-        V_p : VisData
-            The predicted visibilities, having pushed V_m through
-            the redundant visibility model
+        VisData
+            The predicted visibilities, having pushed vd through
+            the redundant visibility model.
         """
         # push to device
-        V_m.push(self.device)
+        vd.push(self.device)
 
         # setup predicted visibility
-        V_p = V_m.copy()
+        vout = vd.copy()
 
-        params = self.R(self.params)
+        redvis = self.R(self.params)
 
         # iterate through vis and apply redundant model
-        for i in range(V_p.shape[2]):
+        for i in range(vout.shape[2]):
             if not undo:
-                V_p.data[:, :, i] = V_m.data[:, :, i] + params[:, :, self.vis2red[i]]
+                vout.data[:, :, i] = vd.data[:, :, i] + redvis[:, :, self.vis2red[i]]
             else:
-                V_p.data[:, :, i] = V_m.data[:, :, i] - params[:, :, self.vis2red[i]]
+                vout.data[:, :, i] = vd.data[:, :, i] - redvis[:, :, self.vis2red[i]]
 
-        return V_p
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
+
+        return vout
 
     def push(self, device):
         """
@@ -524,7 +535,7 @@ class VisModel(utils.Module):
         V^{d}_{jk} = V^{v}_{jk} + V^{m}_{jk} 
 
     """
-    def __init__(self, params, R=None, parameter=True):
+    def __init__(self, params, R=None, parameter=True, name=None):
         """
         Visibility model
 
@@ -533,62 +544,197 @@ class VisModel(utils.Module):
         params : tensor
             Visibility model parameter of shape
             (Npol, Npol, Nbl, Ntimes, Nfreqs). Ordering should
-            match ordering of V_m input to self.forward.
+            match ordering of vd input to self.forward.
         R : callable, optional
             An arbitrary response function for the
             visibility model, mapping the parameters
-            to the space of V_m (input to self.forward).
+            to the space of vd (input to self.forward).
             Default (None) is unit response.
             Note this must use torch functions.
         parameter : bool, optional
             If True, treat vis as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
+        name : str, optional
+            Name for this object, stored as self.name
         """
-        super().__init__()
+        super().__init__(name=name)
         self.params = params
         self.device = params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
-            # dummy function eval
-            R = lambda x: x
+            # default response is per freq channel and time bin
+            R = VisModelResponse()
         self.R = R
 
-    def forward(self, V_m, undo=False):
+    def forward(self, vd, undo=False, prior_cache=None, **kwargs):
         """
-        Forward pass V_m through visibility
+        Forward pass vd through visibility
         model term.
 
         Parameters
         ----------
-        V_m : VisData
+        vd : VisData
             Starting model visibilities
             of shape (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a zero tensor so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
-            them into V_m.
+            them into vd.
         undo : bool, optional
-            If True, push V_m backwards through the model.
+            If True, push vd backwards through the model.
+        prior_cache : dict, optional
+            Cache for storing computed priors
 
         Returns
         -------
-        V_p : VisData
-            The predicted visibilities, having pushed V_m through
-            the visibility model.
+        VisData
+            The predicted visibilities, having summed vd
+            with the visibility model.
         """
-        V_p = V_m.copy()
-        params = self.R(self.params)
+        vout = vd.copy()
+        vis = self.R(self.params)
         if not undo:
-            V_p.data = V_p.data + params
+            vout.data = vout.data + vis
         else:
-            V_p.data = V_p.data - params
+            vout.data = vout.data - vis
 
-        return V_p
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
+
+        return vout
 
     def push(self, device):
         """
         Push to a new device
         """
         self.params = utils.push(self.params, device)
+
+
+class VisModelResponse:
+    """
+    A response object for VisModel and RedVisModel
+    """
+    def __init__(self, freq_mode='channel', time_mode='channel', **setup_kwargs):
+        """
+        Parameters
+        ----------
+        freq_mode : str, optional
+            Frequency parameterization, ['channel', 'poly']
+        time_mode : str, optional
+            Time parameterization, ['channel', 'poly']
+        device : str, optional
+            Device to place class attributes if needed
+        freqs : tensor, optional
+            Frequency array [Hz], only needed for poly freq_mode
+        times : tensor, optional
+            Time array [arb. units], only needed for poly time_mode
+
+        Notes
+        -----
+        Required setup_kwargs (see self._setup for details)
+        if freq_mode == 'poly'
+            f0 : float
+                Anchor frequency [Hz]
+            f_Ndeg : int
+                Frequency polynomial degree
+            freq_poly_basis : str
+                Polynomial basis (see utils.gen_poly_A)
+
+        if time_mode == 'poly'
+            t0 : float
+                Anchor time [arb. units]
+            t_Ndeg : int
+                Time polynomial degree
+            time_poly_basis : str
+                Polynomial basis (see utils.gen_poly_A)
+        """
+        self.freq_mode = freq_mode
+        self.time_mode = time_mode
+        self.device = device
+        self.freqs = freqs
+        self.times = times
+        self.setup_kwargs = setup_kwargs
+        self._setup(**setup_kwargs)
+
+    def _setup(self, f0=None, f_Ndeg=None, freq_poly_basis='direct',
+               t0=None, t_Ndeg=None, time_poly_basis='direct'):
+        """
+        Setup the JonesResponse given the mode and type
+
+        Parameters
+        ----------
+        f0 : float
+            anchor frequency for poly [Hz]
+        f_Ndeg : int
+            Number of frquency degrees for poly
+        freq_poly_basis : str
+            Polynomial basis across freq (see utils.gen_poly_A)
+        t0 : float
+            anchor time for poly
+        t_Ndeg : int
+            Number of time degrees for poly
+        time_poly_basis : str
+            Polynomial basis across time (see utils.gen_poly_A)
+        """
+        if self.freq_mode == 'channel':
+            pass  # nothing to do
+        elif self.freq_mode == 'poly':
+            # get polynomial A matrix wrt freq
+            assert f_Ndeg is not None, "need f_Ndeg for poly freq_mode"
+            if f0 is None:
+                f0 = self.freqs.mean()
+            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
+            self.freq_A = utils.gen_poly_A(self.dfreqs, f_Ndeg,
+                                           basis=freq_poly_basis, device=self.device)
+
+        if self.time_mode == 'channel':
+            pass  # nothing to do
+        elif self.time_mode == 'poly':
+            # get polynomial A matrix wrt times
+            assert t_Ndeg is not None, "need t_Ndeg for poly time_mode"
+            if t0 is None:
+                t0 = self.times.mean()
+            self.dtimes = self.times - t0
+            self.time_A = utils.gen_poly_A(self.dtimes, t_Ndeg,
+                                           basis=time_poly_basis, device=self.device)
+
+        # construct _args for str repr
+        self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode)
+
+    def forward(self, params):
+        """
+        Forward pass params through response to get
+        complex vis model per time and frequency
+        """
+        # detect if params needs to be casted into complex
+        if not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
+        # convert representation to full Ntimes, Nfreqs
+        if self.freq_mode == 'channel':
+            pass
+        elif self.freq_mode == 'poly':
+            params = params @ self.freq_A.T
+        if self.time_mode == 'channel':
+            pass
+        elif self.time_mode == 'poly':
+            params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
+
+        return params
+
+    def __call__(self, params):
+        return self.forward(params)
+
+    def push(self, device):
+        """
+        Push class attrs to new device
+        """
+        self.device = device
+        if self.freq_mode == 'poly':
+            self.dfreqs = self.dfreqs.to(device)
+            self.freq_A = self.freq_A.to(device)
+        if self.time_mode == 'poly':
+            self.dtimes = self.dtimes.to(device)
+            self.time_A = self.time_A.to(device)

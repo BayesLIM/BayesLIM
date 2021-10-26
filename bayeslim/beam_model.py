@@ -41,7 +41,7 @@ class PixelBeam(utils.Module):
     def __init__(self, params, freqs, ant2beam=None, response=None,
                  response_args=(), response_kwargs={},
                  parameter=True, polmode='1pol', pol=None,
-                 powerbeam=True, fov=180):
+                 powerbeam=True, fov=180, name=None):
         """
         A generic pixelized beam model evaluated on the sky
 
@@ -99,8 +99,10 @@ class PixelBeam(utils.Module):
             E.g. fov = 180 (default) means we view the entire sky above the horizon,
             while fov = 90 means we view the sky withih 45 deg of zenith.
             Default is full sky above the horizon.
+        name : str, optional
+            Name for this model, stored as self.name.
         """
-        super().__init__()
+        super().__init__(name=name)
         self.params = params
         self.device = self.params.device
         if parameter:
@@ -113,10 +115,12 @@ class PixelBeam(utils.Module):
         else:
             self.R = response(*response_args, **response_kwargs)
 
+        self.powerbeam = powerbeam
+        if hasattr(self.R, 'powerbeam'):
+            assert self.powerbeam == self.R.powerbeam
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.polmode = polmode
-        self.powerbeam = powerbeam
         self.fov = fov
         if self.powerbeam:
             assert self.polmode in ['1pol', '2pol']
@@ -147,15 +151,13 @@ class PixelBeam(utils.Module):
         self.R.push(device)
         self.device = device
 
-    def gen_beam(self, zen, az):
+    def gen_beam(self, zen, az, prior_cache=None):
         """
         Generate a beam model given frequency and angles
         and the field-of-view (self.fov).
 
         Parameters
         ----------
-        params : tensor
-
         zen, az : array
             zenith angle (co-latitude) and azimuth angle [deg]
 
@@ -179,11 +181,8 @@ class PixelBeam(utils.Module):
         # get beam
         beam = self.R(self.params, zen, az, self.freqs)
 
-        if self.powerbeam:
-            ## TODO: replace abs with non-neg prior on beam?
-            if torch.is_complex(beam):
-                beam = torch.real(beam)
-            beam = torch.abs(beam)
+        # evaluate prior
+        self.eval_prior(prior_cache)
 
         return beam, cut, zen, az
 
@@ -231,7 +230,7 @@ class PixelBeam(utils.Module):
 
         return psky
 
-    def forward(self, sky_comp, telescope, time, modelpairs):
+    def forward(self, sky_comp, telescope, time, modelpairs, prior_cache=None, **kwargs):
         """
         Forward pass a single sky model through the beam
         at a single observation time.
@@ -259,6 +258,8 @@ class PixelBeam(utils.Module):
             then modelpairs = [(0, 1), (0, 2), (1, 2)]. Note that
             the following ArrayModel object should have a mapping
             of modelpairs to the physical baseline list.
+        prior_cache : dict, optional
+            Cache for storing computed priors as self.name
 
         Returns
         -------
@@ -277,7 +278,7 @@ class PixelBeam(utils.Module):
             zen = utils.colat2lat(alt, deg=True)
 
             # evaluate beam
-            beam, cut, zen, az = self.gen_beam(zen, az)
+            beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
             sky = sky_comp['sky'][..., cut]
             alt = alt[cut]
 
@@ -299,7 +300,32 @@ class PixelBeam(utils.Module):
         else:
             raise NotImplementedError
 
+        # evaluate prior
+        self.eval_prior(prior_cache)
+
         return sky_comp
+
+    def eval_prior(self, prior_cache, inp_params=None, out_params=None):
+        """
+        Parameters
+        ----------
+        prior_cache : dict
+            Dictionary to hold computed prior, assigned as self.name
+        inp_params, out_params : tensor, optional
+            self.params and self.R(self.params), respectively
+        """
+        if prior_cache is not None and self.name not in prior_cache:
+            # configure inp_params if needed
+            if self.priors_inp_params is not None and inp_params is None: 
+                inp_params = self.params
+            # configure out_params if needed
+            if self.priors_out_params is not None and out_params is None:
+                out_params = None
+                # we can evaluate prior on PixelResponse beam
+                if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
+                    out_params = self.beam_cache
+
+            self._eval_prior(prior_cache, inp_params, out_params)
 
     def freq_interp(self, freqs, kind='linear'):
         """
@@ -351,10 +377,16 @@ class PixelResponse(utils.PixInterp):
     This object also has a caching system for the weights
     and indicies of a bilinear interpolation of the beam 
     given the zen and az arrays.
+
+    Warning: if mode = 'interpolate' and parameter = True,
+    you need to clear_beam() after every backwards call,
+    otherwise the graph of the cached beam is freed
+    and you get a RunTimeError.
     """
     def __init__(self, freqs, pixtype, npix, interp_mode='bilinear',
-                 freq_mode='channel', device=None,
-                 f0=None, Ndeg=None, poly_dtype=None, poly_kwargs={}):
+                 theta=None, phi=None, freq_mode='channel',
+                 device=None, log=False, f0=None, Ndeg=None, poly_dtype=None,
+                 poly_kwargs={}, powerbeam=True):
         """
         Parameters
         ----------
@@ -366,12 +398,18 @@ class PixelResponse(utils.PixInterp):
             Number of sky pixels in the beam
         interp_mode : str, optional
             Spatial interpolation method. ['nearest', 'bilinear']
+        theta, phi : array_like, optional
+            Co-latitude and azimuth arrays [deg] of
+            input params if pixtype is 'other'
         freq_mode : str, optional
             Frequency parameterization model.
             channel - each freq channel is an independent parameter
             poly - low-order polynomial basis
         device : str, optional
             Device to put intermediary products on
+        log : bool, optional
+            If True, assume params is logged and take
+            exp before returning.
         f0 : float, optional
             Fiducial frequency [Hz] for freq_mode = 'poly'
         Ndeg : int, optional
@@ -380,17 +418,22 @@ class PixelResponse(utils.PixInterp):
             Cast poly A matrix to this dtype, freq_mode = 'poly'
         poly_kwargs : dict, optional
             Optional kwargs to pass to utils.gen_poly_A
+        powerbeam : bool, optional
+            If True treat beam as non-negative and real-valued.
         """
         super().__init__(pixtype, npix, interp_mode=interp_mode,
-                         device=device)
+                         device=device, theta=theta, phi=phi)
+        self.powerbeam = powerbeam
         self.freqs = freqs
         self.device = device
+        self.log = log
         self.freq_mode = freq_mode
         self.f0 = f0
         self.Ndeg = Ndeg
         self.poly_dtype = poly_dtype
         self.freq_ax = 3
         self.poly_kwargs = poly_kwargs
+        self.clear_beam()
 
         self._setup()
 
@@ -417,16 +460,33 @@ class PixelResponse(utils.PixInterp):
         if self.freq_mode == 'poly':
             self.dfreqs = self.dfreqs.to(device)
             self.A = self.A.to(device)
-    
-    def __call__(self, params, zen, az, *args):
-        # interpolate or generate sky values
-        b = self.interp(params, zen, az)
 
-        # evaluate frequency values
-        if self.freq_mode == 'poly':
-            b = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+    def __call__(self, params, zen, az, *args):
+        # get pre-forwarded beam if it exists
+        if self.beam_cache is None:
+            # pass through frequency response
+            if self.freq_mode == 'poly':
+                params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+
+            # now cache it for future calls
+            self.beam_cache = params
+
+        # interpolate at sky values
+        b = self.interp(self.beam_cache, zen, az)
+
+        if self.powerbeam:
+            ## TODO: replace abs with non-neg prior on beam?
+            if torch.is_complex(b):
+                b = torch.real(b)
+            b = torch.abs(b)
+
+        if self.log:
+            b = torch.exp(b)
 
         return b
+
+    def clear_beam(self):
+        self.beam_cache = None
 
 
 class GaussResponse:
@@ -561,20 +621,15 @@ class YlmResponse(PixelResponse):
 
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
-    def __init__(self, l, m, freqs, mode='generate', device=None,
-                 interp_mode='bilinear', interp_angs=None, npix=None,
-                 powerbeam=True, freq_mode='channel', f0=None,
+    def __init__(self, l, m, freqs, mode='interpolate', device=None,
+                 interp_mode='bilinear', theta=None, phi=None, npix=None,
+                 powerbeam=True, log=False, freq_mode='channel', f0=None,
                  Ndeg=None, poly_dtype=None, poly_kwargs={},
                  Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
         calls of (zen, az) that may or not be of healpix ordering.
-
-        Warning: if mode = 'interpolate' and parameter = True,
-        you need to clear_beam() after every backwards call,
-        otherwise the graph of the cached beam is freed
-        and you get a RunTimeError.
 
         Parameters
         ----------
@@ -583,21 +638,23 @@ class YlmResponse(PixelResponse):
         freqs : tensor
             frequency array [Hz]
         mode : str, options=['generate', 'interpolate']
-            generate - generate exact Y_lm given zen, az for each call
+            generate - generate exact Y_lm for each zen, az call. Slow and not recommended.
             interpolate - interpolate existing beam onto zen, az. See warning
             in docstring above.
         interp_mode : str, optional
             If mode is interpolate, this is the kind (see utils.PixelInterp)
-        interp_angs : 2-tuple
+        theta, phi : array_like, optional
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
-            calls. Must be a healpix map. Only needed if mode is 'interpolate'
+            calls. Only needed if mode is 'interpolate'
         npix : int, optional
             Number of pixels of output map. Currently only healpix supported.
             If a partial healpix map is used, this is the full map size given nside.
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
             beam is complex antenna farfield beam.
+        log : bool, optional
+            If True assume params is logged and take exp(params) before returning.
         freq_mode : str, optional
             Frequency parameterization ['channel', 'poly']
         f0 : float, optional
@@ -620,8 +677,8 @@ class YlmResponse(PixelResponse):
         super(YlmResponse, self).__init__(freqs, 'healpix', npix,
                                           interp_mode=interp_mode,
                                           freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
-                                          poly_dtype=poly_dtype,
-                                          poly_kwargs=poly_kwargs)
+                                          poly_dtype=poly_dtype, poly_kwargs=poly_kwargs,
+                                          theta=theta, phi=phi)
         self.l, self.m = l, m
         self.mult = torch.ones(len(m), dtype=utils._cfloat(), device=device)
         if np.all(m >= 0):
@@ -630,11 +687,11 @@ class YlmResponse(PixelResponse):
         self.Ylm_cache = {}
         self.ang_cache = {}
         self.mode = mode
-        self.interp_angs = interp_angs
         self.beam_cache = None
         self.freq_ax = 3
         self.Ylm_kwargs = Ylm_kwargs
         self.device = device
+        self.log = log
 
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
@@ -693,12 +750,6 @@ class YlmResponse(PixelResponse):
         self.Ylm_cache[h] = Ylm
         self.ang_cache[h] = (zen, az)
 
-    def set_beam(self, beam, zen, az, freqs):
-        self.beam_cache = dict(beam=beam, zen=zen, az=az, freqs=freqs)
-
-    def clear_beam(self):
-        self.beam_cache = None
-
     def forward(self, params, zen, az, freqs):
         """
         Perform the mapping from a_lm to pixel
@@ -741,6 +792,9 @@ class YlmResponse(PixelResponse):
                 beam = torch.real(beam)
             beam = torch.abs(beam)
 
+        if self.log:
+            beam = torch.exp(beam)
+
         return beam
 
     def __call__(self, params, zen, az, freqs):
@@ -748,17 +802,16 @@ class YlmResponse(PixelResponse):
         if self.mode == 'generate':
             beam = self.forward(params, zen, az, freqs)
 
-        # otherwise interpolate the pre=forwarded beam at zen, az
+        # otherwise interpolate the pre-forwarded beam at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
-                # beam must first be forwarded at self.interp_angs
-                int_zen, int_az = self.interp_angs
-                beam = self.forward(params, int_zen, int_az, freqs)
+                # beam must first be forwarded at theta and phi
+                beam = self.forward(params, self.theta, self.phi, freqs)
                 # now cache it for future calls
-                self.set_beam(beam, int_zen, int_az, freqs)
+                self.beam_cache = beam
 
             # interpolate the beam at the desired sky locations
-            beam = self.interp(self.beam_cache['beam'], zen, az)
+            beam = self.interp(self.beam_cache, zen, az)
 
         return beam
 
@@ -770,7 +823,7 @@ class YlmResponse(PixelResponse):
         for k, Ylm in self.Ylm_cache.items():
             self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
-            self.beam_cache['beam'] = utils.push(self.beam_cache['beam'], device)
+            self.beam_cache = utils.push(self.beam_cache, device)
 
 
 class AlmBeam(utils.Module):

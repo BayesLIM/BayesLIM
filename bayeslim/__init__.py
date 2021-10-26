@@ -19,7 +19,7 @@ from . import linalg
 from . import paramdict
 
 from .paramdict import ParamDict
-from .dataset import VisData, VisDataset
+from .dataset import VisData, Dataset
 from .utils import _float, _cfloat
 
 from .version import __version__

@@ -4,10 +4,7 @@ Linear algebra and related utility functions
 import numpy as np
 import torch
 
-from .utils import _float, _cfloat, D2R
-
-viewreal = torch.view_as_real
-viewcomp = torch.view_as_complex
+from .utils import _float, _cfloat, D2R, viewreal, viewcomp
 
 
 def cmult(a, b):

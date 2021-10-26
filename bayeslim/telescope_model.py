@@ -138,7 +138,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
     """
     def __init__(self, antpos, freqs, parameter=False, device=None,
                  cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest',
-                 redtol=0.1):
+                 redtol=0.1, name=None):
         """
         A model of an interferometric array
 
@@ -176,9 +176,11 @@ class ArrayModel(utils.PixInterp, utils.Module):
         redtol : float, optional
             If parameter is False, then redundant baseline groups
             are built. This is the bl vector redundancy tolerance [m]
+        name : str, optional
+            Name for this object, stored as self.name
         """
         # init Module
-        super(utils.PixInterp, self).__init__()
+        super(utils.PixInterp, self).__init__(name=name)
         # init PixInterp
         npix = cache_f_angs.shape[-1] if cache_f else None
         super().__init__('healpix', npix, interp_mode=interp_mode,

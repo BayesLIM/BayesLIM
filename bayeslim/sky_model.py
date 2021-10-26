@@ -34,12 +34,12 @@ class SkyBase(utils.Module):
             to a sky source tensor of shape
             (Npol, Npol, Nfreqs, Nsources)
         name : str, optional
-            Name for this object
+            Name for this object, stored as self.name
         parameter : bool
             If True, treat params as variables to be fitted,
             otherwise hold them fixed as their input value
         """
-        super().__init__()
+        super().__init__(name=name)
         self.params = params
         self.device = self.params.device
         if parameter:
@@ -48,7 +48,6 @@ class SkyBase(utils.Module):
         if R is None:
             R = DefaultResponse()
         self.R = R
-        self.name = name
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         if self.R.freq_mode == 'channel':
@@ -205,7 +204,7 @@ class PointSky(SkyBase):
         super().__init__(params, 'point', freqs, R=R, name=name, parameter=parameter)
         self.angs = angs
 
-    def forward(self, params=None):
+    def forward(self, params=None, prior_cache=None, **kwargs):
         """
         Forward pass the sky parameters
 
@@ -213,6 +212,8 @@ class PointSky(SkyBase):
         ----------
         params : list of tensors, optional
             Set of parameters to use instead of self.params.
+        prior_cache : dict, optional
+            Cache for storing computed priors as self.name
 
         Returns
         -------
@@ -231,7 +232,13 @@ class PointSky(SkyBase):
             params = self.params
 
         # pass through response
-        return dict(kind=self.kind, sky=self.R(params), angs=self.angs, name=self.name)
+        sky = self.R(params)
+
+        # evaluate prior
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
+
+        # pass through response
+        return dict(kind=self.kind, sky=sky, angs=self.angs, name=self.name)
 
 
 class PointSkyResponse:
@@ -367,7 +374,7 @@ class PixelSky(SkyBase):
         self.angs = angs
         self.px_area = px_area
 
-    def forward(self, params=None):
+    def forward(self, params=None, prior_cache=None, **kwargs):
         """
         Forward pass the sky parameters.
 
@@ -375,6 +382,8 @@ class PixelSky(SkyBase):
         ----------
         params : list of tensors, optional
             Set of parameters to use instead of self.params.
+        prior_cache : dict, optional
+            Cache for storing compute priors as self.name
 
         Returns
         -------
@@ -394,6 +403,10 @@ class PixelSky(SkyBase):
 
         # pass through response
         sky = self.R(params) * self.px_area
+
+        # evaluate prior
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
+
         return dict(kind=self.kind, sky=sky, angs=self.angs, name=self.name)
 
 
@@ -415,7 +428,7 @@ class PixelSkyResponse:
     """
     def __init__(self, freqs, spatial_mode='pixel', freq_mode='channel',
                  device=None, transform_order=0, cosmo=None,
-                 spatial_kwargs={}, freq_kwargs={}):
+                 spatial_kwargs={}, freq_kwargs={}, log=False):
         """
         Parameters
         ----------
@@ -450,6 +463,9 @@ class PixelSkyResponse:
             kmax : float, maximum k to compute
             decimate : bool, if True, decimate every other kbin
             kbin_file : str, filepath to csv of k-bins, used for bessel
+        log : bool, optional
+            If True, assumed params is log sky and take
+            exp of params before return
         """
         self.freqs = freqs
         self.Nfreqs = len(freqs)
@@ -462,6 +478,7 @@ class PixelSkyResponse:
         if cosmo is None:
             cosmo = cosmology.Cosmology()
         self.cosmo = cosmo
+        self.log = log
 
         # assertions
         if self.freq_mode == 'bessel':
@@ -596,6 +613,9 @@ class PixelSkyResponse:
         if torch.is_complex(params):
             params = params.real
 
+        if self.log:
+            params = torch.exp(params)
+
         return params
 
     def push(self, device):
@@ -688,14 +708,14 @@ class CompositeModel(utils.Module):
         self.sum_output = sum_output
         self.device = device
 
-    def forward(self, *args):
+    def forward(self, *args, prior_cache=None):
         """
         Forward pass sky models and append in a list
         or sum the sky maps and return a sky_component
         dictionary
         """
         # forward the models
-        sky_components = [getattr(self, mod).forward() for mod in self.models]
+        sky_components = [getattr(self, mod).forward(prior_cache=prior_cache) for mod in self.models]
         if self.sum_output:
             # assert only one kind of sky models
             assert len(set([comp['kind'] for comp in sky_components])) == 1
@@ -991,7 +1011,7 @@ class PolStokesModel(utils.Module):
         self.params = utils.push(self.params, device)
         self.device = self.params.device
 
-    def forward(self, sky_comp):
+    def forward(self, sky_comp, prior_cache=None):
         """
         Forward model polarization state onto Stokes I basis
 
@@ -1010,10 +1030,14 @@ class PolStokesModel(utils.Module):
             Polarized coherency matrix of shape (2, 2, Nfreqs, Nsources)
         """
         if isinstance(sky_comp, dict):
-            sky_comp['sky'] = self.forward(sky_comp['sky'])
+            sky_comp['sky'] = self.forward(sky_comp['sky'], prior_cache=prior_cache)
             return sky_comp
+
+        # evaluate prior
+        self.eval_prior(inp_params=self.params)
 
         # get fractional polarized coherency matrix
         B = stokes2linear(self.params)
+
         return B * sky_comp
 

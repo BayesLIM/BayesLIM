@@ -37,7 +37,7 @@ class RIME(utils.Module):
     element from the diagonal is used.
     """
     def __init__(self, sky, telescope, beam, array, sim_bls,
-                 times, freqs, data_bls=None, device=None):
+                 times, freqs, data_bls=None, device=None, name=None):
         """
         RIME object. Takes a model
         of the sky brightness, passes it through
@@ -83,8 +83,10 @@ class RIME(utils.Module):
             redundant bl in sim_bls will be copied over to data_bls
             appropriately. Note this will not work if array.antpos
             is a parameter.
+        name : str, optional
+            Name for this object, stored as self.name
         """
-        super().__init__()
+        super().__init__(name=name)
         self.sky = sky
         self.telescope = telescope
         self.beam = beam
@@ -230,7 +232,7 @@ class RIME(utils.Module):
             self.sim_times = self.sim_time_groups[self.time_group_id]
             self.Ntimes = len(self.sim_times)
 
-    def forward(self, *args):
+    def forward(self, *args, prior_cache=None, **kwargs):
         """
         Forward pass sky components through the beam,
         the fringes, and then integrate to
@@ -238,14 +240,14 @@ class RIME(utils.Module):
 
         Returns
         -------
-        vis : VisData object
-            Measured visibilities, shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
+        VisData
+            model visibilities
         """
         # set sim group given batch index
         self._set_group()
 
         # get sky components
-        sky_components = self.sky.forward()
+        sky_components = self.sky.forward(prior_cache=prior_cache)
         if not isinstance(sky_components, list):
             sky_components = [sky_components]
 
@@ -256,7 +258,7 @@ class RIME(utils.Module):
                           dtype=_cfloat(), device=self.device)
 
         # clear pre-computed beam for YlmResponse type
-        if self.beam.R.__class__ == beam_model.YlmResponse:
+        if hasattr(self.beam.R, 'clear_beam'):
             self.beam.R.clear_beam()
 
         # iterate over sky components
@@ -265,6 +267,8 @@ class RIME(utils.Module):
             kind = sky_comp['kind']
             sky = sky_comp['sky']
             ra, dec = sky_comp['angs']
+            if 'prior' in sky_comp:
+                out_dict['prior'] = out_dict['prior'] + sky_comp['prior']
 
             # iterate over observation times
             for j, time in enumerate(self.sim_times):
@@ -277,7 +281,7 @@ class RIME(utils.Module):
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
-                    ant_beams, cut, zen, az = self.beam.gen_beam(zen, az)
+                    ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
                     cut_sky = sky[..., cut]
 
                 elif kind == 'alm':

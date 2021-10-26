@@ -12,6 +12,7 @@ import warnings
 import os
 from astropy import constants
 import time as timer
+import h5py
 
 from . import special, version
 
@@ -31,6 +32,8 @@ if not import_healpy:
         warnings.warn("could not import healpy")
 
 D2R = np.pi / 180
+viewreal = torch.view_as_real
+viewcomp = torch.view_as_complex
 
 
 def _float(numpy=False):
@@ -383,8 +386,6 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
     l, m : array
         Ylm degree l and order m of len Ncoeff
     """
-    import os
-    import h5py
     if not os.path.exists(fname) or overwrite:
         with h5py.File(fname, 'w') as f:
             f.create_dataset('Ylm', data=Ylm)
@@ -1218,12 +1219,15 @@ class PixInterp:
         interp_mode : str, optional
             Spatial interpolation method. ['nearest', 'bilinear']
         theta, phi : array_like
-            unique co-latitude and azimuth arrays [deg]
-            of 2D grid to interpolate from (for 'rect' interp)
+            Co-latitude and azimuth arrays [deg] of
+            input params if pixtype is 'other'
         device : str, optional
             Device to place object on
         """
-        assert pixtype in ['healpix', 'rect']
+        assert pixtype in ['healpix', 'other']
+        if pixtype == 'other':
+            assert theta is not None
+            assert phi is not None
         self.pixtype = pixtype
         self.npix = npix
         self.interp_cache = {}
@@ -1264,7 +1268,7 @@ class PixInterp:
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
 
-            elif self.pixtype == 'rect':
+            elif self.pixtype == 'other':
                 raise NotImplementedError
                 # get 4 neighbors and their interpolation weights
                 zen, az = tensor2numpy(zen), tensor2numpy(az)
@@ -1386,14 +1390,32 @@ class Module(torch.nn.Module):
     A shallow wrapper around torch.nn.Module, with added
     utility features. Subclasses should overload
     self.forward, which will propagate to self.__call__
-    and self.generator (a replacement for self.__iter__)
     """
-    def __init__(self):
+    def __init__(self, name=None):
         super().__init__()
-        # add bayeslim version
+        # add version
         self.__version__ = version.__version__
+        self.set_priors()
+        self._name = name
 
-    def forward(self, inp=None):
+    @property
+    def name(self):
+        return self._name if self._name is not None else self.__class__.__name__
+
+    def forward(self, inp=None, prior_cache=None, **kwargs):
+        """
+        The forward operator. Should have a kwarg for
+        starting input to the model (inp) and a cache
+        dictionary for holding the output of eval_prior
+
+        Parameters
+        ----------
+        inp : object, optional
+            Starting input for model
+        prior_cache : dict, optional
+            Cache for storing computed prior
+            from self.cache_prior
+        """
         raise NotImplementedError
 
     def __getitem__(self, name):
@@ -1437,6 +1459,86 @@ class Module(torch.nn.Module):
         if not isinstance(param, torch.nn.Parameter):
             self[name] = torch.nn.Parameter(param)
 
+    def set_priors(self, priors_inp_params=None, priors_out_params=None):
+        """
+        Set log prior(s) on this module's input params tensor
+        and/or on the output params tensor (i.e. after mapping
+        through a response function)
+
+        Parameter
+        ---------
+        priors_inp_params : optim.Log*Prior object or list
+            Takes params as callable and returns
+            scalar log prior. Can feed list of priors as well.
+        priors_out_params : optim.Log*Prior object or list
+            Takes the tensor output after pushing
+            params through its response function
+            as callable and returns scalar log prior.
+            Can feed list of priors as well.
+        """
+        if (priors_inp_params is not None and 
+            not isinstance(priors_inp_params, (list, tuple))):
+            priors_inp_params = [priors_inp_params]
+        self.priors_inp_params = priors_inp_params
+
+        if (priors_out_params is not None and
+            not isinstance(priors_out_params, (list, tuple))):
+            priors_out_params = [priors_out_params]
+        self.priors_out_params = priors_out_params
+
+    def eval_prior(self, prior_cache, inp_params=None, out_params=None):
+        """
+        Shallow wrapper around self._eval_prior. Default
+        behavior is to pass self.params and self.R(self.params)
+        to self._eval_prior if self.name not in prior_cache.
+        Non-standard subclasses should overload this method
+        for proper usage.
+
+        Parameters
+        ----------
+        prior_cache : dict
+            Dictionary to hold computed prior, assigned as self.name
+        inp_params, out_params : tensor, optional
+            self.params and self.R(self.params), respectively
+        """
+        if prior_cache is not None and self.name not in prior_cache:
+            # configure inp_params if needed
+            if self.priors_inp_params is not None and inp_params is None: 
+                inp_params = self.params
+            # configure out_params if needed
+            if self.priors_out_params is not None and out_params is None: 
+                out_params = self.R(self.params)
+            self._eval_prior(prior_cache, inp_params, out_params)
+
+    def _eval_prior(self, prior_cache, inp_params=None, out_params=None):
+        """
+        Evaluate prior and insert into prior_cache.
+        Will use self.name (default) or __class__.__name__ as key.
+        If the key already exists, the prior will not be computed or stored.
+
+        Parameters
+        ----------
+        prior_cache : dict
+            Dictionary to hold computed prior, assigned as self.name
+        inp_params, out_params : tensor, optional
+            self.params and self.R(self.params), respectively
+        """
+        # append to cache
+        if self.name not in prior_cache:
+            prior_value = torch.as_tensor(0.0)
+            if (hasattr(self, 'priors_inp_params') and
+                inp_params is not None and
+                self.priors_inp_params is not None):
+                for prior in self.priors_inp_params:
+                    prior_value = prior_value + prior(inp_params).to('cpu')
+
+            if (hasattr(self, 'priors_out_params') and
+                out_params is not None and
+                self.priors_out_params is not None):
+                for prior in self.priors_out_params:
+                    prior_value = prior_value + prior(out_params).to('cpu')
+
+            prior_cache[self.name] = prior_value
 
 class Sequential(Module):
     """
@@ -1459,7 +1561,7 @@ class Sequential(Module):
         """
         Parameters
         ----------
-        models : OrderedDict
+        models : dict
             Models to evaluate in sequential order.
         """
         super().__init__()
@@ -1469,7 +1571,7 @@ class Sequential(Module):
         for name, model in models.items():
             self.add_module(name, model)
 
-    def forward(self, inp=None, pdict=None):
+    def forward(self, inp=None, pdict=None, prior_cache=None, **kwargs):
         """
         Evaluate model in sequential order,
         optionally updating all parameters beforehand
@@ -1482,13 +1584,15 @@ class Sequential(Module):
             Parameter dictionary with keys
             conforming to nn.Module.get_parameter
             syntax, and values as tensors
+        prior_cache : dict, optional
+            Cache for storing computed priors
         """
         # update parameters of module and sub-modules
         if pdict is not None:
             self.update(pdict)
 
         for name in self._models:
-            inp = self.get_submodule(name)(inp)
+            inp = self.get_submodule(name)(inp, prior_cache=prior_cache)
 
         return inp
 
@@ -1516,12 +1620,38 @@ class Sequential(Module):
             raise ValueError("No method set_batch_idx and requested idx > 0")
 
 
-def get_model_attr(model, name):
+def has_model_attr(model, name):
     """
-    Get attr model.mod1.mod2.params
+    Return True if model has name
     """
     if isinstance(name, str):
         name = name.split('.')
+    if len(name) == 1:
+        return hasattr(model, name[0])
+    else:
+        if hasattr(model, name[0]):
+            return has_model_attr(get_model_attr(model, name[0]), '.'.join(name[1:]))
+        else:
+            return False
+
+
+def get_model_attr(model, name, pop=0):
+    """
+    Get attr model.name
+
+    Parameters
+    ----------
+    pop : int, optional
+        period-delimited chunks of 'name'
+        to pop from the end before getting.
+        E.g. if name = 'rime.sky.params'
+        and pop = 0, returns self.rime.sky.params
+        or if pop = 1 returns self.rime.sky
+    """
+    if isinstance(name, str):
+        name = name.split('.')
+    if pop > 0:
+        name = name[:-pop]
     attr = getattr(model, name[0])
     if len(name) == 1:
         return attr
@@ -1531,7 +1661,7 @@ def get_model_attr(model, name):
 
 def set_model_attr(model, name, value):
     """
-    Set name "model.mod1.mod2.params"
+    Set value to model as model.name
 
     If name is a torch.nn.Parameter, cast
     value as Parameter before setting.
@@ -1556,13 +1686,12 @@ def set_model_attr(model, name, value):
 
 def del_model_attr(model, name):
     """
-    Delete name='mod1.mod2.params'
-    from model.mod1.mod2.params
+    Delete model.name
     """
     if isinstance(name, str):
         name = name.split('.')
     if len(name) > 1:
-        model = get_model_attr(model, '.'.join(name[:-1]))
+        model = get_model_attr(model, name, pop=1)
         name = name[-1:]
     delattr(model, name[0])
 

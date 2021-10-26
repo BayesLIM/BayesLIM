@@ -6,9 +6,9 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 import copy
+import h5py
 
-from . import utils, telescope_model, version, optim
-from .utils import _float, _cfloat
+from . import version
 
 
 class VisData:
@@ -154,23 +154,23 @@ class VisData:
         if isinstance(bl, tuple):
             # this is an antpair or antpairpol
             if len(bl) == 2:
-                bls, pol = [bl], None
+                bl, pol = [bl], None
             elif len(bl) == 3:
-                bls, pol = [bl[:2]], bl[2]
-        if isinstance(bl, list):
-            bls, pols = [], []
-            for _bl in bl:
-                _bls, _pol = self._bl2uniq_blpol(_bl)
-                bls.extend(_bls)
-                pols.append(_pol)
-            bls = sorted(set(bls))
-            pols = list(set(pols))
-            if len(pols) > 1 and None in pols:
-                pols.remove(None)
-            assert len(pols) == 1, "can only index 1 pol at a time"
-            pol = pols[0]
+                bl, pol = [bl[:2]], bl[2]
+        elif isinstance(bl, list):
+            bl_list, pol_list = [], []
+            for b in bl:
+                _bl, _pol = self._bl2uniq_blpol(b)
+                bl_list.extend(_bl)
+                pol_list.append(_pol)
+            bl = sorted(set(bl_list))
+            pol = list(set(pol_list))
+            if len(pol) > 1 and None in pol:
+                pol.remove(None)
+            assert len(pol) == 1, "can only index 1 pol at a time"
+            pol = pol[0]
 
-        return bls, pol
+        return bl, pol
 
     def _time2ind(self, time):
         """
@@ -481,6 +481,7 @@ class VisData:
         rcond : float, optional
             rcond kwarg for pinverse
         """
+        from bayeslim import optim
         self.icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
 
     def get_icov(self, bl=None, icov=None, **kwargs):
@@ -564,6 +565,7 @@ class VisData:
             If fname exists, overwrite it
         """
         import h5py
+        from bayeslim import utils
         if not os.path.exists(fname) or overwrite:
             with h5py.File(fname, 'w') as f:
                 # write data and metadata
@@ -606,6 +608,7 @@ class VisData:
             are essential for inference.
         """
         import h5py
+        from bayeslim import telescope_model
         with h5py.File(fname, 'r') as f:
             # load metadata
             assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
@@ -667,6 +670,8 @@ class VisData:
             kwargs for UVData read
         """
         from pyuvdata import UVData
+        from bayeslim.utils import _float, _cfloat
+        from bayeslim import telescope_model
         # load uvdata
         if isinstance(fname, str):
             uvd = UVData()
@@ -720,6 +725,7 @@ class VisData:
         """
         Run checks on data
         """
+        from bayeslim import telescope_model
         assert isinstance(self.telescope, telescope_model.TelescopeModel)
         assert isinstance(self.antpos, dict)
         assert isinstance(self.data, torch.Tensor)
@@ -742,16 +748,25 @@ class VisData:
             assert (ant1 in self.ants) and (ant2 in self.ants)
 
 
-class VisDataset(Dataset):
+class MapData:
     """
-    Dataset iterator for VisData
+    An object for holding image or map data of shape
+    (Npol, Npol, Nfreqs, Npix)
+    """
+    def __init__(self):
+        raise NotImplementedError 
+
+
+class Dataset(Dataset):
+    """
+    Dataset iterator for VisData and MapData
     """
     def __init__(self, data, read_fn=None, read_kwargs={}):
-        """VisData dataset object
+        """VisData or Mapdata Dataset object
 
         Parameters
         ----------
-        data : list of str or VisData
+        data : list of str or VisData / MapData
             List of data objects to read and iterate over.
             Niter of data should match Niter of the
             posterior model. data passed as str will
@@ -766,13 +781,13 @@ class VisDataset(Dataset):
             be a list of kwarg dicts for each file
             of data.
         """
-        if isinstance(data, (str, VisData)):
+        if isinstance(data, (str, VisData, MapData)):
             data = [data]
         self.data = data
         self.Ndata = len(self.data)
         self.read_fn = read_fn if read_fn is not None else pass_data
         if isinstance(read_kwargs, dict):
-            read_kwargs = [read_kwargs for vd in self.data]
+            read_kwargs = [read_kwargs for d in self.data]
         self.read_kwargs = read_kwargs
 
     def __len__(self):
@@ -839,36 +854,25 @@ def concat_VisData(vds, axis, run_check=True):
     return out
 
 
-class MapData:
+def concat_MapData(mds, axis, run_check=True):
     """
-    An object for holding image or map data of shape
-    (Npol, Npol, Nfreqs, Npix)
+    Concatenate MapData objects
     """
-    def __init__(self):
-        raise NotImplementedError 
+    raise NotImplementedError
 
 
-class MapDataset(Dataset):
+def load_data(fname, concat_ax=None, copy=False, **kwargs):
     """
-    Dataset for MapData
-    """
-    def __init__(self, *args, **kwargs):
-        """Mapdata dataset object
-        """
-        raise NotImplementedError
-
-
-def load_visdata(fname, concat_ax=None, copy=False, **kwargs):
-    """
-    Load a VisData HDF5 file(s)
+    Load a VisData or MapData HDF5 file(s)
 
     Parameters
     ----------
     fname : str or list of str
-        If list of str, concatenate data along
-        concat_ax
+        Filepath to object. If list of str, concatenate
+        data along concat_ax
     concat_ax : str, optional
-        Concatenation axis if fname is a list
+        Concatenation axis if fname is a list. If None leave
+        as a list.
     copy : bool, optional
         If True copy data before returning
     kwargs : dict
@@ -876,27 +880,36 @@ def load_visdata(fname, concat_ax=None, copy=False, **kwargs):
     
     Returns
     -------
-    VisData object
+    VisData or MapData object
     """
     if isinstance(fname, (list, tuple)):
-        vds = [load_visdata(fn, **kwargs) for fn in fname]
-        vd = concat_VisData(vds, concat_ax)
-    elif isinstance(fname, VisData):
-        vd = fname
+        dlist = [load_data(fn, **kwargs) for fn in fname]
+        if concat_ax is not None:
+            if isinstance(dlist[0], VisData):
+                data = concat_VisData(dlist, concat_ax)
+            else:
+                data = concat_MapData(dlist, concat_ax)
+        else:
+            data = dlist
+
+    elif isinstance(fname, (VisData, MapData)):
+        data = fname
+
     else:
-        vd = VisData()
-        vd.read_hdf5(fname, **kwargs)
+        with h5py.File(fname) as f:
+            obj = f.attrs['obj']
+
+        if obj == 'VisData':
+            data = VisData()
+            data.read_hdf5(fname, **kwargs)
+        else:
+            data = MapData()
+            data.read_hdf5(fname, **kwargs)
+
     if copy:
-        vd = copy.deepcopy(vd)
+        data = copy.deepcopy(data)
 
-    return vd
-
-
-def load_mapdata(fname, concat_ax=None, copy=False, **Kwargs):
-    """
-    Load a MapData HDF5 file(s)
-    """
-    raise NotImplementedError
+    return data
 
 
 def pass_data(fname, copy=False, **kwargs):

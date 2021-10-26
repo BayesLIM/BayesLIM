@@ -9,7 +9,7 @@ import time
 import pickle
 from collections.abc import Iterable
 
-from . import utils, io
+from . import utils
 
 
 class LogUniformPrior:
@@ -210,11 +210,10 @@ class LogProb(utils.Module):
     .. math::
 
         -log(L) &= \frac{1}{2}(d - \mu)^T \Sigma^{-1} (d - \mu)\\
-                &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi) 
+                &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi)
     """
     def __init__(self, model, target, start_inp=None, cov_parameter=False,
-                 param_list=None, prior_list=None, device=None,
-                 compute='post', negate=True):
+                 prior_dict=None, device=None, compute='post', negate=True):
         """
         Parameters
         ----------
@@ -233,16 +232,11 @@ class LogProb(utils.Module):
         cov_parameter : bool, optional
             If fed a covariance, this makes the inverse covariance
             a parameter in the fit. (not yet implemented)
-        param_list : list
-            List of all param names (str) to pull
-            from model and to evaluate their prior
-        prior_list : list
-            List of Prior callables (e.g. LogGaussPrior)
-            for each element in param_list. For no prior on a
-            parameter, pass element as None. A param name
-            str may be repeated, e.g. in case multiple priors
-            are used for a single params tensor but with different
-            indexing.
+        prior_dict : dict, optional
+            A dictionary of model parameters (str) and their
+            prior callables to evaluate. Default is to evaluate
+            priors attached to each Module, but if this is provided
+            it takes precedence.
         device : str, optional
             Set the device for this object
         compute : str, optional
@@ -263,31 +257,79 @@ class LogProb(utils.Module):
             raise NotImplementedError
         self.cov_parameter = cov_parameter
         self.device = device
-        self.param_list = param_list
-        self.prior_list = prior_list
+        self.named_params = [k[0] for k in self.named_parameters()]
+        self.prior_dict = prior_dict
         self.compute = compute
         self.negate = negate
+        self.clear_prior_cache()
 
-    def forward_like(self, target, inp=None):
+    @property
+    def Nbatch(self):
+        """get total number of batches in model"""
+        if hasattr(self.model, 'Nbatch'):
+            return self.model.Nbatch
+        else:
+            return 1
+
+    @property
+    def batch_idx(self):
+        """return current batch index in model"""
+        if hasattr(self.model, 'batch_idx'):
+            return self.model.batch_idx
+        else:
+            return 0
+
+    def set_batch_idx(self, idx):
+        """Set the current batch index"""
+        if hasattr(self.model, 'set_batch_idx'):
+            self.model.set_batch_idx(idx)
+        elif idx > 0:
+            raise ValueError("No method set_batch_idx and requested idx > 0")
+
+    def get_batch_data(self, idx=None):
         """
-        Compute negative log (Gaussian) likelihood
+        Get target and input for the minibatch index idx.
+
+        Parameters
+        ----------
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Default is self.batch_idx.
+            Otherwise just evaluate prob.
+            If passed also sets self.batch_idx.
+
+        Returns
+        -------
+        target object, starting input object
+        """
+        if idx is not None:
+            self.set_batch_idx(idx)
+        target = self.target[self.batch_idx]
+        inp = None if self.start_inp is None else self.start_inp[self.batch_idx]
+
+        return target, inp
+
+    def forward_like(self, idx=None, **kwargs):
+        """
+        Compute log (Gaussian) likelihood
         by evaluating the forward model and comparing
         against the target data
 
         Parameters
         ----------
-        target : VisData or MapData object
-            Data to compare against model output.
-            Must have a target.data attribute that
-            holds the data tensor, and a target.icov
-            tensor that holds its inverse covariance.
-        inp : object, optional
-            Starting input to self.model
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Default is self.batch_idx.
+            Otherwise just evaluate prob.
+            If passed also sets self.batch_idx.
         """
         ## TODO: allow for kwarg dynamic icov for cosmic variance
 
+        # get batch data
+        target, inp = self.get_batch_data(idx)
+
         # forward pass model
-        out = self.model(inp)
+        out = self.model(inp, prior_cache=self.prior_cache)
         prediction = out.data.to(self.device)
 
         # compute residual
@@ -314,74 +356,70 @@ class LogProb(utils.Module):
         else:
             return loglike
 
-    def forward_prior(self, *args, **kwargs):
+    def forward_prior(self, **kwargs):
         """
-        Compute negative log prior given
-        state of model parameters
+        Compute log prior given state of params tensors
         """
-        # evaluate negative log prior
-        logprior = 0
-        if self.param_list is not None and self.prior_list is not None:
-            for param, prior in zip(self.param_list, self.prior_list):
-                if prior is not None:
-                    logprior += prior(utils.get_model_attr(self.model, param))
+        # evaluate log prior
+        logprior = torch.as_tensor(0.0)
+        if self.prior_dict is not None:
+            # use prior_dict
+            for p_key, p_obj in self.prior_dict.items():
+                if isinstance(p_obj, (tuple, list)):
+                    for p_ob in p_obj:
+                        logprior += p_ob(self.model[p_key])
+                else:
+                    logprior += p_obj(self.model[p_key])
 
+        else:
+            if len(self.prior_cache) == 0:
+                # populate prior_cache if it is empty
+                for _, mod in self.model.named_modules():
+                    if hasattr(mod, 'params'):
+                        mod.eval_prior(self.prior_cache)
+                # add priors
+                for k in self.prior_cache:
+                    logprior = logprior + self.prior_cache[k]
+
+        # clear prior cache
+        self.clear_prior_cache()
+
+        # return log prior
         if self.negate:
             return -logprior
         else:
             return logprior
 
-    def forward(self, target, inp=None):
+    def forward(self, idx=None, **kwargs):
         """
-        Compute negative log posterior (up to a constant).
+        Compute log posterior (up to a constant).
         Note that the value of self.negate determines
-        if output is log posterior or negative log posterior
+        if output is log posterior or negative log posterior.
 
         Parameters
         ----------
-        target : VisData or MapData object
-            Data to compare against model output.
-            Must have a target.data attribute that
-            holds the data tensor, and a target.icov
-            tensor that holds its inverse covariance.
-        inp : object, optional
-            Starting input to self.model
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Default is self.batch_idx.
+            Otherwise just evaluate prob.
+            If passed also sets self.batch_idx.
         """
         assert self.compute in ['post', 'like', 'prior']
-        prob = 0
+        prob = torch.as_tensor(0.0)
 
+        # evaluate and add likelihood
         if self.compute in ['post', 'like']:
-            prob += self.forward_like(target, inp=inp)
+            prob = prob + self.forward_like(idx, **kwargs)
 
+        # evalute and add prior
         if self.compute in ['post', 'prior']:
-            prob += self.forward_prior()
+            prob = prob + self.forward_prior(**kwargs)
+
+        self.clear_prior_cache()
 
         return prob
 
-    @property
-    def Nbatch(self):
-        """get total number of batches in model"""
-        if hasattr(self.model, 'Nbatch'):
-            return self.model.Nbatch
-        else:
-            return 1
-
-    @property
-    def batch_idx(self):
-        """return current batch index in model"""
-        if hasattr(self.model, 'batch_idx'):
-            return self.model.batch_idx
-        else:
-            return 0
-
-    def set_batch_idx(self, idx):
-        """Set the current batch index"""
-        if hasattr(self.model, 'set_batch_idx'):
-            self.model.set_batch_idx(idx)
-        elif idx > 0:
-            raise ValueError("No method set_batch_idx and requested idx > 0")
-
-    def __call__(self, idx=None):
+    def __call__(self, idx=None, **kwargs):
         """
         Evaluate forward model given starting input, and
         compute posterior given target for a particular
@@ -391,13 +429,11 @@ class LogProb(utils.Module):
         ----------
         idx : int, optional
             The minibatch index to run, if self.prob
-            is batched. Defautl is self.batch_idx.
+            is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
+            If passed also sets self.batch_idx.
         """
-        if idx is not None:
-            self.set_batch_idx(idx)
-        inp = None if self.start_inp is None else self.start_inp[self.batch_idx]
-        return self.forward(self.target[self.batch_idx], inp)
+        return self.forward(idx, **kwargs)
 
     def push(self, device):
         """
@@ -406,6 +442,14 @@ class LogProb(utils.Module):
         self.device = device
         for d in self.target.data:
             d.push(device)
+
+    def clear_prior_cache(self):
+        """
+        Clear the self.prior_cache dictionary
+        """
+        if hasattr(self, 'prior_cache'):
+            del self.prior_cache
+        self.prior_cache = {}
 
     def set_icov(self, icov):
         """
