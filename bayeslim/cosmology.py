@@ -5,6 +5,8 @@ import numpy as np
 from astropy import units, constants
 from astropy.cosmology import FlatLambdaCDM, z_at_value
 
+from . import utils
+
 
 class Cosmology(FlatLambdaCDM):
     """
@@ -204,124 +206,161 @@ class Cosmology(FlatLambdaCDM):
         return 2 * np.pi / self.dRpara_df(z)
 
 
-# try to import healpy
-import warnings
-try:
-    import healpy as hp
-    import_healpy = True
-except ImportError:
-    import_healpy = False
-if not import_healpy:
-    try:
-        # note this will have more limited capability
-        # than healpy, but can do what we need
-        from astropy_healpix import healpy as hp
-        import_healpy = True
-    except ImportError:
-        warnings.warn("could not import healpy")
-
-
-def cube2hpx(simfile, freq, sim_res, sim_size, nside=1024,
-             cosmo=None):
+def cube2lcone(sims, sim_freqs, freqs, sim_res, zinterp='nearest',
+               cosmo=None, nside=None, hpx=True, roll=None):
     """
-    Project simulation cube onto a healpix map.
+    Project simulation cube onto a lightcone.
 
     Adapted from P. Kittisiwit's cosmotile
     github.com/piyanatk/cosmotile
 
     Parameters
     ----------
-    simfile: ndarray or str
-        A 3D temperature simulation cube or str path to .npy file
-    freq: float
-        Frequency of interest in MHz.
-   sim_res : float
+    sims: ndarray or str
+        A 3D temperature simulation cube. This can be of shape
+        (Nsim_freqs, Npix, Npix, Npix) or (Npix, Npix, Npix).
+        This can also be a list of str filepaths to .npy sims.
+    sim_freqs : ndarray
+        Frequencies of input simulation cubes [MHz]
+        Must be ordered such that they are monotonically
+        increasing or decreasing.
+    freqs : float
+        Frequencies to interpolate to [MHz]
+    sim_res : float
         Simulation voxel resolution in cMpc
-    sim_size : tuple
-        3-tuple containing Npixels for box along x,y,z axes
-        e.g. (128, 128, 128)
-    nside: integer
-        NSIDE of the output HEALPix image. Must be a valid NSIDE for HEALPix.
+    zinterp : str, optional
+        Line-of-sight (redshift) interpolation method
+        ['nearest', 'linear', 'quadratic']
     cosmo : Cosmology object, optional
+    nside: integer, optional
+        NSIDE of the output HEALPix image.
+        Must be a valid NSIDE for HEALPix.
+    hpx : bool, optional
+        If True return a healpix map of shape
+        (Nfreqs, Nhpix) otherwise return
+        a box of shape (Nfreqs, Npix, Npix)
+    roll : int or tuple, optional
+        Before sampling the cube, roll along x, y, and/or z
+        axis. If int, all x,y,z are rolled the same, or if
+        tuple roll (x, y, z) separately.
 
     Returns
     -------
     array
-        Healpix maps
+        healpix or box lightcone
+    array
+        comoving distances at desired freqs
     """
+    # get cosmology
     if cosmo is None:
         cosmo = Cosmology()
 
-    # Read in and interpolate simulation cubes to the redshift of interest.
-    if isinstance(simfile, str):
-        cube = np.load(simfile)
-    else:
-        cube = simfile
+    # load data
+    if isinstance(sims, str):
+        # load single file
+        sims = np.load(sims)
 
     # Determine the radial comoving distance r to the comoving shell at the
     # frequency of interest.
     f21 = 1420.40575177  # MHz
-    z21 = f21 / freq - 1
-    dc = cosmo.comoving_distance(z21).value
+    if isinstance(freqs, (float, int)):
+        freqs = np.array([freqs])
+    zs = f21 / freqs - 1
+    dcs = np.array([cosmo.comoving_distance(z).value for z in zs])
+    # do the same for the simulation frequencies
+    if isinstance(sim_freqs, (float, int)):
+        sim_freqs = np.array([sim_freqs])
+    sim_zs = f21 / sim_freqs - 1
+    sim_dcs = np.array([cosmo.comoving_distance(z).value for z in sim_zs])
 
-    # Get the vector coordinates (vx, vy, vz) of the HEALPIX pixels.
-    vx, vy, vz = hp.pix2vec(nside, np.arange(hp.nside2npix(nside)))
+    # iterate over desired frequencies
+    lcone = []
+    for i in np.arange(len(freqs)):
+        # interpolate frequency axis to get a cube
+        if zinterp == 'nearest':
+            cube = sims[np.argmin(np.abs(zs[i] - sim_zs))]
 
-    # Translate vector coordinates to comoving coordinates and determine the
-    # corresponding cube indexes (xi, yi, zi). For faster operation, we will
-    # use the mod function to determine the nearest neighboring pixels and
-    # just grab the data points from those pixels instead of doing linear
-    # interpolation.
-    xi = np.mod(np.around(vx * dc / sim_res).astype(int), sim_size[0])
-    yi = np.mod(np.around(vy * dc / sim_res).astype(int), sim_size[1])
-    zi = np.mod(np.around(vz * dc / sim_res).astype(int), sim_size[2])
-    out = np.asarray(cube[xi, yi, zi])
+        elif zinterp == 'linear':
+            # get two nearest cubes in ascending redshift order
+            s1, s2 = sorted(np.arange(len(sim_zs))[np.argsort(np.abs(zs[i] - sim_zs))[:2]])
 
-    return out
+            # y = bx + c
+            sim1, sim2 = sims[s1], sims[s2]
+            z1, z2 = sim_zs[s1], sim_zs[s2]
+            b = (sim2 - sim1) / (z2 - z1)
+            c = sim1 - b * z1
+            cube = b * zs[i] + c
+
+        elif zinterp == 'quadratic':
+            # get three nearest cubes in ascending redshift order
+            s1, s2, s3 = sorted(np.arange(len(sim_zs))[np.argsort(np.abs(zs[i] - sim_zs))[:3]])
+
+            # y = ax^2 + bx + c
+            sim1, sim2, sim3 = sims[s2], sims[s2], sims[s3]
+            z1, z2, z3 = sim_zs[s1], sim_zs[s2], sim_zs[s3]
+            a = (sim3 - sim1 - (sim3 - sim2) * (z3 - z1) / (z3 - z2) ) \
+                / (z3**2 - z1**2 - (z3 - z1) * (z3**2 - z2**2) / (z3 - z2))
+            b = (sim3 - sim1 - a * (z3**2 - z2**2)) / (z3 - z2)
+            c = sim1 - a * z1**2 - b * z1
+            cube = a * zs[i]**2 + b * zs[i] + c
+
+        # tile and sample onto a map
+        m = cube2map(cube, dcs[i], sim_res, nside=nside, hpx=hpx, roll=roll)
+        lcone.append(m)
+
+    return np.array(lcone), dcs
 
 
-def cube2slice(simfile, freq, sim_res, sim_size, cosmo=None):
+def cube2map(cube, dc, sim_res, nside=None, hpx=True, roll=None):
     """
-    Project simulation cube onto a transverse slice
-    orthogonal to the line-of-sight (e.g. for lightcones).
-
-    Adapted from P. Kittisiwit's cosmotile
-    github.com/piyanatk/cosmotile
+    Tile a simulation cube and extract
+    a map at a fixed comoving distance away
+    from the observer using nearest neighbor interpolation
 
     Parameters
     ----------
-    simfile: ndarray or str
-        A 3D temperature simulation cube or str path to .npy file
-    freq: float
-        Frequency of interest in MHz.
+    cube : ndarray
+        3D temperature field of shape (Npix, Npix, Npix)
+        aligned as (x, y, z) where z is the line-of-sight.
+    dc : float
+        Comoving distance away to sample box
     sim_res : float
-        Simulation voxel resolution in cMpc
-    sim_size : tuple
-        3-tuple containing Npixels for box along x,y,z axes
-        e.g. (128, 128, 128)
-    cosmo : Cosmology object, optional
+        Resolution of cube in cMpc
+    nside : int, optional
+        NSIDE to sample HEALPix map if hpx is True
+    hpx : bool, optional
+        If True, sample the cube onto a healpix map,
+        otherwise sample it on a box
+    roll : int or tuple, optional
+        Before sampling the cube, roll along x, y, and/or z
+        axis. If int, all x,y,z are rolled the same, or if
+        tuple roll (x, y, z) separately.
 
     Returns
     -------
-    array
-        slice maps
+    ndarray
+        cube sampled as a map
     """
-    if cosmo is None:
-        cosmo = Cosmology()
+    sim_size = cube.shape
+    if roll is not None:
+        if isinstance(roll, int):
+            roll = (roll, roll, roll)
+        cube = np.roll(cube, roll, axis=(0, 1, 2))
 
-    # Read in and interpolate simulation cubes to the redshift of interest.
-    if isinstance(simfile, str):
-        cube = np.load(simfile)
+    if hpx:
+        assert utils.import_healpy
+        # Get the vector coordinates (vx, vy, vz) of the HEALPIX pixels.
+        vx, vy, vz = utils.healpy.pix2vec(nside, np.arange(utils.healpy.nside2npix(nside)))
+
+        # Translate vector coordinates to comoving coordinates and determine the
+        # corresponding cube indexes (xi, yi). Nearest neighbor interpolation
+        xi = np.mod(np.around(vx * dc / sim_res).astype(int), sim_size[0])
+        yi = np.mod(np.around(vy * dc / sim_res).astype(int), sim_size[1])
+        zi = np.mod(np.around(vz * dc / sim_res).astype(int), sim_size[2])
+        out = np.asarray(cube[xi, yi, zi])
+
     else:
-        cube = simfile
-
-    # Determine the radial comoving distance r to the comoving slice at the
-    # frequency of interest.
-    f21 = 1420.40575177  # MHz
-    z21 = f21 / freq - 1
-    dc = cosmo.comoving_distance(z21).value
-
-    zi = np.mod(np.around(dc / sim_res).astype(int), sim_size[2])
-    out = np.asarray(cube[..., zi])
+        zi = np.mod(np.around(dc / sim_res).astype(int), sim_size[2])
+        out = np.asarray(cube[..., zi])
 
     return out
