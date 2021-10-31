@@ -206,7 +206,7 @@ class Cosmology(FlatLambdaCDM):
         return 2 * np.pi / self.dRpara_df(z)
 
 
-def cube2lcone(sims, sim_freqs, freqs, sim_res, zinterp='nearest',
+def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
                cosmo=None, nside=None, hpx=True, roll=None):
     """
     Project simulation cube onto a lightcone.
@@ -220,8 +220,8 @@ def cube2lcone(sims, sim_freqs, freqs, sim_res, zinterp='nearest',
         A 3D temperature simulation cube. This can be of shape
         (Nsim_freqs, Npix, Npix, Npix) or (Npix, Npix, Npix).
         This can also be a list of str filepaths to .npy sims.
-    sim_freqs : ndarray
-        Frequencies of input simulation cubes [MHz]
+    sim_zs : ndarray
+        Redshifts of simulation cubes.
         Must be ordered such that they are monotonically
         increasing or decreasing.
     freqs : float
@@ -268,9 +268,8 @@ def cube2lcone(sims, sim_freqs, freqs, sim_res, zinterp='nearest',
     zs = f21 / freqs - 1
     dcs = np.array([cosmo.comoving_distance(z).value for z in zs])
     # do the same for the simulation frequencies
-    if isinstance(sim_freqs, (float, int)):
-        sim_freqs = np.array([sim_freqs])
-    sim_zs = f21 / sim_freqs - 1
+    if isinstance(sim_z, (float, int)):
+        sim_zs = np.array([sim_zs])
     sim_dcs = np.array([cosmo.comoving_distance(z).value for z in sim_zs])
 
     # iterate over desired frequencies
