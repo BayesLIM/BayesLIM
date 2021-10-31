@@ -268,7 +268,7 @@ def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
     zs = f21 / freqs - 1
     dcs = np.array([cosmo.comoving_distance(z).value for z in zs])
     # do the same for the simulation frequencies
-    if isinstance(sim_z, (float, int)):
+    if isinstance(sim_zs, (float, int)):
         sim_zs = np.array([sim_zs])
     sim_dcs = np.array([cosmo.comoving_distance(z).value for z in sim_zs])
 
