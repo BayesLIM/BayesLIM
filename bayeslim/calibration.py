@@ -31,8 +31,8 @@ class JonesModel(utils.Module):
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
     """
-    def __init__(self, params, ants, bls, refant=None, R=None, parameter=True,
-                 polmode='1pol', single_ant=False, name=None):
+    def __init__(self, params, ants, bls=None, refant=None, R=None, parameter=True,
+                 polmode='1pol', single_ant=False, name=None, vis_type='com'):
         """
         Antenna-based Jones model.
 
@@ -73,6 +73,8 @@ class JonesModel(utils.Module):
             the size of the array.
         name : str, optional
             Name for this object, stored as self.name
+        vis_type : str, optional
+            Type of visibility, complex or delay ['com', 'dly']
         """
         super().__init__(name=name)
         self.params = params
@@ -91,6 +93,7 @@ class JonesModel(utils.Module):
         self.polmode = polmode
         self.single_ant = single_ant
         self._setup(bls)
+        self.vis_type = vis_type
         # construct _args for str repr
         self._args = dict(refant=refant, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
@@ -117,16 +120,16 @@ class JonesModel(utils.Module):
             if self.R.gain_type == 'com':
                 if torch.is_complex(self.params):
                     # params is represented as a complex tensor
-                    phs = torch.angle(self.params[:, :, self.refant_idx:self.refant_idx+1])
+                    phs = torch.angle(self.params[:, :, self.refant_idx:self.refant_idx+1]).clone()
                     self.params /= torch.exp(1j * phs)
                 else:
                     # params is represented as a view_real tensor
-                    g = self.params[:, :, self.refant_idx:self.refant_idx+1]
+                    g = self.params[:, :, self.refant_idx:self.refant_idx+1].clone()
                     amp = linalg.abs(g)
                     self.params -= (g - amp)
 
             elif self.R.gain_type in ['dly', 'phs']:
-                self.params -= self.params[:, :, self.refant_idx:self.refant_idx+1]
+                self.params -= self.params[:, :, self.refant_idx:self.refant_idx+1].clone()
 
     def forward(self, vd, undo=False, prior_cache=None):
         """
@@ -169,8 +172,12 @@ class JonesModel(utils.Module):
             invjones = torch.zeros_like(jones)
             for i in range(jones.shape[2]):
                 if self.polmode in ['1pol', '2pol']:
-                    invjones[:, :, i] = linalg.diag_inv(jones[:, :, i])
+                    if self.vis_type == 'com':
+                        invjones[:, :, i] = linalg.diag_inv(jones[:, :, i])
+                    elif self.vis_type == 'dly':
+                        invjones[:, :, i] = -jones[:, :, i]
                 else:
+                    assert self.vis_type == 'com', 'must have complex vis_type for 4pol mode'
                     invjones[:, :, i] = torch.pinv(jones[:, :, i])
             jones = invjones
 
@@ -189,8 +196,12 @@ class JonesModel(utils.Module):
             j2 = jones[:, :, self._vis2ants[bl][1]]
 
             if self.polmode in ['1pol', '2pol']:
-                vout.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), vd.data[:, :, i])
+                if self.vis_type == 'com':
+                    vout.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), vd.data[:, :, i])
+                elif self.vis_type == 'dly':
+                    vout.data[:, :, i] = vd.data[:, :, i] + j1 - j2
             else:
+                assert self.vis_type == 'com', "must have complex vis_type for 4pol mode"
                 vout.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, vd.data[:, :, i], j2.conj())
 
         # evaluate priors
@@ -216,7 +227,7 @@ class JonesResponse:
     and EW & NS phase slope (the latter two are relevant for redundant calibration) 
     """
     def __init__(self, freq_mode='channel', time_mode='channel', gain_type='amp',
-                 device=None, freqs=None, times=None, **setup_kwargs):
+                 vis_type='com', device=None, freqs=None, times=None, **setup_kwargs):
         """
         Parameters
         ----------
@@ -232,6 +243,8 @@ class JonesResponse:
                 'amp' : amplitude g = amp
                 'phs' : phase  g = exp(i * phs)
                 '*_slope' : spatial gradient across the array
+        vis_type : str, optional
+            Type of visibility, complex or delay ['com', 'dly']
         device : str, optional
             Device to place class attributes if needed
         freqs : tensor, optional
@@ -268,6 +281,7 @@ class JonesResponse:
         self.freq_mode = freq_mode
         self.time_mode = time_mode
         self.gain_type = gain_type
+        self.vis_type = vis_type
         self.device = device
         self.freqs = freqs
         self.times = times
@@ -322,10 +336,14 @@ class JonesResponse:
         if self.gain_type in ['dly_slope', 'phs_slope']:
             # setup antpos tensors
             assert antpos is not None, 'need antpos for dly_slope or phs_slope'
-            EW = torch.as_tensor([antpos[a][0] for a in self.ants], device=self.device)
+            self.antpos = antpos
+            EW = torch.as_tensor([antpos[a][0] for a in antpos], device=self.device)
             self.antpos_EW = EW[None, None, :, None, None]  
-            NS = torch.as_tensor([antpos[a][1] for a in self.ants], device=self.device)
-            self.antpos_NS = NS[None, None, :, None, None]  
+            NS = torch.as_tensor([antpos[a][1] for a in antpos], device=self.device)
+            self.antpos_NS = NS[None, None, :, None, None]
+
+        elif 'dly' in self.gain_type:
+            assert self.freqs is not None, 'need frequencies for delay gain type'
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
@@ -355,7 +373,10 @@ class JonesResponse:
 
         elif self.gain_type == 'dly':
             # assume params are in delay [nanosec]
-            return torch.exp(2j * np.pi * jones * self.freqs / 1e9)
+            if self.vis_type == 'dly':
+                return jones
+            elif self.vis_type == 'com':
+                return torch.exp(2j * np.pi * jones * torch.as_tensor(self.freqs / 1e9, dtype=jones.dtype))
 
         elif self.gain_type == 'amp':
             # assume params are gain amplitude: not exp(amp)!
@@ -371,8 +392,11 @@ class JonesResponse:
             # get total delay per antenna
             tot_dly = EW * self.antpos_EW \
                       + NS * self.antpos_NS
-            # convert to complex gains
-            return torch.exp(2j * np.pi * tot_dly * self.freqs / 1e9)
+            if self.vis_type == 'com':
+                # convert to complex gains
+                return torch.exp(2j * np.pi * tot_dly * self.freqs / 1e9)
+            elif self.vis_type == 'dly':
+                return tot_dly
 
         elif self.gain_type == 'phs_slope':
             # extract EW and NS phase slopes: rad / meter
@@ -478,7 +502,7 @@ class RedVisModel(utils.Module):
 
         Parameters
         ----------
-        vd : VisData
+        vd : VisData, optional
             Starting model visibilities of shape
             (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
             this should be a unit matrix so that the
@@ -497,6 +521,8 @@ class RedVisModel(utils.Module):
             The predicted visibilities, having pushed vd through
             the redundant visibility model.
         """
+        if vd is None:
+            vd = dataset.VisData()
         # push to device
         vd.push(self.device)
 
@@ -506,7 +532,7 @@ class RedVisModel(utils.Module):
         redvis = self.R(self.params)
 
         # iterate through vis and apply redundant model
-        for i in range(vout.shape[2]):
+        for i in range(vout.data.shape[2]):
             if not undo:
                 vout.data[:, :, i] = vd.data[:, :, i] + redvis[:, :, self.vis2red[i]]
             else:
@@ -616,7 +642,8 @@ class VisModelResponse:
     """
     A response object for VisModel and RedVisModel
     """
-    def __init__(self, freq_mode='channel', time_mode='channel', **setup_kwargs):
+    def __init__(self, freq_mode='channel', time_mode='channel',
+                 freqs=None, times=None, device=None, **setup_kwargs):
         """
         Parameters
         ----------
@@ -738,3 +765,112 @@ class VisModelResponse:
         if self.time_mode == 'poly':
             self.dtimes = self.dtimes.to(device)
             self.time_A = self.time_A.to(device)
+
+
+class FFT(utils.Module):
+    """
+    An FFT block
+    """
+    def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None):
+        """
+        Parameters
+        ----------
+        dim : int, optional
+            Dimension to take FFT
+        abs : bool, optional
+            Take abs after FFT
+        peaknorm : bool, optional
+            Peak normalize after FFT along dim
+        """
+        super().__init__()
+        self.dim = dim
+        self.abs = abs
+        self.peaknorm = peaknorm
+        self.dx = dx if dx is not None else 1.0
+        if N is not None:
+            freqs = torch.fft.fftshift(torch.fft.fftfreq(N, d=self.dx))
+            self.start = freqs[0]
+            self.dx = freqs[1] - freqs[0]
+        else:
+            self.start = 0.0
+
+    def forward(self, inp, **kwargs):
+        """
+        Take the FFT of the inp and return
+        """
+        if isinstance(inp, np.ndarray):
+            inp = torch.as_tensor(inp)
+
+        elif isinstance(inp, (dataset.VisData, dataset.MapData)):
+            out = inp.copy()
+            out.data = self.forward(inp.data, **kwargs)
+            return out
+
+        inp_fft = torch.fft.fftshift(torch.fft.fft(inp, dim=self.dim), dim=self.dim)
+
+        if self.abs:
+            inp_fft = torch.abs(inp_fft)
+
+        if self.peaknorm:
+            inp_fft = inp_fft / torch.max(torch.abs(inp_fft), dim=self.dim, keepdim=True).values
+
+        return inp_fft
+
+
+class PeakDelay(FFT):
+    """
+    Compute peak delay across dim
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def k(self, x):
+        return 0.25 * torch.log(3 * x**2 + 6 * x + 1) \
+                - np.sqrt(6) / 24 \
+                * torch.log((x + 1 - np.sqrt(2./3.)) / (x + 1 + np.sqrt(2./3.)))
+
+    def get_peak(self, y):
+        """
+        Use Quinn 2nd estimator to get peak ybin
+        """
+        argmax = torch.argmax(torch.abs(y))
+        argmax_pos = argmax + 1 if argmax != len(y) - 1 else 0
+        argmax_neg = argmax - 1 if argmax != 0 else -1
+        cast = torch.real if torch.is_complex(y) else torch.as_tensor
+        rpos = cast(y[argmax_pos] / y[argmax])
+        rneg = cast(y[argmax_neg] / y[argmax])
+        dpos = -rpos / (1 - rpos)
+        dneg = rneg / (1 - rneg)
+        max_bin = argmax + ((dneg + dpos) / 2 + self.k(dneg**2) - self.k(dpos**2))
+
+        return self.start + max_bin * self.dx
+
+    def _iter_peak(self, inp, dim, out):
+        if inp.ndim == 1:
+            # estimate peak
+            out[:] = self.get_peak(inp)
+        else:
+            # iterate
+            for i in range(len(inp)):
+                self._iter_peak(inp[i], dim+1, out[i])
+
+    def forward(self, inp):
+
+        if isinstance(inp, (dataset.VisData, dataset.MapData)):
+            out = inp.copy()
+            out.data = self.forward(inp.data)
+            return out
+
+        # take fft
+        inp = super().forward(inp)
+
+        # iterate over all dims
+        shape = list(inp.shape)
+        shape[self.dim] = 1
+        out = torch.zeros(shape, dtype=utils._float())
+        out = out.moveaxis(self.dim, -1)
+        self._iter_peak(inp, 0, out)
+        out = out.moveaxis(-1, self.dim)
+
+        return out
+

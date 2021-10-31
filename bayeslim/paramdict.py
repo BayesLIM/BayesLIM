@@ -193,7 +193,7 @@ class ParamDict:
         return pd
 
 
-def model2pdict(model, parameters=True, clone=False):
+def model2pdict(model, parameters=True, clone=False, prefix=None):
     """
     Build ParamDict from a model.
     Note that dict values are just pointers to the
@@ -210,24 +210,29 @@ def model2pdict(model, parameters=True, clone=False):
     clone : bool, optional
         If True, detach and clone the tensors.
         Default is False.
+    prefix : str, optional
+        Prefix for any assigned attributes
+
     Returns
     -------
     ParamDict object
     """
     d = {}
+    prefix = prefix if prefix is not None else ''
+    # append params from this module if exists
+    if hasattr(model, 'params'):
+        if not parameters or model.params.requires_grad:
+            ## TODO: this won't work for ArrayModel antpos params
+            params = model.params
+            if clone:
+                params = params.detach().clone()
+            d[prefix + 'params'] = params
+
     for child in model.named_children():
         key, mod = child
-        # append params from this module if exists
-        if hasattr(mod, 'params'):
-            if not parameters or mod.params.requires_grad:
-                ## TODO: this won't work for ArrayModel antpos params
-                params = mod.params
-                if clone:
-                    params = params.detach().clone()
-                d[key + '.params'] = params
         # add sub modules as well
-        sub_d = model2pdict(mod)
-        for sub_key in sub_d:
-            d[key + '.' + sub_key] = sub_d[sub_key]
+        key = '{}{}.'.format(prefix, key)
+        sub_d = model2pdict(mod, parameters=parameters, clone=clone, prefix=key)
+        d.update(sub_d)
 
     return ParamDict(d)
