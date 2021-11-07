@@ -44,7 +44,7 @@ class SamplerBase:
     def sample(self, Nsample, Ncheck=None, outfile=None, description=''):
         """
         Sample and append to chain
-
+ 
         Parameters
         ----------
         Nsamples : int
@@ -179,6 +179,7 @@ class HMC(SamplerBase):
         if isinstance(eps, torch.Tensor):
             eps = ParamDict({k: eps for k in x0})
         self._U = np.inf # starting potential energy
+        self.p = None    # ending momentum
         self.eps = eps
         self.set_cov(cov, sparse_cov)
 
@@ -273,12 +274,23 @@ class HMC(SamplerBase):
 
         return ParamDict(p)
 
-    def step(self):
+    def step(self, sample_p=True):
         """
         Make a HMC step with metropolis update
+
+        Parameters
+        ----------
+        sample_p : bool, optional
+            If True (default) randomly re-sample momentum
+            variables given mass matrix. If False, use
+            existing self.p to begin (not standard, and
+            only used for tracking an HMC trajectory)
         """
         # sample momentum vector and get starting energies
-        p = self.draw_momentum()
+        if sample_p:
+            p = self.draw_momentum()
+        else:
+            p = self.p.copy()
         K_start = self.K(p)
         U_start = self._U
 
@@ -299,6 +311,7 @@ class HMC(SamplerBase):
 
         if accept:
             self.x = q_new
+            self.p = p_new
             ## TODO: save new Ugrad and pass to leapfrog
             ## to save 1 call to dUdx per iteration
         else:
@@ -545,5 +558,5 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True):
     p -= dUdq(q) * (eps / 2)
 
     # return position, negative momentum
-    return q, -p
+    return q, p
 

@@ -134,7 +134,14 @@ class ParamDict:
 
     def copy(self):
         """copy object"""
-        return ParamDict({k: torch.nn.Parameter(self.params[k].detach().clone()) for k in self.keys()})
+        out = ParamDict({})
+        for k in self.keys():
+            p = self.params[k]
+            if p.requires_grad:
+                out[k] = torch.nn.Parameter(p.detach().clone())
+            else:
+                out[k] = p.detach().clone()
+        return out
 
     def detach(self):
         """detach object"""
