@@ -10,6 +10,7 @@ import pickle
 from collections.abc import Iterable
 
 from . import utils
+from .dataset import VisData, MapData, TensorData
 
 
 class LogUniformPrior:
@@ -213,7 +214,8 @@ class LogProb(utils.Module):
                 &+ \frac{1}{2}\log|\Sigma| + \frac{n}{2}\log(2\pi)
     """
     def __init__(self, model, target, start_inp=None, cov_parameter=False,
-                 prior_dict=None, device=None, compute='post', negate=True):
+                 prior_dict=None, device=None, compute='post', negate=True,
+                 grad_type='accumulate'):
         """
         Parameters
         ----------
@@ -233,10 +235,12 @@ class LogProb(utils.Module):
             If fed a covariance, this makes the inverse covariance
             a parameter in the fit. (not yet implemented)
         prior_dict : dict, optional
-            A dictionary of model parameters (str) and their
-            prior callables to evaluate. Default is to evaluate
-            priors attached to each Module, but if this is provided
-            it takes precedence.
+            A dictionary with keys of each model parameter name (str)
+            accessed from self.model, and values as their logprior
+            callables to evaluate. Default is to evaluate
+            priors attached to each Module, but if prior_dict is provided
+            it supercedes. E.g. {'params': logprior_fn} will evaluate
+            logprior_fn(self.model.params)
         device : str, optional
             Set the device for this object
         compute : str, optional
@@ -247,6 +251,9 @@ class LogProb(utils.Module):
         negate : bool, optional
             Return the negative log posterior for grad descent (default).
             Otherwise return the log posterior for MCMC.
+        grad_type : str, optional
+            Gradient type ['accumulate', 'stochastic'].
+            If accumulate, then iterate over batches
         """
         super().__init__()
         self.model = model
@@ -261,6 +268,8 @@ class LogProb(utils.Module):
         self.prior_dict = prior_dict
         self.compute = compute
         self.negate = negate
+        self.closure_eval = 0
+        self.grad_type = grad_type
         self.clear_prior_cache()
 
     @property
@@ -330,13 +339,15 @@ class LogProb(utils.Module):
 
         # forward pass model
         out = self.model(inp, prior_cache=self.prior_cache)
-        prediction = out.data.to(self.device)
+        if isinstance(out, (VisData, MapData, TensorData)):
+            out = out.data
+        prediction = out.to(self.device)
 
         # compute residual
         res = prediction - target.data
 
         # get inverse covariance
-        if target.icov is not None:
+        if hasattr(target, 'icov') and target.icov is not None:
             icov = target.icov
             cov_axis = target.cov_axis
             like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
@@ -435,6 +446,32 @@ class LogProb(utils.Module):
         """
         return self.forward(idx, **kwargs)
 
+    def closure(self):
+        """
+        Function for evaluating the model, performing
+        backprop, and returning output given self.grad_type
+        """
+        self.closure_eval += 1
+        if torch.is_grad_enabled():
+            self.zero_grad()
+
+        # if accumulating, run all minibatches and backprop
+        if self.grad_type == 'accumulate':
+            loss = 0
+            for i in range(self.Nbatch):
+                out = self(i)
+                if out.requires_grad:
+                    out.backward()
+                loss = loss + out.detach()
+            return loss / self.Nbatch
+
+        # if stochastic, just run current batch, then backprop
+        elif self.grad_type == 'stochastic':
+            out = self()
+            if out.requires_grad:
+                out.backward()
+            return out.detach()
+
     def push(self, device):
         """
         Transfer target data to device
@@ -502,7 +539,7 @@ class LogProb(utils.Module):
 class Trainer:
     """Object for training a model wrapped with
     the LogProb posterior class"""
-    def __init__(self, prob, opt, track=False, grad_type='accumulate'):
+    def __init__(self, prob, opt, track=False):
         """
         Parameters
         ----------
@@ -511,50 +548,19 @@ class Trainer:
         track : bool, optional
             If True, track value of all prob.parameters and append to
             a list during optimization.
-        grad_type : str, optional
-            Kind of gradient evaluation, ['accumulate', 'stochastic']
-            accumulate : gradient is accumulated across minibatches
-            stochastic : gradient is used and zeroed after every minibatch
         """
         self.prob = prob
         self.opt = opt
-        self.grad_type = grad_type
         self.loss = []
         self.closure_eval = 0
         self.track = track
         self.params = {}
         for k in prob.named_parameters():
             self.params[k[0]] = []
-        if grad_type == 'accumulate':
+        if prob.grad_type == 'accumulate':
             self.Nbatch = 1
-        elif grad_type == 'stochastic':
-            self.Nbatch = self.prob.Nbatch
-
-    def closure(self):
-        """
-        Function for evaluating the model, performing
-        backprop, and returning output
-        """
-        self.closure_eval += 1
-        if torch.is_grad_enabled():
-            self.opt.zero_grad()
-
-        # if accumulating, run all minibatches and backprop
-        if self.grad_type == 'accumulate':
-            loss = 0
-            for i in range(self.prob.Nbatch):
-                out = self.prob(i)
-                if out.requires_grad:
-                    out.backward()
-                loss += out.detach()
-            return loss / self.prob.Nbatch
-
-        # if stochastic, just run current batch, then backprop
-        elif self.grad_type == 'stochastic':
-            out = self.prob()
-            if out.requires_grad:
-                out.backward()
-            return out.detach()
+        elif prob.grad_type == 'stochastic':
+            self.Nbatch = prob.Nbatch
 
     def train(self, Nepochs=1, Nreport=None):
         """
@@ -590,7 +596,7 @@ class Trainer:
                         self.params[k].append(p.detach().clone())
 
                 # evaluate forward model, backprop, make a step
-                _loss += self.opt.step(self.closure)
+                _loss += self.opt.step(self.prob.closure)
 
             # append batch-averaged loss
             self.loss.append(_loss / self.Nbatch) 
@@ -644,7 +650,7 @@ def apply_icov(data, icov, cov_axis):
     """
     if cov_axis is None:
         # icov is just diagonal
-        out = torch.abs(data)**2 * icov
+        out = data**2 * icov
     elif cov_axis == 'full':
         # icov is full inv cov
         out = data.ravel().conj() @ icov @ data.ravel()

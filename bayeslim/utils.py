@@ -1428,19 +1428,27 @@ class Module(torch.nn.Module):
     def __delitem__(self, name):
         del_model_attr(self, name)
 
-    def update(self, d):
+    def update(self, pdict, clobber_param=False):
         """
-        Set model attributes from dictionary d
+        Update model attributes from pdict
 
         Parameters
         ----------
-        d : dict or ParamDict
+        pdict : ParamDict
             dictionary of values to assign
             to model
+        clobber_param : bool, optional
+            If True and key from pdict is an existing
+            Parameter on self, del the param then assign
+            it from pdict (this removes Parameter object
+            but keeps memory address from pdict).
+            If False (default), insert value from pdict
+            into existing Parameter object, changing
+            its memory address.
         """
-        for key, val in d.items():
-            # uses __setitem__ for no_grad context
-            self[key] = val
+        for key, val in pdict.items():
+            # uses set_model_attr for no_grad context
+            set_model_attr(self, key, val, clobber_param=clobber_param)
 
     def unset_param(self, name):
         """
@@ -1659,29 +1667,50 @@ def get_model_attr(model, name, pop=0):
         return get_model_attr(attr, '.'.join(name[1:]))
 
 
-def set_model_attr(model, name, value):
+def set_model_attr(model, name, value, clobber_param=False):
     """
     Set value to model as model.name
 
     If name is a torch.nn.Parameter, cast
     value as Parameter before setting.
+
+    Parameters
+    ----------
+    model : utils.Module object
+    name : str
+    value : tensor
+    clobber_param : bool, optional
+        If True and key from pdict is an existing
+        Parameter on self, del the param then assign
+        it from pdict (this removes Parameter object
+        but keeps memory address from pdict).
+        If False (default), insert value from pdict
+        into existing Parameter object, changing
+        its memory address.
     """
     with torch.no_grad():
         if isinstance(name, str):
             name = name.split('.')
         if len(name) == 1:
+            # assign value to model as name
             device = None
             parameter = False
-            if hasattr(model, name[0]):
+            if clobber_param:
+                # if overwriting name del existing attr
+                if hasattr(model, name[0]):
+                    delattr(model, name[0])
+            elif hasattr(model, name[0]):
+                # if not clobber and this attr exists
+                # get device and parameter status from attr
                 device = getattr(model, name[0]).device
                 parameter = isinstance(getattr(model, name[0]), torch.nn.Parameter)
-            value = value.to(device)
-            if parameter:
+                value = value.to(device)
+            if parameter and not value.requires_grad:
                 value = torch.nn.Parameter(value)
             setattr(model, name[0], value)
         else:
             set_model_attr(get_model_attr(model, '.'.join(name[:-1])),
-                           name[-1], value)
+                           name[-1], value, clobber_param=clobber_param)
 
 
 def del_model_attr(model, name):

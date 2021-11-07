@@ -8,7 +8,7 @@ import glob
 from datetime import datetime
 import json
 
-from . import utils, optim
+from . import utils, optim, io
 from .paramdict import ParamDict
 
 
@@ -29,7 +29,7 @@ class SamplerBase:
         self.x = x0.clone().copy()
         self.accept_ratio = 1.0
         self._acceptances = []
-        self.chain = {k: [] for k in x0.keys}
+        self.chain = {k: [] for k in x0.keys()}
         # this contains all lists, which is needed
         # when writing the chain to file and loading it
         self.lists = ['_acceptances']
@@ -59,7 +59,7 @@ class SamplerBase:
         for i in range(Nsample):
             accept = self.step()
             self._acceptances.append(accept)
-            for k in self.x.keys:
+            for k in self.x.keys():
                 self.chain[k].append(utils.tensor2numpy(self.x[k], clone=True))
             if Ncheck is not None:
                 if i > 0 and i % Ncheck == 0:
@@ -67,8 +67,12 @@ class SamplerBase:
                     self.write_chain(outfile, overwrite=True, description=description)
         self.accept_ratio = sum(self._acceptances) / len(self._acceptances)
 
-    def get_chain(self):
-        return {k: torch.as_tensor(self.chain[k]) for k in self.chain.keys()}
+    def get_chain(self, keys=None):
+        if keys is None:
+            keys = self.chain.keys()
+        elif isinstance(keys, str):
+            keys = [keys]
+        return {k: torch.as_tensor(self.chain[k]) for k in keys}
 
     def _write_chain(self, outfile, attrs=[], overwrite=False, description=''):
         """
@@ -141,9 +145,12 @@ class SamplerBase:
 
 class HMC(SamplerBase):
     """
-    Hamiltonian Monte Carlo sampler
+    Hamiltonian Monte Carlo sampler.
+
+    Note that the mass matrix only informs the momentum
+    sampling: the kinetic energy always uses an identity mass matrix.
     """
-    def __init__(self, potential_fn, x0, eps, mass, sparse_mass=True, Nstep=10):
+    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10):
         """
         Parameters
         ----------
@@ -155,11 +162,11 @@ class HMC(SamplerBase):
             Starting value for parameters
         eps : ParamDict
             Size of position step in units of x
-        mass : ParamDict
-            Mass matrix
-        sparse_mass : bool, optional
-            If True, mass represents the diagonal
-            of the mass matrix. Otherwise, it is
+        cov : ParamDict, optional
+            Covariance matrix to inform momentum sampling
+        sparse_cov : bool, optional
+            If True, cov represents the diagonal
+            of the cov matrix. Otherwise, it is
             a 2D tensor for each param.ravel()
             in x0.
         Nstep : int, optional
@@ -169,39 +176,73 @@ class HMC(SamplerBase):
         self.potential_fn = potential_fn
         self.fn_evals = 0
         self.Nstep = Nstep
-        self.sparse_mass = sparse_mass
-        if isinstance(mass, torch.Tensor):
-            mass = ParamDict({k: mass for k in x0})
-        self.mass = mass
-        invmass = {}
-        for k in mass:
-            if sparse_mass:
-                invmass[k] = 1 / mass[k]
-            else:
-                invmass[k] = torch.pinverse(mass[k])
-        self.invmass = ParamDict(invmass)
         if isinstance(eps, torch.Tensor):
             eps = ParamDict({k: eps for k in x0})
+        self._U = np.inf # starting potential energy
         self.eps = eps
-        self._H = np.inf   # starting energy
+        self.set_cov(cov, sparse_cov)
 
-    def K(self, p):
+    def set_cov(self, cov=None, sparse_cov=None, rcond=1e-15):
         """
-        Compute the kinetic energy given state of p
+        Set the parameter covariance, aka the
+        inverse mass matrix, used to define the kinetic energy.
+        Also sets the cholesky of the mass matrix, used for
+        sampling the momenta.
+        Default is sparse, unit variance for all parameters.
 
         Parameters
         ----------
-        p : tensor
-            Momentum tensor
+        cov : ParamDict, optional
+            Covariance matrix for each parameter in ParamDict
+        sparse_cov : bool or ParamDict, optional
+            If True, cov represents just the variance,
+            otherwise it represents full covariance
+        rcond : float, optional
+            rcond parameter for pinverse of cov to get mass matrix
         """
-        if self.sparse_mass:
-            K = p**2 * (self.invmass / 2)
-            K = sum([sum(K[k]) for k in K])
+        ## TODO: allow for structured covariances between parameters
+        if cov is None:
+            cov = ParamDict({k: torch.ones_like(self.x[k]) for k in self.x})
+            sparse_cov = True
+        if isinstance(sparse_cov, bool):
+            sparse_cov = {k: sparse_cov for k in self.x}
+
+        # set the cholesky of the mass matrix
+        self.chol = {}
+        for k in cov:
+            if sparse_cov[k]:
+                self.chol[k] = torch.sqrt(1 / cov[k])
+            else:
+                self.chol[k] = torch.linalg.cholesky(torch.pinverse(cov[k], rcond=rcond))
+
+        self.cov = cov
+        self.sparse_cov = sparse_cov
+
+    def K(self, p):
+        """
+        Compute the kinetic energy given state of
+        momentum p
+
+        Parameters
+        ----------
+        p : ParamDict or tensor
+            Momentum tensor
+
+        Returns
+        -------
+        scalar
+            kinetic energy
+        """
+        if isinstance(p, torch.Tensor):
+            K = sum(p**2 / 2)
         else:
             K = 0
             for k in p:
-                prav = p[k].ravel()
-                K += prav @ self.invmass[k] @ prav / 2
+                if self.sparse_cov[k]:
+                    K += sum(self.cov[k] * p[k]**2 / 2)
+                else:
+                    prav = p[k].ravel()
+                    K += prav @ self.cov[k] @ prav / 2
 
         return K
 
@@ -209,7 +250,7 @@ class HMC(SamplerBase):
         """
         Compute potential and derivative of
         potential given x. Append potential and
-        derivative to self.U, self.gradU.
+        derivative to self.U, self.gradU, respectively
         """
         self._U, self._gradU = self.potential_fn(x)
         self.fn_evals += 1
@@ -217,83 +258,89 @@ class HMC(SamplerBase):
 
     def draw_momentum(self):
         """
-        Draw a mean-zero random momentum vector from the mass matrix
+        Draw from a mean-zero, unit variance normal and
+        multiply by mass matrix cholesky if available
         """
-        mn = torch.distributions.multivariate_normal.MultivariateNormal
-        invm = self.invmass
         p = {}
-        for k in invm:
+        for k in self.x:
             x = self.x[k]
-            if self.sparse_mass:
-                p[k] = torch.randn(x.shape, device=x.device) * torch.sqrt(invm[k])
+            N = x.shape.numel()
+            momentum = torch.randn(N, device=x.device)
+            if self.sparse_cov[k]:
+                p[k] = self.chol[k] * momentum.reshape(x.shape)
             else:
-                N = x.shape.numel()
-                p[k] = mn(torch.zeros(N, dtype=x.dtype), invm[k]).sample().reshape(x.shape).to(x.device)
+                p[k] = (self.chol[k] @ momentum).reshape(x.shape)
+
         return ParamDict(p)
 
     def step(self):
         """
         Make a HMC step with metropolis update
         """
-        # sample momentum vector
+        # sample momentum vector and get starting energies
         p = self.draw_momentum()
+        K_start = self.K(p)
+        U_start = self._U
 
         # copy temporary position tensor
         q = self.x.copy()
 
         # run leapfrog steps from current position
         q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep,
-                                invmass=self.invmass, sparse_mass=self.sparse_mass)
+                                invmass=self.cov, sparse_mass=self.sparse_cov)
+
+        # get final energies
+        K_end = self.K(p_new)
+        U_end = self._U
 
         # evaluate metropolis acceptance
-        H_new = self.K(p_new) + self._U
-        prob = torch.exp(self._H - H_new)
+        prob = torch.exp(K_start + U_start - K_end - U_end)
         accept = np.random.rand() < prob
 
         if accept:
-            self._H = H_new.detach()
             self.x = q_new
+            ## TODO: save new Ugrad and pass to leapfrog
+            ## to save 1 call to dUdx per iteration
+        else:
+            self._U = U_start
 
         return accept
 
-    def optimize_mass(self, Nback=None, sparse_mass=True, robust=False):
+    def optimize_cov(self, Nback=None, sparse_cov=True, robust=False):
         """
-        Optimize the mass matrix given
-        sampling history in self.chain.
-        Note that currently mass matrix is diagonal.
+        Try to compute the covariance of self.x given 
+        recent sampling history of Nback most-recent samples.
 
         Parameters
         ----------
         Nback : int, optional
-            Number of samples starting
-            from the back of the chain
+            Number of samples starting from the back of the chain
             to use. Default is all samples.
-        sparse_mass : bool, optional
+        sparse_cov : bool, optional
             Compute diagonal (True) or full covariance (False)
-            of mass matrix
+            of covariance matrix
         robust : bool, optional
-            Use robust measure of the variance.
+            Use robust measure of the variance if sparse_cov is True.
         """
-        self.sparse_mass = sparse_mass
+        Cov = ParamDict({})
         for k, chain in self.chain.items():
             if Nback is None:
                 Nback = len(chain) 
             device = self.x[k].device
             dtype = self.x[k].dtype
             c = np.array(chain)[-Nback:].T
-            if sparse_mass:
+            if sparse_cov:
                 if robust:
-                    invm = torch.tensor(np.median(np.abs(c - np.median(c, axis=1)), axis=1),
+                    cov = torch.tensor(np.median(np.abs(c - np.median(c, axis=1)), axis=1),
                                         dtype=dtype, device=device)
-                    ivnm = (invm * 1.42)**2
+                    cov = (invm * 1.42)**2
                 else:
-                    invm = torch.tensor(np.var(c, axis=1), dtype=dtype, device=device)
-                m = 1 / invm
+                    cov = torch.tensor(np.var(c, axis=1), dtype=dtype, device=device)
             else:
-                invm = torch.tensor(np.cov(c), dtype=dtype, device=device)
-                m = torch.pinverse(invm)
-            self.mass[k] = m
-            self.invmass[k] = invm
+                cov = torch.tensor(np.cov(c), dtype=dtype, device=device)
+            Cov[k] = cov
+
+        self.set_cov(Cov, sparse_cov=sparse_cov)
 
     def write_chain(self, outfile, overwrite=False, description=''):
         """
@@ -307,7 +354,7 @@ class HMC(SamplerBase):
             Overwrite if file exists
         """
         if isinstance(self.potential_fn, Potential):
-            model_tree = json.dumps(utils.get_model_description(self.potential_fn)[1], indent=2)
+            model_tree = json.dumps(io.get_model_description(self.potential_fn)[1], indent=2)
             description = "{}\n{}\n{}".format(model_tree, '-'*40, description)
         self._write_chain(outfile, overwrite=overwrite,
                           attrs=['fn_evals', '_H'], description=description)
@@ -315,10 +362,28 @@ class HMC(SamplerBase):
 
 class NUTS(HMC):
     """
-    No-U Turn sampler
+    No-U Turn sampler for HMC
     """
-    def __init__(self, ):
-        raise NotImplementedError
+    def __init__(self, potential_fn, x0, eps, mass=None, sparse_mass=True):
+        """
+        Parameters
+        ----------
+        potential_fn : Potential object or callable
+            Takes parameter vector x and 
+            returns potential scalar and potential
+            gradient wrt x.
+        x0 : ParamDict
+            Starting value for parameters
+        eps : ParamDict
+            Size of position step in units of x
+        mass : ParamDict, optional
+            Mass matrix. Default is unit matrix.
+        sparse_mass : bool, optional
+            If True, mass represents the diagonal
+            of the mass matrix. Otherwise, it is
+            a 2D tensor for each param.ravel()
+            in x0.
+        """
 
     def build_tree(self, ):
         pass
@@ -334,8 +399,7 @@ class NUTS(HMC):
         q = self.x.copy()
 
         # run leapfrog steps from current position
-        q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep,
-                                invmass=self.invmass, sparse_mass=self.sparse_mass)
+        q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep)
 
         # evaluate metropolis acceptance
         H_new = self.K(p_new) + self._U
@@ -351,21 +415,26 @@ class NUTS(HMC):
 
 class Potential(utils.Module):
     """
-    The HMC potential, holding the full forward model
+    The potential field, or the negative log posterior
+    up to a constant.
     """
-    def __init__(self, model):
+    def __init__(self, prob, param_name=None):
         """
         Parameters
         ----------
-        model : Module object or Sequential object
-            The full forward model ending in the log posterior,
-            which takes a ParamDict and returns the log post. (aka potential)
+        prob : optim.LogProb object
+            The full forward model ending in the log posterior.
+        param_name : str, optional
+            If feeding forward(x) with x as a Tensor,
+            this is the param attached to self.prob
+            to update.
         """
         super().__init__()
-        self.model = model
-        self.named_params = list(dict(self.model.named_parameters()).keys())
+        self.prob = prob
+        self.named_params = [k[0] for k in self.prob.named_parameters()]
+        self.param_name = param_name
 
-    def forward(self, x=None):
+    def forward(self, x=None, **kwargs):
         """
         Evalute the potential function at 
         parameter value x and return 
@@ -373,9 +442,9 @@ class Potential(utils.Module):
 
         Parameters
         ----------
-        x : ParamDict
-            Parameter values to evaluate
-            the forward model at
+        x : ParamDict or tensor
+            Update the model with these param
+            values
 
         Returns
         -------
@@ -384,45 +453,51 @@ class Potential(utils.Module):
         gradU : ParamDict
             Potential gradient
         """
+        # update params
+        if x is not None:
+            if isinstance(x, ParamDict):
+                self.prob.update(x)
+            else:
+                self.prob[self.param_name] = torch.as_tensor(x)
+
         # zero gradients
-        self.model.zero_grad()
-        ## TODO: allow for gradient accumulation here
-        ## (e.g. iterations over bl groups)
-        # evaluate model
-        U = self.model(x)
-        # run reverse AD
-        U.backward()
+        self.prob.zero_grad()
+
+        # evaluate model and perform backprop
+        U = self.prob.closure()
+
         # collect gradients
-        gradU = ParamDict({k: self.model.get_parameter(k).grad.clone() for k in self.named_params})
+        gradU = ParamDict({k: self.prob[k].grad.clone() for k in self.named_params})
+
         return U, gradU
 
-    def __call__(self, x=None):
+    def __call__(self, x=None, **kwargs):
         return self.forward(x)
 
 
-def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=False):
+def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True):
     """
     Perform N leapfrog steps for position and momentum
     states.
 
     Parameters
     ----------
-    q : tensor
+    q : tensor or ParamDict
         Position tensor which requires grad.
-    p : tensor
+    p : tensor or ParamDict
         Momentum tensor, must be on same device
         as q.
     dUdq : callable
         Potential energy gradient at q.
-    eps : tensor or scalar
+    eps : tensor, scalar, or ParamDict
         Step size in units of q, if a tensor must
         be on q device
     N : int
         Number of leapfrog steps
-    invmass : tensor or scalar, optional
+    invmass : tensor, scalar, ParamDict, optional
         scalar or diagonal of inverse mass matrix
         if a tensor, must be on q device
-    sparse_mass : bool, optional
+    sparse_mass : bool, ParamDict, optional
         If True, invmass is inverse of cov diagonal
         else, invmass is full inv cov
 
@@ -434,18 +509,33 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=False):
     ## TODO: incorporate data split (Neal+2011 Sec 5.)
     ## TODO: incorporate friction term (Chen+2014 SGHMC)
     ## TODO: allow for more frequent update of "fast" parameters
+    if isinstance(q, ParamDict):
+        if isinstance(sparse_mass, bool):
+            sparse_mass = {k: sparse_mass for k in q}
+        if isinstance(eps, (float, int, torch.Tensor)):
+            eps = ParamDict({k: eps for k in q})
+        if isinstance(invmass, (float, int, torch.Tensor)):
+            invmass = ParamDict({k: torch.ones_like(p[k]) * invmass for k in q})
+
     # momentum half step
     p -= dUdq(q) * (eps / 2)
 
     # iterate over steps
     for i in range(N):
         with torch.no_grad():
-            # position full step
-            if sparse_mass:
-                q += (eps * invmass) * p
-            else:
+            def pos_step(q, eps, invmass, p, sparse_mass):
+                # position full step on tensors
+                if sparse_mass:
+                    q += (eps * invmass) * p
+                else:
+                    q += eps * (invmass @ p.ravel()).reshape(p.shape)
+
+            if isinstance(q, torch.Tensor):
+                pos_step(q, eps, invmass, p, sparse_mass)
+
+            elif isinstance(q, ParamDict):
                 for k in q:
-                    q[k] += eps[k] * (invmass[k] @ p[k].ravel()).reshape(p[k].shape)
+                    pos_step(q[k], eps[k], invmass[k], p[k], sparse_mass[k])
 
         if i != (N - 1):
             # momentum full step
@@ -454,6 +544,6 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=False):
     # momentum half step
     p -= dUdq(q) * (eps / 2)
 
-    # return negative momentum
+    # return position, negative momentum
     return q, -p
 

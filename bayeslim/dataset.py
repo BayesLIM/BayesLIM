@@ -757,9 +757,123 @@ class MapData:
         raise NotImplementedError 
 
 
+class TensorData:
+    """
+    A shallow object for holding an arbitrary tensor
+    """
+    ## TODO: Make this base class for VisData and MapData
+    def __init__(self):
+        self.data, self.flags = None, None
+        self.icov, self.cov, self.cov_axis = None, None, None
+
+    def setup_data(self, data=None, flags=None, cov=None,
+                   cov_axis=None, icov=None, history=''):
+        """
+        Setup data tensors.
+
+        Parameters
+        ----------
+        data : tensor, optional
+            Data tensor of arbitrary shape
+        flags : tensor, optional
+            Boolean tensor holding data flags
+        cov : tensor, optional
+            Covariance of data tensor
+        cov_axis : str, optional
+            None : (default) cov is same shape as data
+                and represents data variance
+            'full' : cov is N x N where N is data.size
+                and represents covariance of data.ravel()
+        icov : tensor, optional
+            Inverse covariance. Must have same shape as cov.
+        history : str, optional
+            data history string
+        """
+        self.data = data
+        self.flags = flags
+        self.set_cov(cov, cov_axis, icov=icov)
+        self.history = history
+
+    def push(self, device):
+        """
+        Push data, flags, cov and icov to device
+        """
+        if self.data is not None:
+            self.data = self.data.to(device)
+        if self.flags is not None:
+            self.flags = self.flags.to(device)
+        if self.cov is not None:
+            self.cov = self.cov.to(device)
+        if self.icov is not None:
+            self.icov = self.icov.to(device)
+
+    def set_cov(self, cov, cov_axis, icov=None):
+        """
+        Set the covariance matrix as self.cov and
+        compute covariance properties (ndim and log-det)
+
+        Parameters
+        ----------
+        cov : tensor
+            Covariance of data in a form that conforms
+            to cov_axis specification. See optim.apply_icov
+            for details on shape of cov.
+        cov_axis : str
+            The data axis along which the covariance is modeled.
+            This specifies the type of covariance being supplied.
+            Options are [None, 'full', 'bl', 'time', 'freq'].
+            See optim.apply_icov() for details
+        icov : tensor, optional
+            pre-computed inverse covariance to set.
+            Recommended to first set cov and then call compute_icov()
+        """
+        cov_logdet = None
+        if cov is not None:
+            # compute covariance log determinant
+            if cov_axis is None:
+                # cov is same shape as data and only holds variances
+                cov_logdet = torch.sum(torch.log(cov))
+            elif cov_axis == 'full':
+                # cov is 2D (N x N)
+                cov_logdet = torch.slogdet(cov).logabsdet
+            else:
+                # cov ndim > 2, but first two axes hold covariances
+                cov_logdet = 0
+                if cov.ndim == 2:
+                    # if cov.ndim == 2 then compute logdet and return
+                    return torch.slogdet(cov).logabsdet
+                else:
+                    # otherwise iterate over last axis and get logdet
+                    for i in range(cov.shape[-1]):
+                        cov_logdet += self.set_cov(cov[..., i], cov_axis)
+
+        # set covariance
+        self.cov = cov
+        self.icov = icov
+        self.cov_axis = cov_axis
+        self.cov_ndim = sum(self.data.shape)
+        self.cov_logdet = cov_logdet
+
+    def compute_icov(self, pinv=True, rcond=1e-15):
+        """
+        Compute and set inverse covariance as self.icov.
+        See optim.compute_cov and apply_icov() for shape.
+
+        Parameters
+        ----------
+        pinv : bool, optional
+            Use pseudo-inverse to compute covariance,
+            otherwise use direct inversion
+        rcond : float, optional
+            rcond kwarg for pinverse
+        """
+        from bayeslim import optim
+        self.icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
+
+
 class Dataset(Dataset):
     """
-    Dataset iterator for VisData and MapData
+    Dataset iterator for VisData, MapData, or TensorData
     """
     def __init__(self, data, read_fn=None, read_kwargs={}):
         """VisData or Mapdata Dataset object
