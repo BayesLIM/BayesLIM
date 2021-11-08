@@ -17,6 +17,7 @@ from . import dataset
 from . import io
 from . import linalg
 from . import paramdict
+from . import fft
 
 from .paramdict import ParamDict
 from .dataset import VisData, Dataset
