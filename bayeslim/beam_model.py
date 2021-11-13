@@ -569,7 +569,6 @@ class AiryResponse:
             Multiplicative scalar acting on freqs before airy disk is
             evaluated. Makes the beam mimic a higher or lower frequency beam.
         """
-        assert not params.requires_grad, "AiryResponse not differentiable"
         self.freq_ratio = 1.0
         self.freq_mode = 'other'
         self.freq_ax = None
