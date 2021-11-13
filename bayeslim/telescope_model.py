@@ -208,7 +208,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
             # build redundancies
             bls = [(a, a) for a in self.ants] + list(itertools.combinations(self.ants, 2))
             # red-bl list, red-bl vec, bl to redgroup index, iso-length groups
-            reds, rvec, bl2red, lengroups = [], [], {}, []
+            reds, rvec, bl2red = [], [], {}
             # iterate over bls
             k = 0
             for bl in bls:
@@ -520,3 +520,73 @@ def JD2RA(tloc, jd):
     ra, dec = top2eq(tloc, jd, 90, 0)
 
     return ra
+
+
+def JD2LST(jd, longitude):
+    """
+    Convert JD to Local Sidereal Time (LST)
+    aka, the Right Ascension in the current
+    epoch, rather than J2000 epoch.
+
+    Parameters
+    ----------
+    jd : float
+        Julian Date
+    longitude : float
+        Observers longitude [deg]
+
+    Returns
+    -------
+    float
+        LST [radian]
+    """
+    t = Time(jd, format='jd', scale='utc')
+    return t.sidereal_time('apparent', longitude=longitude * units.deg).radian
+
+
+def build_reds(antpos, ants):
+    """
+    Build redundant groups
+
+    Parameters
+    ----------
+    antpos : dict
+        Antenna positions in ENU frame [meters]
+        keys are ant integers, values are len-3 arrays
+    
+    Returns
+    -------
+    reds : list
+        Nested set of redundant baseline lists
+    rvec : 
+    bl2red : dict
+        Baseline tuple keys mapping to redundant
+        group indices
+    """
+    raise NotImplementedError
+    # build redundancies
+    bls = [(a, a) for a in self.ants] + list(itertools.combinations(self.ants, 2))
+    # red-bl list, red-bl vec, bl to redgroup index, iso-length groups
+    reds, rvec, bl2red = [], [], {}
+    # iterate over bls
+    k = 0
+    for bl in bls:
+        blvec = utils.tensor2numpy(self.get_antpos(bl[1]) - self.get_antpos(bl[0]))
+        # check if this is a unique bl
+        rgroup = None
+        for i, blv in enumerate(rvec):
+            ## TODO: handle conjugated baselines
+            if np.linalg.norm(blv - blvec) < redtol:
+                rgroup = i
+        if rgroup is None:
+            # this a unique group, append to lists
+            reds.append([bl])
+            rvec.append(blvec)
+            bl2red[bl] = k
+            k += 1
+        else:
+            # this falls into an existing redundant group
+            reds[rgroup].append(bl)
+            bl2red[bl] = rgroup
+
+
