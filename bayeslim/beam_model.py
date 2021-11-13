@@ -569,7 +569,7 @@ class AiryResponse:
             Multiplicative scalar acting on freqs before airy disk is
             evaluated. Makes the beam mimic a higher or lower frequency beam.
         """
-        self.freq_ratio = 1.0
+        self.freq_ratio = freq_ratio
         self.freq_mode = 'other'
         self.freq_ax = None
 
@@ -588,8 +588,8 @@ class AiryResponse:
             Frequency array [Hz]
         """
         # get azimuth dependent sigma
-        Dew = self.params[..., 0:1]
-        Dns = self.params[..., 1:2] if params.shape[-1] > 1 else None
+        Dew = params[..., 0:1]
+        Dns = params[..., 1:2] if params.shape[-1] > 1 else None
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio)
         return beam
   
