@@ -219,7 +219,7 @@ def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
     sims: ndarray or str
         A 3D temperature simulation cube. This can be of shape
         (Nsim_freqs, Npix, Npix, Npix) or (Npix, Npix, Npix).
-        This can also be a list of str filepaths to .npy sims.
+        This can also be a list of str filepaths to .npy boxes.
     sim_zs : ndarray
         Redshifts of simulation cubes.
         Must be ordered such that they are monotonically

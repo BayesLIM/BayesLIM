@@ -1600,7 +1600,7 @@ class Sequential(Module):
             self.update(pdict)
 
         for name in self._models:
-            inp = self.get_submodule(name)(inp, prior_cache=prior_cache)
+            inp = self.get_submodule(name)(inp, prior_cache=prior_cache, **kwargs)
 
         return inp
 
@@ -1930,4 +1930,32 @@ def smi(name, fname='nvidia_mem.txt'):
             mem = "{} / {}".format(alloc, total)
             output.append("| GPU {} | {} |".format(gpu, mem))
     print('\n'.join([date] + ['o' + '-'*33 + 'o'] + output + ['o' + '-'*33 + 'o']))
+
+
+def flatten(arr, Nelem=None):
+    """
+    Flatten nested list or array
+
+    Parameters
+    ----------
+    arr : list or ndarray
+        Nested set of lists
+    Nitems : int, optional
+        Number of elements in the subarray
+        to keep. default is all elements.
+
+    Returns
+    -------
+    list
+        Flatten list
+    """
+    flat = []
+    if Nelem is None:
+        s = slice(None)
+    else:
+        s = slice(0, Nelem)
+    for subarr in arr:
+        for item in subarr[s]:
+            flat.append(item)
+    return flat
 

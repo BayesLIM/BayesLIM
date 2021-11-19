@@ -359,3 +359,111 @@ def cmatmul(a, b):
 
 
     return c
+
+
+def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
+    """
+    Solve a linear equation via generalized least squares.
+    For the linear system of equations
+
+    .. math ::
+        
+        y = A x
+
+    with parameters x, the least squares solution is
+
+    .. math ::
+
+        \hat{x} = D A.T N^{-1} y
+
+    where the normalization matrix is defined
+
+    .. math ::
+
+        D = (A.T N^{-1} A)^{-1}
+
+    If A is large this can be sped up by moving A and y
+    to the GPU first.
+
+    Parameters
+    ----------
+    A : tensor
+        Design matrix, mapping parameters to outputs
+        of shape (N, M)
+    y : tensor
+        Observation vector or matrix, of shape (M, ...)
+    dim : int, optional
+        Dimension in y to multiply into A. Default is 0th axis.
+    Ninv : tensor, optional
+         Inverse of noise matrix used for weighting
+         of shape (N, N), or just its diagonal of shape (N,).
+         Default is identity matrix.
+    norm : str, optional
+        Normalization type, [None, 'inv', 'diag']
+        None : no normalization, assume D is identity
+        'inv' : invert A.T Ninv A
+        'diag' : take inverse of diagonal of A.T Ninv A
+    rcond : float, optional
+        rcond parameter for taking pseudo-inverse
+
+    Returns
+    -------
+    tensor
+        estimated parameters
+    """
+    # Note that we actually solve the transpose of x
+    # and then re-transpose. 
+    # i.e. x = y.T @ Ninv @ A @ (A.T @ Ninv A)^{-1}
+    # this is for broadcasting when y is multi-dim
+
+    # move y axis
+    y = y.moveaxis(dim, -1)
+
+    # get un-normalized estimate of x
+    if Ninv is not None:
+        if Ninv.ndim == 2:
+            # Ninv is a matrix
+            y = y @ Ninv
+        else:
+            # Ninv is diagonal
+            y = y * Ninv
+
+    x = y @ A
+
+    # get normalization matrix
+    if norm == 'inv':
+        # invert to get D
+        if Ninv is None:
+            Dinv = A.T @ A
+        else:
+            if Ninv.ndim == 2:
+                # Ninv is matrix
+                Dinv = A.T @ Ninv @ A
+            else:
+                # Ninv is diagonal
+                Dinv = (A.T * Ninv) @ A
+        D = torch.pinverse(Dinv, rcond=rcond)
+        x = x @ D
+
+    elif norm == 'diag':
+        # just invert diagonal to get D
+        if Ninv is None:
+            Dinv = (A**2).sum(dim=0)
+        else:
+            if Ninv.ndim == 2:
+                # Ninv is a matrix
+                Dinv = torch.diag(A.T @ Ninv @ A)
+            else:
+                # Ninv is diagonal
+                Dinv = (Ninv * A.T**2).T.sum(dim=0)
+        D = 1 / Dinv
+        x = x * D
+
+    # return axis to dim
+    x.moveaxis(-1, dim)
+
+    return x
+
+
+
+
