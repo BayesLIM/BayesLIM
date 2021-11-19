@@ -214,7 +214,13 @@ class HMC(SamplerBase):
             if sparse_cov[k]:
                 self.chol[k] = torch.sqrt(1 / cov[k])
             else:
-                self.chol[k] = torch.linalg.cholesky(torch.pinverse(cov[k], rcond=rcond))
+                try:
+                    self.chol[k] = torch.linalg.cholesky(torch.pinverse(cov[k], rcond=rcond))
+                except RuntimeError:
+                    # error in taking cholesky, so just default to using diagonal
+                    self.chol[k] = torch.sqrt(1 / cov[k].diagonal().reshape(self.x[k].shape))
+                    sparse_cov[k] = True
+                    cov[k] = cov[k].diagonal().reshape(self.x[k].shape)
 
         self.cov = cov
         self.sparse_cov = sparse_cov
@@ -235,12 +241,12 @@ class HMC(SamplerBase):
             kinetic energy
         """
         if isinstance(p, torch.Tensor):
-            K = sum(p**2 / 2)
+            K = torch.sum(p**2 / 2)
         else:
             K = 0
             for k in p:
                 if self.sparse_cov[k]:
-                    K += sum(self.cov[k] * p[k]**2 / 2)
+                    K += torch.sum(self.cov[k] * p[k]**2 / 2)
                 else:
                     prav = p[k].ravel()
                     K += prav @ self.cov[k] @ prav / 2
