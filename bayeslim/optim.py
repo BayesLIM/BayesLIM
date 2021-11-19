@@ -9,7 +9,7 @@ import time
 import pickle
 from collections.abc import Iterable
 
-from . import utils
+from . import utils, paramdict
 from .dataset import VisData, MapData, TensorData
 
 
@@ -187,12 +187,12 @@ class LogGaussPrior:
             params = params[self.index]
         res = params - self.mean
         if self.sparse_cov:
-            chisq = 0.5 * torch.sum(res**2 * self.icov)
+            chisq = torch.sum(res**2 * self.icov)
         else:
             res = res.ravel()
-            chisq = 0.5 * torch.sum(res @ self.icov @ res)
+            chisq = torch.sum(res @ self.icov @ res)
 
-        return -chisq - self.norm
+        return -0.5 * chisq - self.norm
 
     def __call__(self, params):
         return self.forward(params)
@@ -318,9 +318,9 @@ class LogProb(utils.Module):
 
         return target, inp
 
-    def forward_like(self, idx=None, **kwargs):
+    def forward_chisq(self, idx=None):
         """
-        Compute log (Gaussian) likelihood
+        Compute and return chisquare
         by evaluating the forward model and comparing
         against the target data
 
@@ -331,6 +331,13 @@ class LogProb(utils.Module):
             is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
+
+        Returns
+        -------
+        tensor
+            Chisquare
+        tensor
+            Residual of prediction with target
         """
         ## TODO: allow for kwarg dynamic icov for cosmic variance
 
@@ -350,17 +357,45 @@ class LogProb(utils.Module):
         if hasattr(target, 'icov') and target.icov is not None:
             icov = target.icov
             cov_axis = target.cov_axis
-            like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
         else:
             icov = torch.ones_like(res, device=res.device)
             cov_axis = None
-            like_norm = 0
 
-        # evaluate negative log likelihood: take real component
-        chisq = 0.5 * torch.sum(apply_icov(res, icov, cov_axis))
+        # evaluate chi square
+        chisq = torch.sum(apply_icov(res, icov, cov_axis))
         if torch.is_complex(chisq):
             chisq = chisq.real
-        loglike = -chisq - like_norm
+
+        return chisq, res
+
+    def forward_like(self, idx=None, **kwargs):
+        """
+        Compute log (Gaussian) likelihood
+        by evaluating the chisquare of the forward model
+        compared to the target data
+
+        Parameters
+        ----------
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Default is self.batch_idx.
+            Otherwise just evaluate prob.
+            If passed also sets self.batch_idx.
+        """
+        # evaluate chisq for this batch index
+        chisq, res = self.forward_chisq(idx)
+
+        # get target and inp data for this batch index
+        target, inp = self.get_batch_data(idx)
+
+        # use it to get log likelihood normalization
+        if hasattr(target, 'icov') and target.icov is not None:
+            like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
+        else:
+            like_norm = 0
+
+        # form loglikelihood
+        loglike = -0.5 * chisq - like_norm
 
         if self.negate:
             return -loglike
@@ -650,7 +685,7 @@ def apply_icov(data, icov, cov_axis):
     """
     if cov_axis is None:
         # icov is just diagonal
-        out = data**2 * icov
+        out = data.conj() * data * icov
     elif cov_axis == 'full':
         # icov is full inv cov
         out = data.ravel().conj() @ icov @ data.ravel()
@@ -707,4 +742,45 @@ def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
                         icov[:, :, i, j, k, l] = inv(cov[:, :, i, j, k, l])
 
     return icov
+
+
+
+def compute_hessian(prob, params, keep_diag=False, **kwargs):
+    """
+    Compute Hessian of prob with respect to params.
+    Note that this edits params in prob inplace!
+
+    Parameters
+    ----------
+    prob : optim.LogProb object
+        Log posterior object
+    params : ParamDict object
+        Holding parameters of prob for which to compute hessian,
+        and the values at which to compute it
+    keep_diag : bool, optional
+        If True, only keep the diagonal of the Hessian and
+        reshape to match input params shape.
+    **kwargs : kwargs for autograd.functional.hessian
+
+    Returns
+    -------
+    ParamDict object
+        Hessian of prob
+    """
+    # TODO: enable Hessian between params
+    hess = paramdict.ParamDict({})
+    for param in params:
+        # setup func
+        inp = params[param]
+        shape = inp.shape
+        N = shape.numel()
+        def func(x):
+            utils.set_model_attr(prob, param, x, clobber_param=True)
+            return prob()
+        h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
+        if keep_diag:
+            h = h.diag().reshape(shape)
+        hess[param] = h
+
+    return hess
 
