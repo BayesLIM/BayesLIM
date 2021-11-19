@@ -138,7 +138,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
     """
     def __init__(self, antpos, freqs, parameter=False, device=None,
                  cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest',
-                 redtol=0.1, name=None):
+                 redtol=0.1, name=None, red_kwargs={}):
         """
         A model of an interferometric array
 
@@ -178,6 +178,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
             are built. This is the bl vector redundancy tolerance [m]
         name : str, optional
             Name for this object, stored as self.name
+        red_kwargs : dict, optional
+            Keyword arguments to pass to build_reds()
         """
         # init Module
         super(utils.PixInterp, self).__init__(name=name)
@@ -205,50 +207,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
             assert parameter is False, "fringe caching not yet implemented for parameter = True"
 
         if parameter is False:
-            # build redundancies
-            bls = [(a, a) for a in self.ants] + list(itertools.combinations(self.ants, 2))
-            # red-bl list, red-bl vec, bl to redgroup index, iso-length groups
-            reds, rvec, bl2red = [], [], {}
-            # iterate over bls
-            k = 0
-            for bl in bls:
-                blvec = utils.tensor2numpy(self.get_antpos(bl[1]) - self.get_antpos(bl[0]))
-                # check if this is a unique bl
-                rgroup = None
-                for i, blv in enumerate(rvec):
-                    ## TODO: handle conjugated baselines
-                    if np.linalg.norm(blv - blvec) < redtol:
-                        rgroup = i
-                if rgroup is None:
-                    # this a unique group, append to lists
-                    reds.append([bl])
-                    rvec.append(blvec)
-                    bl2red[bl] = k
-                    k += 1
-                else:
-                    # this falls into an existing redundant group
-                    reds[rgroup].append(bl)
-                    bl2red[bl] = rgroup
-
-            # solve for red group attributes
-            lens, angs, tags = [], [], []
-            for i, rg in enumerate(reds):
-                # get length [m]
-                bllen = np.linalg.norm(rvec[i])
-                # get angle [deg]
-                blang = np.arctan2(*rvec[i][:2][::-1]) * 180 / np.pi
-                # ensure angle is purely positive
-                if rvec[i][1] < 0: blang += 180
-                # if its close to 180 deg within redtol set it to zero
-                if np.abs(rvec[i][1]) < redtol: blang = 0
-                lens.append(bllen)
-                angs.append(blang)
-                # create tag
-                tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
-
-            # bl2red: maps baseline tuple to the index of its redundant group in reds
-            self.reds, self.redvec, self.bl2red, self.bls = reds, rvec, bl2red, bls
-            self.redlens, self.redangs, self.redtags = lens, angs, tags
+            # build redundant info
+            (self.reds, self.redvec, self.bl2red, self.bls, self.redlens, self.redangs,
+             self.redtags) = build_reds(antpos, **red_kwargs)
 
     def get_antpos(self, ant):
         """
@@ -544,7 +505,8 @@ def JD2LST(jd, longitude):
     return t.sidereal_time('apparent', longitude=longitude * units.deg).radian
 
 
-def build_reds(antpos, ants):
+def build_reds(antpos, bls=None, redtol=0.1, min_len=None, max_len=None,
+               min_EW_len=None, exclude_reds=None):
     """
     Build redundant groups
 
@@ -553,40 +515,122 @@ def build_reds(antpos, ants):
     antpos : dict
         Antenna positions in ENU frame [meters]
         keys are ant integers, values are len-3 arrays
-    
+        holding antenna position in ENU (east-north-up)
+    bls : list, optional
+        List of baselines to sort into redundant groups using
+        antenna positions. Default is to compute all possible
+        redundancies from antpos. Uses first baseline in numerical
+        order as representative redundant baseline.
+    redtol : float, optional
+        Redunancy tolerance [m]
+    min_len : float, optional
+        Minimum baseline length cut
+    max_len : float, optional
+        Maximum baseline length cut
+    min_EW_len : float, optional
+        Minimum projected East-West baseline length cut
+    exclude_reds : list, optional
+        A list of baseline tuple(s) whose corresponding
+        redundant type will be excluded from the output.
+        E.g. For a standard HERA array, [(0, 1)] would exclude
+        all 14.6-meter East-West baselines.
+
     Returns
     -------
     reds : list
         Nested set of redundant baseline lists
-    rvec : 
+    redvec : list
+        Baseline vector for each redundant group
     bl2red : dict
-        Baseline tuple keys mapping to redundant
-        group indices
+        Maps baseline tuple to redundant group index
+    bls : list
+        List of all baselines
+    redlens : list
+        List of redundant group baseline lengths
+    redangs : list
+        List of redundant group baseline orientation, North of East [deg]
+    redtags : list
+        List of unique baseline length and angle str
     """
-    raise NotImplementedError
-    # build redundancies
-    bls = [(a, a) for a in self.ants] + list(itertools.combinations(self.ants, 2))
-    # red-bl list, red-bl vec, bl to redgroup index, iso-length groups
-    reds, rvec, bl2red = [], [], {}
+    # get antenna names and vectors
+    ants = list(antpos.keys())
+    antvec = [antpos[a] for a in ants]
+
+    # get baselines
+    if bls is None:
+        bls = [(a, a) for a in ants] + list(itertools.combinations(ants, 2))
+
+    # get excluded baseline vectors
+    if exclude_reds is not None:
+        exclude_reds = [utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]]) for bl in exclude_reds]
+
     # iterate over bls
+    reds, rvec, bl2red = [], [], {}
+    lens, angs, tags = [], [], []
     k = 0
     for bl in bls:
-        blvec = utils.tensor2numpy(self.get_antpos(bl[1]) - self.get_antpos(bl[0]))
+        # get baseline vector
+        blvec = utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]])
+        bllen = np.linalg.norm(blvec)
+
+        # determine if we should skip this baseline
+        if min_len is not None and bllen < min_len:
+            continue
+        if max_len is not None and bllen > max_len:
+            continue
+        if min_EW_len is not None and blvec[0] < min_EW_len:
+            continue
+        if exclude_reds is not None:
+            # add and subtract to account for accidental conjugation
+            match1 = [np.linalg.norm(blv - blvec) for blv in exclude_reds]
+            match2 = [np.linalg.norm(blv + blvec) for blv in exclude_reds]
+            if np.isclose(match1, 0, atol=redtol).any() or np.isclose(match2, 0, atol=redtol).any():
+                continue
+
         # check if this is a unique bl
         rgroup = None
         for i, blv in enumerate(rvec):
             ## TODO: handle conjugated baselines
             if np.linalg.norm(blv - blvec) < redtol:
                 rgroup = i
+                break
+
         if rgroup is None:
             # this a unique group, append to lists
             reds.append([bl])
             rvec.append(blvec)
-            bl2red[bl] = k
+            # get unique baseline properties
+            bllen = np.linalg.norm(blvec)
+            # get angle [deg]
+            blang = np.arctan2(*blvec[:2][::-1]) * 180 / np.pi
+            # ensure angle is purely positive
+            if blvec[1] < 0: blang += 180.0
+            # if its close to 180 deg within redtol set it to zero
+            if np.abs(blvec[1]) < redtol: blang = 0.0
+            lens.append(bllen)
+            angs.append(blang)
+            tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
             k += 1
+
         else:
             # this falls into an existing redundant group
             reds[rgroup].append(bl)
-            bl2red[bl] = rgroup
 
+    # resort by baseline length
+    s = np.argsort(lens)
+    reds = [sorted(reds[i]) for i in s]
+    rvec = [rvec[i] for i in s]
+    lens = [lens[i] for i in s]
+    angs = [angs[i] for i in s]
+    tags = [tags[i] for i in s]
+    bls = utils.flatten(reds)
 
+    # setup bl2red
+    bl2red = {}
+    for bl in bls:
+        for i, rg in enumerate(reds):
+            if bl in rg:
+                bl2red[bl] = i
+                break
+
+    return reds, rvec, bl2red, bls, lens, angs, tags
