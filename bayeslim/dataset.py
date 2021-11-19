@@ -158,13 +158,16 @@ class VisData:
             elif len(bl) == 3:
                 bl, pol = [bl[:2]], bl[2]
         elif isinstance(bl, list):
+            # this is a list of antpairs or antpairpols
             bl_list, pol_list = [], []
             for b in bl:
                 _bl, _pol = self._bl2uniq_blpol(b)
-                bl_list.extend(_bl)
-                pol_list.append(_pol)
-            bl = sorted(set(bl_list))
-            pol = list(set(pol_list))
+                if _bl not in bl_list:
+                    bl_list.extend(_bl)
+                if _pol not in pol_list:
+                    pol_list.append(_pol)
+            bl = bl_list
+            pol = pol_list
             if len(pol) > 1 and None in pol:
                 pol.remove(None)
             assert len(pol) == 1, "can only index 1 pol at a time"
@@ -467,6 +470,8 @@ class VisData:
                         for k in range(self.cov.shape[4]):
                             for l in range(self.cov.shape[5]):
                                 self.cov_logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
+            if torch.is_complex(self.cov_logdet):
+                self.cov_logdet = self.cov_logdet.real
 
     def compute_icov(self, pinv=True, rcond=1e-15):
         """
@@ -495,6 +500,44 @@ class VisData:
 
     def __getitem__(self, bl):
         return self.get_data(bl, squeeze=True)
+
+    def __setitem__(self, bl, val):
+        self.set(bl, val)
+
+    def set(self, bl, val, arr='data'):
+        """
+        Set the desired sliced attribute "arr" as val
+
+        Parameters
+        ----------
+        bl : tuple, optional
+            Baseline(pol) to set
+        kwargs : dict, optional
+            Other parameters to set
+        val : tensor
+            Value to assign
+        arr : str, optional
+            Attribute to set
+            ['data', 'flags', 'icov', 'cov']
+        """
+        # get slice indices
+        inds = self.get_inds(bl=bl)
+
+        # get desired attribute
+        if arr == 'data':
+            arr = self.data
+        elif arr == 'flags':
+            arr = self.flags
+        elif arr == 'cov':
+            # assert cov is shape of data
+            assert self.cov_axis is None
+            arr = self.cov
+        elif arr == 'icov':
+            # assert cov is shape of data
+            assert self.cov_axis is None
+            arr = self.icov
+
+        arr[inds] = val
 
     def select(self, bl=None, times=None, freqs=None, pol=None):
         """
