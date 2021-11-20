@@ -11,19 +11,29 @@ Separately, BayesLIM is a
 * sky signal parameterization and modeling tool
 * constrained optimizer and MCMC sampler
 
-Together, these functionalities combine to enable BayesLIM to constrain the joint posterior of a cosmological LIM signal in addition to a complex and often unknown foreground and instrumental response.
+Together, these functionalities enable BayesLIM to constrain the joint posterior of a cosmological LIM signal in addition to a complex and often unknown foreground and instrumental response.
 
 ![flowchart](https://github.com/nkern/bayescal/blob/main/docs/source/_static/img/flowchart.png)
 
+# Install
+
+Clone this repo and
+
+```bash
+cd BayesLIM
+pip install .
+```
+
 # Dependencies
 
-`pytorch`
-`numpy`
-`scipy`
-`astropy`
+### Primary Dependencies 
+* pytorch
+* numpy
+* scipy
+* astropy
+* h5py
 
-## Optional Dependencies
-
-`mpmath`
-`healpy`
-`pyuvdata`
+### Optional Dependencies
+* mpmath
+* healpy
+* pyuvdata
