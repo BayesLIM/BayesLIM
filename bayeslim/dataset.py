@@ -1085,4 +1085,3 @@ def _list2slice(inds):
         if len(diff) == 1:
             return slice(inds[0], inds[-1]+diff[0], diff[0])
     return inds
-

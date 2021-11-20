@@ -167,7 +167,7 @@ class JonesModel(utils.Module):
         # fix reference antenna if needed
         self.fix_refant_phs()
 
-        # setup if needed
+        # configure data if needed
         if vd.bls != self.bls:
             self._setup(vd.bls)
 
@@ -181,20 +181,6 @@ class JonesModel(utils.Module):
         if jones is None:
             jones = self.R(self.params)
 
-        # invert jones if necessary
-        if undo:
-            invjones = torch.zeros_like(jones)
-            for i in range(jones.shape[2]):
-                if self.polmode in ['1pol', '2pol']:
-                    if self.vis_type == 'com':
-                        invjones[:, :, i] = linalg.diag_inv(jones[:, :, i])
-                    elif self.vis_type == 'dly':
-                        invjones[:, :, i] = -jones[:, :, i]
-                else:
-                    assert self.vis_type == 'com', 'must have complex vis_type for 4pol mode'
-                    invjones[:, :, i] = torch.pinv(jones[:, :, i])
-            jones = invjones
-
         # get time select (in case we are mini-batching over time axis)
         if vd.Ntimes != jones.shape[-2]:
             tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in vd.times]).tolist()
@@ -203,20 +189,9 @@ class JonesModel(utils.Module):
                 tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
             jones = jones[..., tselect, :]
 
-        # iterate through visibility and apply Jones terms
-        for i, bl in enumerate(self.bls):
-            # pick out jones terms
-            j1 = jones[:, :, self._vis2ants[bl][0]]
-            j2 = jones[:, :, self._vis2ants[bl][1]]
-
-            if self.polmode in ['1pol', '2pol']:
-                if self.vis_type == 'com':
-                    vout.data[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(j1, j2.conj()), vd.data[:, :, i])
-                elif self.vis_type == 'dly':
-                    vout.data[:, :, i] = vd.data[:, :, i] + j1 - j2
-            else:
-                assert self.vis_type == 'com', "must have complex vis_type for 4pol mode"
-                vout.data[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", j1, vd.data[:, :, i], j2.conj())
+        # calibrate and insert into output vis
+        vout.data = vis_calibrate(vd.data, self.bls, jones, self._vis2ants, self.polmode,
+                                  vis_type=self.vis_type, undo=undo)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
@@ -798,6 +773,128 @@ class VisModelResponse:
             self.time_A = self.time_A.to(device)
 
 
+class CalData:
+    """
+    Work in progress...
+
+    An object for holding complex calibration
+    solutions of shape (Npol, Npol, Nant, Ntimes, Nfreqs).
+    Optionally, Ntimes and Nfreqs may be replaced by
+    Ncoeff describing a sparse linear basis across
+    those dimensions, which can be propagated to
+    the time and/or frequency domain via the
+    attached JonesResponse object, self.R.
+    """
+    def __init__(self):
+        """
+        """
+        raise NotImplementedError
+
+    def setup_response(self, freq_mode='channel', time_mode='channel', param_type='com',
+                       vis_type='com', freqs=None, times=None, device=None, **setup_kwargs):
+        """
+        Setup response object for complex gains, mapping self.params to self.gains
+        """
+        self.R = JonesResponse(freq_mode=freq_mode, time_mode=time_mode,
+                               param_type=param_type, vis_type=vis_type,
+                               freqs=freqs, times=times, device=device, **setup_kwargs)
+
+    def setup_data(self, ):
+        """
+        """
+        pass
+
+    def write_hdf5(self, ):
+        """
+        """
+        pass
+
+    def read_hdf5(self, ):
+        """
+        """
+        pass
+
+    def read_uvcal(self, ):
+        """
+        """
+        pass
+
+
+def vis_calibrate(vis, bls, gains, vis2ants, polmode, vis_type='com',
+                  undo=False):
+    """
+    Calibrate a visibility tensor with a complex
+    gain tensor. Default behavior is to multiply
+    vis with gains, i.e. when undo = False.
+
+    .. math::
+
+        V_{12}^{\rm out} = g_1 V_{12}^{\rm inp} g_2^\ast
+
+    Parameters
+    ----------
+    vis : tensor
+        Visibility tensor of shape
+        (Npol, Npol, Nbls, Ntimes, Nfreqs)
+    bls : list
+        List of baseline antenna-pair tuples e.g. [(0, 1), ...]
+        of vis along Nbls dimension.
+    gains : tensor
+        Gain tensor of shape
+        (Npol, Npol, Nants, Ntimes, Nfreqs)
+    vis2ants : dict
+        Mapping between a baseline tuple in bls to the indices of
+        the two antennas (g_1, g_2) in gains to apply.
+        E.g. calibrating with Nants gains {(0, 1): (0, 1), (1, 3): (1, 3), ...}
+        E.g. calibrating vis with 1 gain, {(0, 1): (0, 0), (1, 3): (0, 0), ...}
+    polmode : str
+        Polarization mode of data ['1pol', '2pol', '4pol'].
+        For 1pol data Npol = 1, for 2pol and 4pol data Npol = 2,
+        but in 2pol mode off-diagonal pols are ignored.
+    vis_type : str, optional
+        Type of visibility and gain tensor. ['com', 'dly'].
+        If 'com', vis and gains are complex (default).
+        If 'dly', vis and gains are float delays.
+    undo : bool, optional
+        If True, divide vis by gains, otherwise
+        (default) multiply vis by gains.
+    """
+    assert vis.shape[:2] == gains.shape[:2], "vis and gains must have same Npols"
+
+    # invert gains if necessary
+    if undo:
+        invgains = torch.zeros_like(gains)
+        # iterate over antennas
+        for i in range(gains.shape[2]):
+            if polmode in ['1pol', '2pol']:
+                if vis_type == 'com':
+                    invgains[:, :, i] = linalg.diag_inv(gains[:, :, i])
+                elif vis_type == 'dly':
+                    invgains[:, :, i] = -gains[:, :, i]
+            else:
+                assert vis_type == 'com', 'must have complex vis_type for 4pol mode'
+                invgains[:, :, i] = torch.pinv(gains[:, :, i])
+        gains = invgains
+
+    # iterate through visibility and apply gain terms
+    vout = torch.zeros_like(vis)
+    for i, bl in enumerate(bls):
+        # pick out appropriate antennas
+        g1 = gains[:, :, vis2ants[bl][0]]
+        g2 = gains[:, :, vis2ants[bl][1]]
+
+        if polmode in ['1pol', '2pol']:
+            if vis_type == 'com':
+                vout[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(g1, g2.conj()), vis[:, :, i])
+            elif vis_type == 'dly':
+                vout[:, :, i] = vis[:, :, i] + g1 - g2
+        else:
+            assert vis_type == 'com', "must have complex vis_type for 4pol mode"
+            vout[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", g1, vis[:, :, i], g2.conj())
+
+    return vout
+
+
 def compute_redcal_degen(params, ants, antpos, wgts=None):
     """
     Given a set of antenna gains compute the degeneracy
@@ -858,6 +955,7 @@ def compute_redcal_degen(params, ants, antpos, wgts=None):
     phs_slope = (phs @ W.T @ A @ AtWAinv.T).moveaxis(-1, 2)
 
     return abs_amp, phs_slope
+
 
 def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
     """
