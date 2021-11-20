@@ -189,12 +189,13 @@ class JonesModel(utils.Module):
                 tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
             jones = jones[..., tselect, :]
 
-        # calibrate and insert into output vis
-        vout.data = vis_calibrate(vd.data, self.bls, jones, self._vis2ants, self.polmode,
-                                  vis_type=self.vis_type, undo=undo)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
+
+        # calibrate and insert into output vis
+        vout.data = vis_calibrate(vd.data, self.bls, jones, self._vis2ants, self.polmode,
+                                  vis_type=self.vis_type, undo=undo)
 
         return vout
 
@@ -406,6 +407,10 @@ class JonesResponse:
         Forward pass params through response to get
         complex antenna gains per time and frequency
         """
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
         # detect if params needs to be casted into complex
         if self.param_type == 'com' and not torch.is_complex(params):
             params = utils.viewcomp(params)
@@ -739,6 +744,10 @@ class VisModelResponse:
         Forward pass params through response to get
         complex visibility model per time and frequency
         """
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
         # convert representation to full Ntimes, Nfreqs
         if self.freq_mode == 'channel':
             pass

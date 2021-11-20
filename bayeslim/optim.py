@@ -281,8 +281,12 @@ class LogProb(utils.Module):
         """
         Setup a single main parameter tensor that automatically
         interfaces with specified submodule tensors in models. This
-        is used for optimizers that require all parameters on a single
-        device. Sets self.main_params.
+        is used for functionality that requires all parameters to
+        be on a single tensor (e.g. Hessian computation).
+        This can also be used for funcs that need all parameters
+        on a single device, although this can also be handled
+        easily by moving parameters to a single device but
+        keeping their response functions on a separate device.
 
         For any call to self, the values from self.main_params are
         copied over to submodules before forward model evaluation.

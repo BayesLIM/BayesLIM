@@ -460,10 +460,13 @@ class VisData:
             # compute covariance properties
             self.cov_ndim = sum(self.data.shape)
             if self.cov_axis is None:
+                assert self.cov.shape == self.data.shape
                 self.cov_logdet = torch.sum(torch.log(self.cov))
             elif self.cov_axis == 'full':
+                assert self.cov.ndim == 2
                 self.cov_logdet = torch.slogdet(self.cov).logabsdet
             else:
+                assert self.cov.ndim == 6
                 self.cov_logdet = 0
                 for i in range(self.cov.shape[2]):
                     for j in range(self.cov.shape[3]):

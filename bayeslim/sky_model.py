@@ -295,6 +295,9 @@ class PointSkyResponse:
             self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
 
     def __call__(self, params):
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
         if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':

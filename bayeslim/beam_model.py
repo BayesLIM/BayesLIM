@@ -462,8 +462,12 @@ class PixelResponse(utils.PixInterp):
             self.A = self.A.to(device)
 
     def __call__(self, params, zen, az, *args):
-        # get pre-forwarded beam if it exists
+        # set beam cache if it doesn't exist
         if self.beam_cache is None:
+            # pass to device
+            if utils.device(params.device) != utils.device(self.device):
+                params = params.to(self.device)
+
             # pass through frequency response
             if self.freq_mode == 'poly':
                 params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
@@ -770,6 +774,10 @@ class YlmResponse(PixelResponse):
             pixelized beam on the sky
             of shape (Npol, Npol, Nmodel, Nfreqs, Npix)
         """
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
         # detect if params needs to be casted into complex
         if not torch.is_complex(params):
             params = utils.viewcomp(params)
