@@ -31,6 +31,16 @@ if not import_healpy:
     except ImportError:
         warnings.warn("could not import healpy")
 
+# try to import nullcontext (for Py>=3.7)
+try:
+    from contextlib import nullcontext
+except ImportError:
+    from contextlib import contextmanager
+    @contextmanager
+    def nullcontext(enter_result=None):
+        yield enter_result
+
+
 D2R = np.pi / 180
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
@@ -1667,7 +1677,8 @@ def get_model_attr(model, name, pop=0):
         return get_model_attr(attr, '.'.join(name[1:]))
 
 
-def set_model_attr(model, name, value, clobber_param=False):
+def set_model_attr(model, name, value, clobber_param=False,
+                   no_grad=True):
     """
     Set value to model as model.name
 
@@ -1687,8 +1698,12 @@ def set_model_attr(model, name, value, clobber_param=False):
         If False (default), insert value from pdict
         into existing Parameter object, changing
         its memory address.
+    no_grad : bool, optional
+        If True, enter a torch.no_grad() context,
+        otherwise enter a nullcontext.
     """
-    with torch.no_grad():
+    context = torch.no_grad if no_grad else nullcontext
+    with context():
         if isinstance(name, str):
             name = name.split('.')
         if len(name) == 1:

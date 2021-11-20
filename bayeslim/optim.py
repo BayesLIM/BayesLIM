@@ -270,7 +270,74 @@ class LogProb(utils.Module):
         self.negate = negate
         self.closure_eval = 0
         self.grad_type = grad_type
+
+        # clear prior cache
         self.clear_prior_cache()
+
+        # set no main params by default
+        self.set_main_params()
+
+    def set_main_params(self, model_params=None):
+        """
+        Setup a single main parameter tensor that automatically
+        interfaces with specified submodule tensors in models. This
+        is used for optimizers that require all parameters on a single
+        device. Sets self.main_params.
+
+        For any call to self, the values from self.main_params are
+        copied over to submodules before forward model evaluation.
+
+        Note: assumes all params are of utils._float() dtype.
+
+        Parameters
+        ----------
+        model_params : list, optional
+            List of submodules params tensors (with model as root) to
+            collect sort into main_params.
+            E.g. ['rime.sky.params', 'cal.params']
+            If None, main_params is set as None.
+        """
+        self.main_params = None
+        self._main_indices = None
+        self._main_shapes = None
+        self._main_devices = None
+        if model_params is not None:
+            N = 0
+            params = []
+            self._main_indices = {}
+            self._main_shapes = {}
+            self._main_devices = {}
+            for param in model_params:
+                # get parameter and metadata
+                p = self.model[param].detach().to('cpu').to(utils._float())
+                shape = p.shape
+                numel = shape.numel()
+                device = p.device
+
+                # append metadata
+                params.append(p.ravel())
+                self._main_indices[param] = slice(N, N + numel) 
+                self._main_shapes[param] = shape
+                self._main_devices[param] = device
+                N += numel
+
+            self.main_params = torch.nn.Parameter(torch.cat(params))
+            self.send_main_params()
+
+    def send_main_params(self):
+        """
+        Take existing value of self.main_params and using
+        _main_indices, _main_shapes and _main_types, and
+        send its values to the relevant submodule params.
+        """
+        if self.main_params is not None:
+            for param in self._main_indices:
+                # get shaped parameter on device
+                value = self.main_params[self._main_indices[param]]
+                value = value.reshape(self._main_shapes[param])
+                value = value.to(self._main_devices[param])
+                utils.set_model_attr(self.model, param, value,
+                                     clobber_param=True, no_grad=False)
 
     @property
     def Nbatch(self):
@@ -343,6 +410,10 @@ class LogProb(utils.Module):
 
         # get batch data
         target, inp = self.get_batch_data(idx)
+
+        # copy over main_params if needed
+        if self.main_params is not None:
+            self.send_main_params()
 
         # forward pass model
         out = self.model(inp, prior_cache=self.prior_cache)
@@ -582,25 +653,31 @@ class Trainer:
         opt : torch.Optimizer object
         track : bool, optional
             If True, track value of all prob.parameters and append to
-            a list during optimization.
+            a chain during optimization.
         """
         self.prob = prob
         self.opt = opt
         self.loss = []
         self.closure_eval = 0
         self.track = track
-        self.params = {}
-        for k in prob.named_parameters():
-            self.params[k[0]] = []
+
         if prob.grad_type == 'accumulate':
             self.Nbatch = 1
         elif prob.grad_type == 'stochastic':
             self.Nbatch = prob.Nbatch
 
+        self.chain = {}
+        if prob.main_params is not None:
+            for k in prob._main_indices:
+                self.chain['model.' + k] = []
+        else:
+            for k in prob.named_parameters():
+                self.chain[k[0]] = []
+
     def train(self, Nepochs=1, Nreport=None):
         """
-        Train the model. Results of loss are stored
-        in self.loss
+        Train the model. Loss is stored in self.loss,
+        and parameter values (if track) stored in self.chain
 
         Parameters
         ----------
@@ -627,8 +704,8 @@ class Trainer:
             for i in range(self.Nbatch):
                 # append current params
                 if self.track:
-                    for k, p in self.prob.named_parameters():
-                        self.params[k].append(p.detach().clone())
+                    for k in self.chain:
+                        self.chain[k].append(self.prob[k].detach().clone())
 
                 # evaluate forward model, backprop, make a step
                 _loss += self.opt.step(self.prob.closure)
@@ -640,6 +717,25 @@ class Trainer:
         info = dict(duration=time_elapsed)
 
         return info
+
+    def get_chain(self, name=None):
+        """
+        Extract and return chain history
+
+        Parameters
+        ----------
+        name : str, optional
+            Return just one param.
+
+        Returns
+        -------
+        tensor or dict
+            Chain for given name
+        """
+        if name is not None:
+            return torch.stack(self.chain[name])
+        else:
+            return {k: torch.stack(c) for k, c in self.chain.items()}
 
 
 def apply_icov(data, icov, cov_axis):
