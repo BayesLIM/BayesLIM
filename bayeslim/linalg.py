@@ -428,7 +428,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
             # Ninv is diagonal
             y = y * Ninv
 
-    x = y @ A
+    x = y @ A.conj()
 
     # get normalization matrix
     if norm == 'inv':
