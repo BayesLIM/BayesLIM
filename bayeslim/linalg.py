@@ -434,28 +434,28 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
     if norm == 'inv':
         # invert to get D
         if Ninv is None:
-            Dinv = A.T @ A
+            Dinv = A.T.conj() @ A
         else:
             if Ninv.ndim == 2:
                 # Ninv is matrix
-                Dinv = A.T @ Ninv @ A
+                Dinv = A.T.conj() @ Ninv @ A
             else:
                 # Ninv is diagonal
-                Dinv = (A.T * Ninv) @ A
+                Dinv = (A.T.conj() * Ninv) @ A
         D = torch.pinverse(Dinv, rcond=rcond)
         x = x @ D
 
     elif norm == 'diag':
         # just invert diagonal to get D
         if Ninv is None:
-            Dinv = (A**2).sum(dim=0)
+            Dinv = (torch.abs(A)**2).sum(dim=0)
         else:
             if Ninv.ndim == 2:
                 # Ninv is a matrix
-                Dinv = torch.diag(A.T @ Ninv @ A)
+                Dinv = torch.diag(A.T.conj() @ Ninv @ A)
             else:
                 # Ninv is diagonal
-                Dinv = (Ninv * A.T**2).T.sum(dim=0)
+                Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
         D = 1 / Dinv
         x = x * D
 
