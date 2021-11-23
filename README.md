@@ -27,11 +27,12 @@ pip install .
 # Dependencies
 
 ### Primary Dependencies 
-* pytorch
+* pytorch >= 1.7.0
 * numpy
 * scipy
 * astropy
 * h5py
+* sklearn
 
 ### Optional Dependencies
 * mpmath
