@@ -27,6 +27,7 @@ pip install .
 # Dependencies
 
 ### Primary Dependencies 
+
 * pytorch >= 1.7.0
 * numpy
 * scipy
@@ -35,6 +36,7 @@ pip install .
 * sklearn
 
 ### Optional Dependencies
+
 * mpmath
 * healpy
 * pyuvdata
