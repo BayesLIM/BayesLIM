@@ -52,9 +52,9 @@ class PixelBeam(utils.Module):
             response function R.
             By default, params should be a tensor of shape
             (Npol, Npol, Nmodel, Nfreqs, Npix), where Npix are the sky pixels
-            where the beam is defined. For sparser parameterizations,
-            one can replace Npix with Ncoeff where Ncoeff is mapped
-            to Npix via R(params), or feed a list of tensors (e.g. GaussResponse).
+            where the beam is defined. If params is complex, it should
+            have an additional dim of (..., 2) via utils.viewreal().
+            Furthermore, set its response function comp_params=True.
         freqs : tensor
             Observational frequency bins [Hz]
         ant2beam : dict
@@ -111,7 +111,7 @@ class PixelBeam(utils.Module):
         if response is None:
             # assumes Npix axis of params is healpix
             self.R = PixelResponse(freqs, 'healpix',
-                                   params.shape[-1])
+                                   nside=utils.healpy.npix2nside(params.shape[-1]))
         else:
             self.R = response(*response_args, **response_kwargs)
 
@@ -366,7 +366,7 @@ class PixelResponse(utils.PixInterp):
 
     .. code-block:: python
 
-        R = PixelResponse(freqs, pixtype, npix, **kwargs)
+        R = PixelResponse(freqs, pixtype, **kwargs)
         beam = R(params, zen, az, freqs)
 
     where zen, az are the zenith and azimuth angles [deg]
@@ -383,9 +383,9 @@ class PixelResponse(utils.PixInterp):
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
     """
-    def __init__(self, freqs, pixtype, npix, interp_mode='bilinear',
-                 theta=None, phi=None, freq_mode='channel',
-                 device=None, log=False, f0=None, Ndeg=None, poly_dtype=None,
+    def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
+                 Nnn=4, theta=None, phi=None, freq_mode='channel', nside=None,
+                 device=None, log=False, f0=None, Ndeg=None,
                  poly_kwargs={}, powerbeam=True):
         """
         Parameters
@@ -394,13 +394,17 @@ class PixelResponse(utils.PixInterp):
             frequency array of params [Hz]
         pixtype : str
             Pixelization type. options = ['healpix', 'other']
-        npix : int
-            Number of sky pixels in the beam
+        comp_params : bool, optional
+            If True, cast params to complex via utils.viewcomp
         interp_mode : str, optional
-            Spatial interpolation method. ['nearest', 'bilinear']
+            Spatial interpolation method. ['nearest']
+        Nnn : int, optional
+            Nearest neighbors for interpolation.
         theta, phi : array_like, optional
             Co-latitude and azimuth arrays [deg] of
             input params if pixtype is 'other'
+        nside : int, optional
+            nside of healpix map if pixtype is healpix
         freq_mode : str, optional
             Frequency parameterization model.
             channel - each freq channel is an independent parameter
@@ -414,23 +418,21 @@ class PixelResponse(utils.PixInterp):
             Fiducial frequency [Hz] for freq_mode = 'poly'
         Ndeg : int, optional
             Number of poly degrees for freq_mode = 'poly'
-        poly_dtype : torch dtype, optional
-            Cast poly A matrix to this dtype, freq_mode = 'poly'
         poly_kwargs : dict, optional
             Optional kwargs to pass to utils.gen_poly_A
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
         """
-        super().__init__(pixtype, npix, interp_mode=interp_mode,
+        super().__init__(pixtype, interp_mode=interp_mode, Nnn=Nnn, nside=nside,
                          device=device, theta=theta, phi=phi)
         self.powerbeam = powerbeam
         self.freqs = freqs
+        self.comp_params = comp_params
         self.device = device
         self.log = log
         self.freq_mode = freq_mode
         self.f0 = f0
         self.Ndeg = Ndeg
-        self.poly_dtype = poly_dtype
         self.freq_ax = 3
         self.poly_kwargs = poly_kwargs
         self.clear_beam()
@@ -438,7 +440,7 @@ class PixelResponse(utils.PixInterp):
         self._setup()
 
         # construct _args for str repr
-        self._args = dict(interp_mode=interp_mode, freq_mode=freq_mode)
+        self._args = dict(interp_mode=interp_mode, Nnn=Nnn, freq_mode=freq_mode)
 
     def _setup(self):
         if self.freq_mode == 'channel':
@@ -448,8 +450,9 @@ class PixelResponse(utils.PixInterp):
             if self.f0 is None:
                 self.f0 = self.freqs.mean()
             self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
+            poly_dtype = utils._cfloat() if self.comp_params else utils._float()
             self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device,
-                                      **self.poly_kwargs).to(self.poly_dtype)
+                                      **self.poly_kwargs).to(poly_dtype)
 
     def push(self, device):
         """push attrs to device"""
@@ -462,6 +465,10 @@ class PixelResponse(utils.PixInterp):
             self.A = self.A.to(device)
 
     def __call__(self, params, zen, az, *args):
+        # cast to complex if needed
+        if self.comp_params:
+            params = utils.viewcomp(params)
+
         # set beam cache if it doesn't exist
         if self.beam_cache is None:
             # pass to device
@@ -624,10 +631,11 @@ class YlmResponse(PixelResponse):
 
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
     """
-    def __init__(self, l, m, freqs, mode='interpolate', device=None,
-                 interp_mode='bilinear', theta=None, phi=None, npix=None,
+    def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
+                 mode='interpolate', device=None, interp_mode='nearest',
+                 Nnn=4, theta=None, phi=None, nside=None,
                  powerbeam=True, log=False, freq_mode='channel', f0=None,
-                 Ndeg=None, poly_dtype=None, poly_kwargs={},
+                 Ndeg=None, poly_kwargs={},
                  Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -640,19 +648,24 @@ class YlmResponse(PixelResponse):
             The l and m modes of params.
         freqs : tensor
             frequency array [Hz]
+        pixtype : str, optional
+            Beam pixelization type, ['healpix', 'other']
+        comp_params : bool, optional
+            Cast params to compelx if True.
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm for each zen, az call. Slow and not recommended.
             interpolate - interpolate existing beam onto zen, az. See warning
             in docstring above.
         interp_mode : str, optional
-            If mode is interpolate, this is the kind (see utils.PixelInterp)
+            If mode is interpolate, this is the kind (see utils.PixInterp)
+        Nnn : int, optional
+            Number of nearest neighbors in interpolation (see utils.PixInterp)
         theta, phi : array_like, optional
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
             calls. Only needed if mode is 'interpolate'
-        npix : int, optional
-            Number of pixels of output map. Currently only healpix supported.
-            If a partial healpix map is used, this is the full map size given nside.
+        nside : int, optional
+            nside of healpix map if pixtype is healpix
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
             beam is complex antenna farfield beam.
@@ -664,8 +677,6 @@ class YlmResponse(PixelResponse):
             fiducial frequency [Hz], for 'poly' freq_mode
         Ndeg : int, optional
             Number of poly terms, for 'poly' freq_mode
-        poly_dtype : torch dtype, optional
-            Cast poly A matrix to this dtype, freq_mode = 'poly'
         poly_kwargs : dict, optional
             Kwargs for generating poly modes, for 'poly' freq_mode
         Ylm_kwargs : dict, optional
@@ -677,10 +688,10 @@ class YlmResponse(PixelResponse):
         ang_cache : a cache for (zen, az) arrays [deg]
         """
         ## TODO: enable pix_type other than healpix
-        super(YlmResponse, self).__init__(freqs, 'healpix', npix,
-                                          interp_mode=interp_mode,
+        super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
+                                          interp_mode=interp_mode, Nnn=Nnn,
                                           freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
-                                          poly_dtype=poly_dtype, poly_kwargs=poly_kwargs,
+                                          comp_params=comp_params, poly_kwargs=poly_kwargs,
                                           theta=theta, phi=phi)
         self.l, self.m = l, m
         self.mult = torch.ones(len(m), dtype=utils._cfloat(), device=device)
@@ -697,7 +708,7 @@ class YlmResponse(PixelResponse):
         self.log = log
 
         # construct _args for str repr
-        self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
+        self._args = dict(mode=mode, interp_mode=interp_mode, Nnn=Nnn, freq_mode=freq_mode)
 
     def get_Ylm(self, zen, az):
         """
@@ -778,10 +789,6 @@ class YlmResponse(PixelResponse):
         if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
 
-        # detect if params needs to be casted into complex
-        if not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         if self.freq_mode == 'channel':
             p = params
         elif self.freq_mode == 'poly':
@@ -805,6 +812,10 @@ class YlmResponse(PixelResponse):
         return beam
 
     def __call__(self, params, zen, az, freqs):
+        # cast to complex if needed
+        if self.comp_params:
+            params = utils.viewcomp(params)
+
         # for generate mode, forward model the beam exactly at zen, az
         if self.mode == 'generate':
             beam = self.forward(params, zen, az, freqs)

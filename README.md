@@ -32,9 +32,9 @@ pip install .
 * scipy
 * astropy
 * h5py
-* sklearn
 
 ### Optional Dependencies
+* sklearn
 * mpmath
 * healpy
 * pyuvdata

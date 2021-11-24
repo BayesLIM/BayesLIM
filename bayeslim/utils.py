@@ -40,6 +40,14 @@ except ImportError:
     def nullcontext(enter_result=None):
         yield enter_result
 
+# try to import sklearn
+try:
+    from sklearn.neighbors import BallTree
+    import_sklearn = True
+except ImportError:
+    import_sklearn = False
+    warnings.warn("could not import sklearn")
+
 
 D2R = np.pi / 180
 viewreal = torch.view_as_real
@@ -1217,31 +1225,53 @@ class PixInterp:
     """
     Sky pixel spatial interpolation object
     """
-    def __init__(self, pixtype, npix, interp_mode='nearest',
-                 theta=None, phi=None, device=None):
+    def __init__(self, pixtype, nside=None, interp_mode='nearest',
+                 theta=None, phi=None, Nnn=4, device=None,
+                 leaf_size=40):
         """
+        Interpolation is a weighted average of nearest neighbors.
+        If pixtype is 'healpix', this is bilinear interpolation.
+        If pixtype is 'other' use BallTree for nearest neighbor
+        queries and use inverse distance as weighted mean.
+
         Parameters
         ----------
         pixtype : str
-            Pixelization type. options = ['healpix', 'rect']
-        npix : int
-            Number of sky pixels in the beam
+            Pixelization type. options are ['healpix', 'other']
+        nside : int, optional
+            nside of healpix map if pixtype == 'healpix'
         interp_mode : str, optional
-            Spatial interpolation method. ['nearest', 'bilinear']
+            Spatial interpolation method, one of ['nearest'].
+            Currently only a weighted sum of Nnn nearest
+            neighbors is supported.
+            interpolation on a rectangular grid.
         theta, phi : array_like
             Co-latitude and azimuth arrays [deg] of
             input params if pixtype is 'other'
+        Nnn : int, optional
+            Number of nearest neighbors to use
+            for interp_mode of 'nearest'.
+            Default is 4.
+            If pixtype is healpix, Nnn must be 4.
         device : str, optional
             Device to place object on
+        leaf_size : int, optional
+            leaf size for BallTree
         """
         assert pixtype in ['healpix', 'other']
         if pixtype == 'other':
             assert theta is not None
             assert phi is not None
+            assert import_sklearn
+            X = np.array([np.pi / 2 - theta * D2R, phi * D2R]).T
+            self.tree = BallTree(X, leaf_size=leaf_size, metric='haversine')
+        else:
+            self.tree = None
         self.pixtype = pixtype
-        self.npix = npix
+        self.nside = nside
         self.interp_cache = {}
         self.interp_mode = interp_mode
+        self.Nnn = Nnn
         self.theta, self.phi = theta, phi
         self.device = device
 
@@ -1251,18 +1281,17 @@ class PixInterp:
 
     def get_interp(self, zen, az):
         """
-        Get bilinear or nearest interpolation
+        Get interpolation metadata
 
         Parameters
         ----------
-        zen, az : zenith and azimuth angles [deg]
+        zen, az : zenith (co-lat) and azimuth angles [deg]
 
         Returns
         -------
         interp : tuple
-            4 (1) nearest neighbor (indices, weights)
-            for each entry in zen, az for bilinear (nearest)
-            mode
+            nearest neighbor (indices, weights)
+            for each entry in zen, az for interpolation
         """
         # get hash
         h = ang_hash(zen), ang_hash(az)
@@ -1272,27 +1301,23 @@ class PixInterp:
         else:
             # otherwise generate it
             if self.pixtype == 'healpix':
-                # get indices and weights for bilinear interpolation
-                nside = healpy.npix2nside(self.npix)
-                inds, wgts = healpy.get_interp_weights(nside,
+                # get indices and weights for healpix interpolation
+                assert self.Nnn == 4
+                inds, wgts = healpy.get_interp_weights(self.nside,
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
 
             elif self.pixtype == 'other':
-                raise NotImplementedError
-                # get 4 neighbors and their interpolation weights
+                # get nearest neighbors and their interpolation weights
                 zen, az = tensor2numpy(zen), tensor2numpy(az)
-                theta_inds = np.argsort(np.abs(self.theta[:, None] - zen), axis=0)[:2, :]
-                #dtheta = 
-                phi_inds = np.argmin(np.abs(self.phi[:, None] - az), axis=0)[:2, 0]
-                inds = np.concatenate([theta_inds, phi_inds], axis=1)
-                #theta_wgts = 
+                dist, inds = self.tree.query(np.array([(90 - zen) * D2R, az * D2R]).T,
+                                             k=self.Nnn, return_distance=True, sort_results=True)
+                dist, inds = dist.T, inds.T
+                # weight is inverse of distance from neighbor (not quite bilinear interp)
+                wgts = 1 / dist.clip(1e-10, np.inf)**2
 
-            # down select if using nearest interpolation
-            if self.interp_mode == 'nearest':
-                wgts = np.argmax(wgts, axis=0)
-                inds = np.array([inds[wi, i] for i, wi in enumerate(wgts)])
-                wgts = 1.0
+                # normalize weights
+                wgts /= wgts.sum(axis=0, keepdims=True)
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
@@ -1308,31 +1333,43 @@ class PixInterp:
         Parameters
         ----------
         m : array_like or tensor
-            healpix map to interpolate of shape (..., Npix) or
-            rect map to interpolate of shape (..., Ntheta, Nphi)
+            Map to interpolate. If Healpix map must be ring ordered.
         zen, az : array_like or tensor
             Zenith angle (co-latitude) and azimuth [deg]
             points at which to interpolate map
         """
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
-        #assert inds.shape[-1] == m.shape[-1], "mismatched Npix for map and inds"
+
         if self.interp_mode == 'nearest':
-            # use nearest neighbor
-            if self.pixtype == 'healpix':
-                return m[..., inds]
-            elif self.pixtype == 'rect':
-                return m[..., inds[0], inds[1]]
-        elif self.interp_mode == 'bilinear':
-            # select out 4-nearest neighbor indices for each zen, az
-            if self.pixtype == 'healpix':
-                nearest = m[..., inds.T]
-            else:
-                nearest = m[..., inds[0].T, inds[1].T]
+            # get nearest neighbors
+            nearest = m[..., inds.T]
+
             # multiply by weights and sum
-            return torch.sum(nearest * wgts.T, axis=-1)
+            out = torch.sum(nearest * wgts.T, axis=-1)
+
         else:
-            raise ValueError("didnt recognize interp_mode")
+            raise ValueError("didn't recognize interp_mode {}".format(self.interp_mode))
+
+        ## LEGACY
+#        if self.interp_mode == 'nearest':
+#            # use nearest neighbor
+#            if self.pixtype == 'healpix':
+#                return m[..., inds]
+#            elif self.pixtype == 'rect':
+#                return m[..., inds[0], inds[1]]
+#        elif self.interp_mode == 'bilinear':
+#            # select out nearest neighbor indices for each zen, az
+#            if self.pixtype == 'healpix':
+#                nearest = m[..., inds.T]
+#            else:
+#                nearest = m[..., inds[0].T, inds[1].T]
+#            # multiply by weights and sum
+#            return torch.sum(nearest * wgts.T, axis=-1)
+#        else:
+#            raise ValueError("didnt recognize interp_mode")
+        
+        return out
 
     def push(self, device):
         """

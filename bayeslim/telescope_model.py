@@ -137,8 +137,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
         This interpolates an existing fringe
     """
     def __init__(self, antpos, freqs, parameter=False, device=None,
-                 cache_s=True, cache_f=False, cache_f_angs=None, interp_mode='nearest',
-                 redtol=0.1, name=None, red_kwargs={}):
+                 cache_s=True, cache_f=False, cache_f_angs=None,
+                 redtol=0.1, name=None, red_kwargs={}, pix_kwargs={}):
         """
         A model of an interferometric array
 
@@ -171,8 +171,6 @@ class ArrayModel(utils.PixInterp, utils.Module):
         cache_f_angs : tensor, optional
             If cache_f, these are the sky angles (zen, az, [deg]) to
             evaluate the fringe at and then cache.
-        interp_mode : str, optional
-            If cache_f, this is the interpolation mode ['nearest', 'bilinear']
         redtol : float, optional
             If parameter is False, then redundant baseline groups
             are built. This is the bl vector redundancy tolerance [m]
@@ -180,13 +178,14 @@ class ArrayModel(utils.PixInterp, utils.Module):
             Name for this object, stored as self.name
         red_kwargs : dict, optional
             Keyword arguments to pass to build_reds()
+        pix_kwargs : dict, optional
+            Keyword arguments to pass to PixInterp
         """
         # init Module
         super(utils.PixInterp, self).__init__(name=name)
         # init PixInterp
         npix = cache_f_angs.shape[-1] if cache_f else None
-        super().__init__('healpix', npix, interp_mode=interp_mode,
-                         device=device)
+        super().__init__(pixtype, device=device, **pix_kwargs)
         # set location metadata
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device=device)
