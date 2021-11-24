@@ -694,7 +694,8 @@ class YlmResponse(PixelResponse):
                                           comp_params=comp_params, poly_kwargs=poly_kwargs,
                                           theta=theta, phi=phi)
         self.l, self.m = l, m
-        self.mult = torch.ones(len(m), dtype=utils._cfloat(), device=device)
+        dtype = utils._cfloat() if comp_params else utils._float()
+        self.mult = torch.ones(len(m), dtype=dtype, device=device)
         if np.all(m >= 0):
             self.mult[m > 0] = 2.0
         self.powerbeam = powerbeam
