@@ -623,7 +623,7 @@ class PixelSkyResponse:
         if torch.is_complex(params):
             params = params.real
 
-        if self.log:
+        if hasattr(self, 'log') and self.log:
             params = torch.exp(params)
 
         return params
