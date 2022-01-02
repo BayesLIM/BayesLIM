@@ -526,11 +526,14 @@ class PixelSkyResponse:
                 self.kbins = kbins
 
         # spatial setup
-        self.Ylm = None
         if self.spatial_mode == 'alm':
             if 'Ylm' in self.spatial_kwargs:
+                # assign Ylm to self if present, then del from dict for memory footprint
                 self.Ylm = self.spatial_kwargs['Ylm']
-            else:
+                del self.spatial_kwargs['Ylm']
+            elif not hasattr(self, 'Ylm'):
+                # if Ylm is not already defined and not in dict, create it
+                # warning: this can be *VERY* slow for large ang_pix and l,m arrays
                 self.Ylm = utils.gen_sph2pix(self.spatial_kwargs['theta'] * D2R,
                                              self.spatial_kwargs['phi'] * D2R,
                                              self.spatial_kwargs['l'],
@@ -538,6 +541,8 @@ class PixelSkyResponse:
                                              device=self.device, real_field=True)
             self.alm_mult = torch.ones(len(self.spatial_kwargs['m']), dtype=utils._cfloat(), device=self.device)
             if np.all(self.spatial_kwargs['m'] >= 0):
+                # this accounts for double counting when using only positive m modes
+                # i.e. when projecting to a real-valued field
                 self.alm_mult[self.spatial_kwargs['m'] > 0] = 2.0
 
     def spatial_transform(self, params):
