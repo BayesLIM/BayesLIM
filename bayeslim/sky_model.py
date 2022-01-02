@@ -238,7 +238,8 @@ class PointSky(SkyBase):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         # pass through response
-        return dict(kind=self.kind, sky=sky, angs=self.angs, name=self.name)
+        name = getattr(self, 'name', None)
+        return dict(kind=self.kind, sky=sky, angs=self.angs, name=name)
 
 
 class PointSkyResponse:
@@ -410,7 +411,8 @@ class PixelSky(SkyBase):
         # evaluate prior
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
-        return dict(kind=self.kind, sky=sky, angs=self.angs, name=self.name)
+        name = getattr(self, 'name', None)
+        return dict(kind=self.kind, sky=sky, angs=self.angs, name=name)
 
 
 class PixelSkyResponse:
