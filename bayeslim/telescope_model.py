@@ -136,8 +136,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
     2. caching the fringe on the sky
         This interpolates an existing fringe
     """
-    def __init__(self, antpos, freqs, parameter=False, device=None,
-                 cache_s=True, cache_f=False, cache_f_angs=None,
+    def __init__(self, antpos, freqs, pixtype='other', parameter=False,
+                 device=None, cache_s=True, cache_f=False, cache_f_angs=None,
                  redtol=0.1, name=None, red_kwargs={}, pix_kwargs={}):
         """
         A model of an interferometric array
@@ -152,6 +152,10 @@ class ArrayModel(utils.PixInterp, utils.Module):
             centered at telescope location.
         freqs : tensor
             Frequencies to evaluate fringe [Hz]
+        pixtype : str, optional
+            If using the interpolation functionality of PixInterp
+            parent class, this is the pixelization scheme.
+            Only used if cache_f is True
         parameter : bool, optional
             If True, antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
