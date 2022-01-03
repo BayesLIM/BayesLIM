@@ -136,7 +136,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
     2. caching the fringe on the sky
         This interpolates an existing fringe
     """
-    def __init__(self, antpos, freqs, pixtype='other', parameter=False,
+    def __init__(self, antpos, freqs, pixtype='healpix', parameter=False,
                  device=None, cache_s=True, cache_f=False, cache_f_angs=None,
                  redtol=0.1, name=None, red_kwargs={}, pix_kwargs={}):
         """
