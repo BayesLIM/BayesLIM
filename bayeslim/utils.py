@@ -202,7 +202,6 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     m = np.arange(mmin, mmax + 1.1, spacing)
 
     # solve for l modes
-    assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
     ls = {}
     x_min, x_max = np.cos(theta_min), np.cos(theta_max)
     m = np.atleast_1d(m)
