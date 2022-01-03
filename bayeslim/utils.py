@@ -218,7 +218,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
             # spherical cap
             y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
 
-        elif np.isclose(theta_max, 0):
+        elif np.isclose(theta_max, np.pi):
             # inverted spherical ap
             y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
 
