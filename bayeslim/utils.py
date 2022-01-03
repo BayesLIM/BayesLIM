@@ -148,19 +148,17 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     the spherical stripe or cap given boundary conditions.
 
     theta boundary conditions:
-        theta_min == 0 and theta_max < pi or
-        theta_max == 0 and theta_min > 0:
+        theta_min == 0 and theta_max < pi:
             This is a spherical cap, with boundary conditions
                 P_lm(theta_max) = 0 and
-                m == 0: d P_lm(theta_min) / d theta = 0
+                m == 0: dP_lm(theta_min) / dtheta = 0
                 m  > 0: P_lm(theta_min) = 0
         theta_min > 0 and theta_max < pi:
             This is a spherical stripe with BC
                 P_lm(theta_min) = 0 and
                 P_lm(theta_max) = 0
-                for m > 0, and replace
-                P_lm with d P_lm / d theta
-                for m == 0.
+                for m > 0, and for m == 0
+                replace P_lm with dP_lm / dtheta
 
     phi boundary conditions:
         Phi(0) = Phi(phi_max), assuming
@@ -202,6 +200,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     m = np.arange(mmin, mmax + 1.1, spacing)
 
     # solve for l modes
+    assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
     ls = {}
     x_min, x_max = np.cos(theta_min), np.cos(theta_max)
     m = np.atleast_1d(m)
@@ -216,10 +215,6 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         if np.isclose(theta_min, 0):
             # spherical cap
             y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
-
-        elif np.isclose(theta_max, np.pi):
-            # inverted spherical ap
-            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         else:
             # spherical stripe
@@ -256,7 +251,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     """
     Generate spherical harmonic forward model matrix.
 
-    Note, this can take a *long* time: dozens of minutes for a few hundred
+    Note, this can take a _long_ time: dozens of minutes for a few hundred
     lm at tens of thousands of theta, phi points even with Nproc of 20.
     The code is limited by the internal high precision computation of the
     Legendre functions via mpmath, which enables stable evaluation of
@@ -284,8 +279,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         For 'sphere', l modes are integer
         For 'stripe' or 'cap', l modes are float
     theta_max : float, optional
-        For method == 'stripe', this is the maximum theta
-        boundary [radians] of the mask, used for boundary conditions.
+        For method == 'stripe' or 'cap', this is the maximum theta
+        boundary [radians] of the mask.
     l : array_like, optional
         Integer or float array of spherical harmonic l modes
     m : array_like, optional
@@ -525,7 +520,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True):
     method : str, ['stripe', 'sphere', 'cap']
         boundary condition method
     x_max : float, optional
-        If method is stripe, this the max x value
+        If method is stripe, this the x value for theta_max
     high_prec : bool, optional
         If True, use arbitrary precision for Plm and Qlm
         otherwise use standard (faster) scipy method
