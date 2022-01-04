@@ -431,14 +431,17 @@ class PixelSkyResponse:
             For this mode, the all elements in params must be
             from a single l mode
     """
-    def __init__(self, freqs, spatial_mode='pixel', freq_mode='channel',
-                 device=None, transform_order=0, cosmo=None,
-                 spatial_kwargs={}, freq_kwargs={}, log=False):
+    def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
+                 freq_mode='channel', device=None, transform_order=0,
+                 cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False):
         """
         Parameters
         ----------
         freqs : tensor
             Frequency bins [Hz]
+        comp_params : bool, optional
+            If True, params should be transformed to complex
+            before passing through self
         spatial_mode : str, optional
             Choose the spatial parameterization (default is pixel)
             options = ['pixel', 'alm']
@@ -500,10 +503,11 @@ class PixelSkyResponse:
         if self.freq_mode == 'poly':
             f0 = getattr(self.freq_kwargs, 'f0', self.freqs.mean())
             self.dfreqs = (self.freqs - f0) / 1e6  # MHz
+            poly_dtype = utils._cfloat() if self.comp_params else utils._float()
             self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
                                       basis=getattr(self.freq_kwargs, 'basis', 'direct'),
                                       whiten=getattr(self.freq_kwargs, 'whiten', None),
-                                      device=self.device)
+                                      device=self.device).to(poly_dtype)
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
             # compute comoving line of sight distances
@@ -565,7 +569,7 @@ class PixelSkyResponse:
             Sky model of shape (Npol, Npol, Ndeg, Npix)
         """
         # detect if params needs to be casted into complex
-        if self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+        if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
             if not torch.is_complex(params):
                 params = utils.viewcomp(params)
 
@@ -592,7 +596,7 @@ class PixelSkyResponse:
             Sky model of shape (Npol, Npol, Nfreqs, Ncoeff)
         """
         # detect if params needs to be casted into complex
-        if self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+        if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
             if not torch.is_complex(params):
                 params = utils.viewcomp(params)
 
