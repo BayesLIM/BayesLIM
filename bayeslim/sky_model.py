@@ -476,6 +476,7 @@ class PixelSkyResponse:
             exp of params before return
         """
         self.freqs = freqs
+        self.comp_params = comp_params
         self.Nfreqs = len(freqs)
         self.spatial_mode = spatial_mode
         self.freq_mode = freq_mode
