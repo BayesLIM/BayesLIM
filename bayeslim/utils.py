@@ -200,7 +200,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     m = np.arange(mmin, mmax + 1.1, spacing)
 
     # solve for l modes
-    assert theta_max < np.pi, "if theta_max must be < pi for spherical cap or stripe"
+    assert theta_max < np.pi, "theta_max must be < pi for spherical cap or stripe"
     ls = {}
     x_min, x_max = np.cos(theta_min), np.cos(theta_max)
     m = np.atleast_1d(m)
@@ -388,7 +388,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     return Y
 
 
-def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
+def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
+              phi_max=None, history=None, overwrite=False):
     """
     Write a Ylm basis to HDF5 file
 
@@ -399,12 +400,21 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
     Ylm : array
         Ylm matrix of shape (Ncoeff, Npix)
     angs : array
-        theta, phi sky positions of Ylm in degrees
-        of shape (2, Npix). This is either
-        co-lat and azimuth or Dec, RA depending on
-        whether this is used for beam or sky
+        theta, phi sky positions of Ylm
+        of shape (2, Npix), where theta is co-latitude
+        and phi and azimuth [deg].
     l, m : array
         Ylm degree l and order m of len Ncoeff
+    theta_min : float, optional
+        Minimum colatitude angle of Ylms [deg]
+    theta_max : float, optional
+        Maximum colatitude angle of Ylms [deg]
+    phi_max : float, optional
+        Maximum azimuthal angle of Ylms [deg]
+    history : str, optional
+        Notes about the Ylm modes
+    overwrite : bool, optional
+        Overwrite if file exists
     """
     if not os.path.exists(fname) or overwrite:
         with h5py.File(fname, 'w') as f:
@@ -412,6 +422,10 @@ def write_Ylm(fname, Ylm, angs, l, m, overwrite=False):
             f.create_dataset('angs', data=np.array(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
+            f.attrs['theta_min'] = theta_min
+            f.attrs['theta_max'] = theta_max
+            f.attrs['phi_max'] = phi_max
+            f.attrs['history'] = history
 
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
@@ -434,10 +448,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     cast : torch.dtype
         Data type to cast Ylm into
     colat_min : float, optional
-        truncate Ylm response for colat < colat_min [deg]
+        truncate Ylm response for colat <= colat_min [deg]
         assuming angs[0] is colatitude (zenith)
     colat_max : float, optional
-        truncate Ylm response for colat > colat_max [deg]
+        truncate Ylm response for colat >= colat_max [deg]
         assuming angs[0] is colatitude (zenith)
     device : str, optional
         Device to place Ylm
@@ -447,13 +461,16 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
 
     Returns
     -------
-    Ylm, angs, l, m
+    Ylm, angs, l, m, info
     """
     import h5py
     with h5py.File(fname, 'r') as f:
         # load angles and all modes
         angs = f['angs'][:]
         l, m = f['l'][:], f['m'][:]
+        info = {}
+        for p in ['history', 'theta_max', 'theta_min', 'phi_max']:
+            info[p] = f.attrs[p] if p in f.attrs else None
 
         # truncate modes
         keep = np.ones_like(l, dtype=bool)
@@ -482,7 +499,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     # truncate sky
     if colat_min is not None:
         colat, az = angs
-        keep = colat >= colat_min
+        keep = colat > colat_min
         colat = colat[keep]
         az = az[keep]
         angs = colat, az
@@ -490,7 +507,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             Ylm = Ylm[:, keep]
     if colat_max is not None:
         colat, az = angs
-        keep = colat <= colat_max
+        keep = colat < colat_max
         colat = colat[keep]
         az = az[keep]
         angs = colat, az
@@ -502,7 +519,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if cast is not None:
             Ylm = Ylm.to(cast)
 
-    return Ylm, angs, l, m
+    return Ylm, angs, l, m, info
 
 
 def legendre_func(x, l, m, method, x_max=None, high_prec=True):
