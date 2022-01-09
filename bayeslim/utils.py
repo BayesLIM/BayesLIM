@@ -142,27 +142,31 @@ def gen_lm(lmax, real_field=True):
 
 
 def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
-                  mmin=0, high_prec=True, add_sectoral=True):
+                  mmin=0, high_prec=True, add_mono=True,
+                  add_sectoral=True, bc_type=2):
     """
     Compute associated Legendre function degrees l on
     the spherical stripe or cap given boundary conditions.
 
-    theta boundary conditions:
-        theta_min == 0 and theta_max < pi:
-            This is a spherical cap, with boundary conditions
-                P_lm(theta_max) = 0 and
-                m == 0: dP_lm(theta_min) / dtheta = 0
-                m  > 0: P_lm(theta_min) = 0
-        theta_min > 0 and theta_max < pi:
-            This is a spherical stripe with BC
-                P_lm(theta_min) = 0 and
-                P_lm(theta_max) = 0
-                for m > 0, and for m == 0
-                replace P_lm with dP_lm / dtheta
+    For theta_min == 0 and theta_max < pi, we assume
+    a spherical cap mask. For theta_min > 0 and
+    theta_max < pi, we assume a spherical stripe mask.
 
-    phi boundary conditions:
-        Phi(0) = Phi(phi_max), assuming
-        mask extends from phi = 0 to phi = phi_max
+    Boundary conditions on the polar axis (i.e. theta)
+    are set by bc_type, setting the function (1)
+    or its derivative (2) to zero as the polar boundary.
+    The azimuthal boundary 
+
+    bc_type == 1:
+        dP_lm/dtheta(theta) = 0 when m == 0
+        P_lm(theta) = 0 when m > 0
+    bc_type == 2:
+        dP_lm/dtheta(theta) = 0 for all m
+    where theta is theta_max for cap, and is theta_min
+    and theta_max for stripe.
+
+    Azimuthal boundary condition is simply continuity,
+    Phi(0) = Phi(phi_max).
 
     Parameters
     ----------
@@ -184,9 +188,17 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
+    add_mono : bool, optional
+        If True, include monopole mode (l = m = 0)
+        if mmin = 0 even if it doesn't satisfy BCs.
     add_sectoral : bool, optional
-        If True, include sectoral modes (l == m)
-        regardless of whether they satisfy BC
+        If True, include sectoral modes (l = m for l > 0)
+        regardless of whether they satisfy BCs.
+    bc_type : int, optional
+        Boundary condition type on the polar axis (theta)
+        for m > 0, either 1 or 2. 1 (Dirichlet) sets
+        func. to zero at boundary and 2 (Neumann) sets
+        its derivative to zero. Default = 2.
 
     Returns
     -------
@@ -194,6 +206,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         Array of l and m values
     """
     # solve for m modes
+    assert bc_type in [1, 2]
     spacing = 2 * np.pi / phi_max
     assert np.isclose(spacing % 1, 0), "phi_max must evenly divide into 2pi"
     mmin = max([0, mmin])
@@ -210,8 +223,8 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         marr = np.ones_like(larr) * _m
         if len(larr) < 1:
             continue
-        # boundary condition is derivative is zero for m == 0
-        deriv = _m == 0
+        # boundary condition
+        deriv = True if bc_type == 2 or _m == 0 else False
         if np.isclose(theta_min, 0):
             # spherical cap
             y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
@@ -226,7 +239,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         y = y.ravel()
         zeros = get_zeros(larr, y)
         # add sectoral
-        if add_sectoral:
+        if (_m == 0 and add_mono) or (_m > 0 and add_sectoral):
             zeros = [_m] + zeros
         ls[_m] = np.asarray(zeros)
 
@@ -389,7 +402,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
 
 
 def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
-              phi_max=None, history=None, overwrite=False):
+              phi_max=None, history='', overwrite=False):
     """
     Write a Ylm basis to HDF5 file
 
@@ -422,9 +435,12 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
             f.create_dataset('angs', data=np.array(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
-            f.attrs['theta_min'] = theta_min
-            f.attrs['theta_max'] = theta_max
-            f.attrs['phi_max'] = phi_max
+            if theta_min is not None:
+                f.attrs['theta_min'] = theta_min
+            if theta_max is not None:
+                f.attrs['theta_max'] = theta_max
+            if phi_max is not None:
+                f.attrs['phi_max'] = phi_max
             f.attrs['history'] = history
 
 
