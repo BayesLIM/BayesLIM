@@ -628,9 +628,8 @@ def _gen_bessel2freq_multiproc(job):
     return gen_bessel2freq(*args, **kwargs)
 
 
-def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
-                    dk_factor=1e-1, decimate=False, device=None,
-                    Nproc=None, Ntask=10, renorm=False):
+def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
+                    device=None, method='shell', renorm=True, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -649,33 +648,31 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
     l : array_like
         Spherical harmonic l modes for g_l(kr) terms
     freqs : array_like
-        Frequency array [Hz]
+        Frequency array [Hz]. If not passing kbins, assume
+        first and last channel in freqs define radial mask.
     cosmo : Cosmology object
         For freq -> r [comoving Mpc] conversion
-    kmax : float
-        Maximum k-mode to compute [Mpc^-1]
-    method : str, optional
-        Method for constraining radial basis functions.
-        options=['default', 'samushia', 'gebhardt']
-        See sph_bessel_kln for details.
-    dk_factor : float, optional
-        The delta-k spacing in the k_array used for sampling
-        for the roots of the boundary condition is given as
-        dk = k_min * dk_factor where k_min = 2pi / (rmax-rmin)
-        A smaller dk_factor leads to higher resolution in k
-        when solving for roots, but is slower to compute.
-    decimate : bool, optional
-        Use every other g_l(x) zero as k bins (i.e. DFT convention)
-    device : str, optional
-        Device to push g_l(kr) to.
+    kbins : dict, optional
+        Use pre-computed k_ln bins. Keys are
+        l modes, values are arrays of k_ln modes in cMpc^-1.
+        No multiproc needed if passing kbins
     Nproc : int, optional
-        If not None, enable multiprocessing mode with Nproc processes
+        If not None, enable multiprocessing with Nproc processes
+        when solving for k_ln and g_l(kr)
     Ntask : int, optional
         Number of modes to compute per process
+    device : str, optional
+        Device to push g_l(kr) to.
+    method : str, optional
+        Radial mask method, ['ball', 'shell' (default)]
     renorm : bool, optional
-        If True, renormalize the g_l modes
+        If True (default), renormalize the g_l modes
         such that inner product of r^1 g_l(k_n r) with
         itself equals pi/2 k^-2
+    kln_kwargs : dict
+        kwargs to pass to sph_bessel_kln().
+        Note that r_min and r_max are inferred
+        from freqs if not passing kbins.
 
     Returns
     -------
@@ -683,7 +680,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         A dictionary holding a series of Nk x Nfreqs
         spherical Fourier Bessel transform matrices,
         one for each unique l mode.
-        Keys are l mode integers, values are matrices.
+        Keys are l mode floats, values are matrices.
     kln : dict
         A dictionary holding a series of k modes [Mpc^-1]
         for each l mode. same keys as gln
@@ -695,7 +692,7 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
 
     # multiproc mode
     if Nproc is not None:
-        assert kbin_file is None, "no multiproc necessary if passing kbin_file"
+        assert kbins is None, "no multiproc necessary if passing kbins"
         import multiprocessing
         Njobs = len(ul) / Ntask
         if Njobs % 1 > 0:
@@ -704,9 +701,10 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, freqs, cosmo, kmax), dict(method=method, dk_factor=dk_factor,
-                                                        decimate=decimate,
-                                                        device=device, renorm=renorm)])
+            args = (_l, freqs, cosmo)
+            kwargs = dict(device=device, method=method, renorm=renorm)
+            kwargs.update(kln_kwargs)
+            jobs.append([args, kwargs])
 
         # run jobs
         try:
@@ -717,61 +715,53 @@ def gen_bessel2freq(l, freqs, cosmo, kmax, method='default', kbin_file=None,
             pool.join()
 
         # collect output
-        jl, kbins = {}, {}
+        gln, kln = {}, {}
         for out in output:
-            jl.update(out[0])
-            kbins.update(out[1])
+            gln.update(out[0])
+            kln.update(out[1])
 
-        return jl, kbins
+        return gln, kln
 
     # run single proc mode
-    jl = {}
-    kbins = {}
+    gln = {}
+    kln = {}
     for _l in ul:
         # get k bins for this l mode
-        k = sph_bessel_kln(_l, r_min, r_max, kmax, dk_factor=dk_factor, decimate=decimate,
-                           method=method, filepath=kbin_file)
+        if kbins is None:
+            k = sph_bessel_kln(_l, r_min, r_max, **kln_kwargs)
+        else:
+            k = kbins[_l]
         # add monopole term if l = 0
         if _l == 0:
-            k = np.concatenate([[0], k[:-1]])
+            k = np.concatenate([[0], k])
         # get basis function g_l
-        j = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
+        gl = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
-        jl[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-3) * j
-        kbins[_l] = k
+        gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-3) * gl
+        kln[_l] = k
 
-    return jl, kbins
+    return gln, kln
 
 
-def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
-                    renorm=False, device=None):
+def sph_bessel_func(l, k, r, method='shell', r_star=None, renorm=False, device=None):
     """
     Generate a spherical bessel radial basis function, g_l(k_n r)
 
     Parameters
     ----------
-    l : int or float
-        Integer angular l mode
+    l : float
+        angular l mode
     k : array_like
-        k modes [cMpc^-1]
+        k modes to evaluate [cMpc^-1]
     r : array_like
         radial points to sample [cMpc]
     method : str, optional
-        Method for basis functions.
-        default : interval is 0 -> r_max, basis is
-            j_l(kr), BC is j_l(k_ln r_max) = 0
-        samushia : interval is r_min -> r_max, basis is
-            g_ln = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
-            is g_ln(k r) = 0 for r_min and r_max (Samushia2019)
-        gebhardt : interval is r_min -> r_max, basis is
-            g_ln = j_l(k_ln r) + A_ln y_l(k_ln r)
-            BC is potential field continuity (Gebhardt+2021)
-            Not yet implemented.
-    r_min, r_max : float, optional
-        r_min and r_max of LIM survey. If None, will use
-        min and max of r.
+        Radial mask method, ['ball', 'shell' (default)]
+    r_star : float, optional
+        One of the radial edges [cMpc] if method is shell
+        (aka rmin or rmax).
     renorm : bool, optional
         If True, renormalize amplitude of basis function
         such that inner product of r^1 g_l(k_n r) with
@@ -786,28 +776,23 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     """
     # configure 
     Nk = len(k)
-    if r_min is None:
-        r_min = r.min()
-    if r_max is None:
-        r_max = r.max()
+    if method == 'shell':
+        assert r_star is not None
 
     j = torch.zeros(Nk, len(r), dtype=_float(), device=device)
     # loop over kbins and fill j matrix
     for i, _k in enumerate(k):
-        if method == 'default':
+        if method == 'ball':
             # just j_l(kr)
             j_i = special.jl(l, _k * r)
 
-        elif method == 'samushia':
+        elif method == 'shell':
             # j_l(kr) + A y_l(kr)
             j_i = special.jl(l, _k * r)
             if _k > 0:
-                A = -special.jl(l, _k * r_min) / special.yl(l, _k * r_min).clip(-1e50, np.inf)
+                A = -special.jl(l, _k * r_star) / special.yl(l, _k * r_star).clip(-1e50, np.inf)
                 y_i = special.yl(l, _k * r).clip(-1e50, np.inf)
                 j_i += A * y_i
-
-        elif method == 'gebhardt':
-            raise NotImplementedError
 
         j[i] = torch.as_tensor(j_i, dtype=_float(), device=device)
 
@@ -819,8 +804,8 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
     return j
 
 
-def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
-                   bc_type=2, filepath=None):
+def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
+                   bc_type=2):
     """
     Get spherical bessel Fourier bins given r_min, r_max and
     boundary conditions. If r_min == 0, this is a ball.
@@ -850,38 +835,30 @@ def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
         Type of boundary condition, 1 (Dirichlet) sets
         function to zero at edges, 2 (Neumann, default) sets
         its derivative to zero at edges.
-    filepath : str, optional
-        filepath to csv of kbins [cMpc^-1] in form of
-        l, 1st zero, 2nd zero, 3rd zero, ...
-        This supercedes method if passed.
 
     Returns
     -------
     array
         Fourier modes k_n = [2pi / r_n]
     """
-    # get pre-computed k bins
-    if filepath is not None:
-        k = np.loadtxt(filepath, delimiter=',')[l, 1:]
-    else:
-        # setup k_array of k samples to find roots
-        kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
-        dk = kmin * dk_factor
-        k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
+    # setup k_array of k samples to find roots
+    kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
+    dk = kmin * dk_factor
+    k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
 
-        method = 'ball' if np.isclose(r_min, 0) else 'shell'
-        deriv = bc_type == 2
-        if method == 'ball':
-            y = special.jl(l, k_arr * r_max, deriv=deriv)
+    method = 'ball' if np.isclose(r_min, 0) else 'shell'
+    deriv = bc_type == 2
+    if method == 'ball':
+        y = special.jl(l, k_arr * r_max, deriv=deriv)
 
-        elif method == 'shell':
-            y = (special.jl(l, k_arr * r_min, deriv=deriv) * \
-                 special.yl(l, k_arr * r_max, deriv=deriv).clip(-1e50, np.inf) - \
-                 special.jl(l, k_arr * r_max, deriv=deriv) * \
-                 special.yl(l, k_arr * r_min, deriv=deriv).clip(-1e50, np.inf))
+    elif method == 'shell':
+        y = (special.jl(l, k_arr * r_min, deriv=deriv) * \
+             special.yl(l, k_arr * r_max, deriv=deriv).clip(-1e50, np.inf) - \
+             special.jl(l, k_arr * r_max, deriv=deriv) * \
+             special.yl(l, k_arr * r_min, deriv=deriv).clip(-1e50, np.inf))
 
-        # get roots
-        k = get_zeros(k_arr, y)
+    # get roots
+    k = get_zeros(k_arr, y)
 
     # decimate if desired
     if decimate:
