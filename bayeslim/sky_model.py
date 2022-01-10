@@ -427,9 +427,7 @@ class PixelSkyResponse:
         - 'channel' : frequency channels
         - 'poly' : low-order polynomials
         - 'powerlaw' : power law model
-        - 'bessel' : spherical bessel j_l (for spatial mode 'alm')
-            For this mode, the all elements in params must be
-            from a single l mode
+        - 'bessel' : spherical bessel g_l (for spatial mode 'alm')
     """
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
@@ -470,7 +468,6 @@ class PixelSkyResponse:
             radial_method : str, radial convention, used for bessel
             kmax : float, maximum k to compute
             decimate : bool, if True, decimate every other kbin
-            kbin_file : str, filepath to csv of k-bins, used for bessel
         log : bool, optional
             If True, assumed params is log sky and take
             exp of params before return
@@ -488,10 +485,6 @@ class PixelSkyResponse:
             cosmo = cosmology.Cosmology()
         self.cosmo = cosmo
         self.log = log
-
-        # assertions
-        if self.freq_mode == 'bessel':
-            assert self.spatial_mode == 'alm'
 
         self._setup()
 
@@ -525,7 +518,7 @@ class PixelSkyResponse:
                                                   decimate=getattr(self.freq_kwargs, 'decimate', True),
                                                   dk_factor=getattr(self.freq_kwargs, 'dk_factor', 1e-1),
                                                   device=self.device,
-                                                  method=getattr(self.freq_kwargs, 'radial_method', 'default'),
+                                                  method=getattr(self.freq_kwargs, 'radial_method', 'shell'),
                                                   Nproc=getattr(self.freq_kwargs, 'Nproc', None),
                                                   Ntask=getattr(self.freq_kwargs, 'Ntask', 10),
                                                   renorm=getattr(self.freq_kwargs, 'renorm', False))
@@ -608,11 +601,12 @@ class PixelSkyResponse:
         elif self.freq_mode == 'powerlaw':
             return params[..., 0:1, :] * (self.freqs[:, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
         elif self.freq_mode == 'bessel':
+            assert self.transform_order == 1, "only support freq-spatial transform order for bessel mode"
             out = torch.zeros(params.shape[:-2] + (self.Nfreqs,) + params.shape[-1:],
                               device=params.device, dtype=params.dtype)
             for l in np.unique(self.freq_kwargs['l']):
                 inds = self.freq_kwargs['l'] == l
-            out += (params[:, :, inds].transpose(-1, -2) @ self.jl[l]).transpose(-1, -2)
+                out[..., inds] += (params[:, :, inds].transpose(-1, -2) @ self.jl[l]).transpose(-1, -2)
             return out
 
     def __call__(self, params):

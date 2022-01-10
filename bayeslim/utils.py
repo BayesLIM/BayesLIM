@@ -742,7 +742,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
             k = np.concatenate([[0], k])
         # get basis function g_l
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
-                             renorm=renorm, device=device)
+                             renorm=renorm, device=device, r_star=r_max)
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
