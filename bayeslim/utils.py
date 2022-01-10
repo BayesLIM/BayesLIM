@@ -629,7 +629,8 @@ def _gen_bessel2freq_multiproc(job):
 
 
 def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
-                    device=None, method='shell', renorm=True, **kln_kwargs):
+                    device=None, method='shell', bc_type=2,
+                    renorm=True, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -665,6 +666,10 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         Device to push g_l(kr) to.
     method : str, optional
         Radial mask method, ['ball', 'shell' (default)]
+    bc_type : int, optional
+        Type of boundary condition, 1 (Dirichlet) sets
+        function to zero at edges, 2 (Neumann, default) sets
+        its derivative to zero at edges.
     renorm : bool, optional
         If True (default), renormalize the g_l modes
         such that inner product of r^1 g_l(k_n r) with
@@ -702,7 +707,8 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
             args = (_l, freqs, cosmo)
-            kwargs = dict(device=device, method=method, renorm=renorm)
+            kwargs = dict(device=device, method=method,
+                          renorm=renorm, bc_type=bc_type)
             kwargs.update(kln_kwargs)
             jobs.append([args, kwargs])
 
@@ -728,14 +734,15 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     for _l in ul:
         # get k bins for this l mode
         if kbins is None:
-            k = sph_bessel_kln(_l, r_min, r_max, **kln_kwargs)
+            k = sph_bessel_kln(_l, r_min, r_max, bc_type=bc_type, **kln_kwargs)
         else:
             k = kbins[_l]
         # add monopole term if l = 0
         if _l == 0:
             k = np.concatenate([[0], k])
         # get basis function g_l
-        gl = sph_bessel_func(_l, k, r, method=method, renorm=renorm, device=device)
+        gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
+                             renorm=renorm, device=device)
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
@@ -745,7 +752,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     return gln, kln
 
 
-def sph_bessel_func(l, k, r, method='shell', r_star=None, renorm=False, device=None):
+def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=False, device=None):
     """
     Generate a spherical bessel radial basis function, g_l(k_n r)
 
@@ -759,6 +766,13 @@ def sph_bessel_func(l, k, r, method='shell', r_star=None, renorm=False, device=N
         radial points to sample [cMpc]
     method : str, optional
         Radial mask method, ['ball', 'shell' (default)]
+    bc_type : int, optional
+        Only needed for method = shell.
+        Type of boundary condition, 1 (Dirichlet) sets
+        function to zero at edges, 2 (Neumann, default) sets
+        its derivative to zero at edges. Only used to 
+        solve for the proportionality constant between
+        j_l and y_l if method is shell.
     r_star : float, optional
         One of the radial edges [cMpc] if method is shell
         (aka rmin or rmax).
@@ -789,10 +803,15 @@ def sph_bessel_func(l, k, r, method='shell', r_star=None, renorm=False, device=N
         elif method == 'shell':
             # j_l(kr) + A y_l(kr)
             j_i = special.jl(l, _k * r)
+            deriv = bc_type == 2
             if _k > 0:
-                A = -special.jl(l, _k * r_star) / special.yl(l, _k * r_star).clip(-1e50, np.inf)
+                A = -special.jl(l, _k * r_star, deriv=deriv) / \
+                     special.yl(l, _k * r_star, deriv=deriv).clip(-1e50, np.inf)
                 y_i = special.yl(l, _k * r).clip(-1e50, np.inf)
                 j_i += A * y_i
+
+        else:
+            raise ValueError("didn't recognize method {}".format(method))
 
         j[i] = torch.as_tensor(j_i, dtype=_float(), device=device)
 
