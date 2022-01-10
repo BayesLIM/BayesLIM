@@ -820,9 +820,11 @@ def sph_bessel_func(l, k, r, method='default', r_min=None, r_max=None,
 
 
 def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
-                   method='default', filepath=None):
+                   bc_type=2, filepath=None):
     """
-    Get spherical bessel Fourier bins given method.
+    Get spherical bessel Fourier bins given r_min, r_max and
+    boundary conditions. If r_min == 0, this is a ball.
+    If r_min > 0, this is a shell.
 
     Parameters
     ----------
@@ -844,16 +846,10 @@ def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
         If True, use every other zero
         starting at the second zero. This
         is consistent with Fourier k convention.
-    method : str, optional
-        Method for basis functions and for k_ln spectrum.
-        default : interval is 0 -> r_max, basis is
-            j_l(kr), BC is j_l(k_ln r_max) = 0
-        samushia : interval is r_min -> r_max, basis is
-            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r) and BC
-            is g_nl(k r) = 0 for r_min and r_max (Samushia2019)
-        gebhardt : interval is r_min -> r_max, basis is
-            g_nl = j_l(k_ln r) + A_ln y_l(k_ln r)
-            BC is potential field continuity (Gebhardt+2021)
+    bc_type : int, optional
+        Type of boundary condition, 1 (Dirichlet) sets
+        function to zero at edges, 2 (Neumann, default) sets
+        its derivative to zero at edges.
     filepath : str, optional
         filepath to csv of kbins [cMpc^-1] in form of
         l, 1st zero, 2nd zero, 3rd zero, ...
@@ -873,17 +869,16 @@ def sph_bessel_kln(l, r_min, r_max, kmax, dk_factor=5e-3, decimate=False,
         dk = kmin * dk_factor
         k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
 
-        if method == 'default':
-            # BC is g_l(k_n r) = 0 at r_max
-            y = special.jl(l, k_arr * r_max)
+        method = 'ball' if np.isclose(r_min, 0) else 'shell'
+        deriv = bc_type == 2
+        if method == 'ball':
+            y = special.jl(l, k_arr * r_max, deriv=deriv)
 
-        elif method == 'samushia':
-            # BC is g_l(k_n r) = 0 at r_min and r_max
-            y = (special.jl(l, k_arr * r_min) * special.yl(l, k_arr * r_max).clip(-1e50, np.inf) \
-                 - special.jl(l, k_arr * r_max) * special.yl(l, k_arr * r_min).clip(-1e50, np.inf))
-
-        elif method == 'gebhardt':
-            raise NotImplementedError
+        elif method == 'shell':
+            y = (special.jl(l, k_arr * r_min, deriv=deriv) * \
+                 special.yl(l, k_arr * r_max, deriv=deriv).clip(-1e50, np.inf) - \
+                 special.jl(l, k_arr * r_max, deriv=deriv) * \
+                 special.yl(l, k_arr * r_min, deriv=deriv).clip(-1e50, np.inf))
 
         # get roots
         k = get_zeros(k_arr, y)
