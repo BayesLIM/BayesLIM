@@ -260,7 +260,7 @@ def _gen_sph2pix_multiproc(job):
 
 def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
                 lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
-                high_prec=True, renorm=False):
+                high_prec=True, renorm=False, bc_type=2):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -323,6 +323,11 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         Note this assumes that the theta, phi are drawn from
         part of a HEALpix grid with a pixelization
         density enough to resolve the fastest spatial frequency
+    bc_type : int, optional
+        Boundary condition type on x for m > 0, either 1 or 2.
+        1 (Dirichlet) sets func. to zero at boundary and
+        2 (Neumann) sets its derivative to zero. Default = 2.
+        Only needed for stripe method.
 
     Returns
     -------
@@ -353,7 +358,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
             _m = m[i*Ntask:(i+1)*Ntask]
             jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_max=theta_max,
                                                       l=_l, m=_m, high_prec=high_prec,
-                                                      renorm=renorm)])
+                                                      renorm=renorm, bc_type=bc_type)])
 
         # run jobs
         try:
@@ -388,7 +393,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     if method == 'sphere':
         theta_max = np.pi
     x_max = np.cos(theta_max)
-    H = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec)
+    H = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec, bc_type=bc_type)
     Phi = np.exp(1j * m * phi)
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
@@ -399,6 +404,61 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         Y /= norm[:, None]
 
     return Y
+
+
+def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2):
+    """
+    Generate (un-normalized) assoc. Legendre basis
+
+    Parameters
+    ----------
+    x : array_like
+        Array of x values [-1, 1]
+    l : array_like
+        float degree
+    m : array_like
+        integer order
+    method : str, ['stripe', 'sphere', 'cap']
+        boundary condition method
+    x_max : float, optional
+        If method is stripe, this is the the x value for theta_max
+    high_prec : bool, optional
+        If True, use arbitrary precision for Plm and Qlm
+        otherwise use standard (faster) scipy method
+    bc_type : int, optional
+        Boundary condition type on x for m > 0, either 1 or 2.
+        1 (Dirichlet) sets func. to zero at boundary and
+        2 (Neumann) sets its derivative to zero. Default = 2.
+        Only needed for stripe method.
+
+    Returns
+    -------
+    H : array_like
+        Legendre basis: P + A * Q
+    """
+    # compute assoc. legendre: orthonorm is already in Plm and Qlm
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
+    if method == 'stripe':
+        # spherical stripe: uses Plm and Qlm
+        assert x_max is not None
+        # compute Qlms
+        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
+        # compute A coefficients
+        deriv = bc_type == 2
+        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=deriv) \
+            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=deriv)
+        # Ensure deriv = True for m == 0 for coupling coefficient A
+        if bc_type == 1:
+            if 0 in m:
+                mzero = np.ravel(m) == 0
+                A[mzero] = -special.Plm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True) \
+                           / special.Qlm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True)
+
+        H = P + A * Q
+    else:
+        H = P
+
+    return H
 
 
 def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
@@ -536,54 +596,6 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             Ylm = Ylm.to(cast)
 
     return Ylm, angs, l, m, info
-
-
-def legendre_func(x, l, m, method, x_max=None, high_prec=True):
-    """
-    Generate (un-normalized) assoc. Legendre basis
-
-    Parameters
-    ----------
-    x : array_like
-        Array of x values [-1, 1]
-    l : array_like
-        float degree
-    m : array_like
-        integer order
-    method : str, ['stripe', 'sphere', 'cap']
-        boundary condition method
-    x_max : float, optional
-        If method is stripe, this the x value for theta_max
-    high_prec : bool, optional
-        If True, use arbitrary precision for Plm and Qlm
-        otherwise use standard (faster) scipy method
-
-    Returns
-    -------
-    H : array_like
-        Legendre basis: P + A * Q
-    """
-    # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
-    if method == 'stripe':
-        # spherical stripe: uses Plm and Qlm
-        assert x_max is not None
-        # compute Qlms
-        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
-        # compute A coefficients
-        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True) \
-            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True)
-        # Use deriv = True for m == 0
-        if 0 in m:
-            mzero = np.ravel(m) == 0
-            A[mzero] = -special.Plm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True) \
-                       / special.Qlm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True)
-
-        H = P + A * Q
-    else:
-        H = P
-
-    return H
 
 
 def stripe_tukey_mask(theta, theta_min, theta_max,
@@ -778,7 +790,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=Fals
         (aka rmin or rmax).
     renorm : bool, optional
         If True, renormalize amplitude of basis function
-        such that inner product of r^1 g_l(k_n r) with
+        such that inner product of r g_l(k_n r) with
         itself equals pi/2 k^-2
     device : str, optional
         Device to place matrices on

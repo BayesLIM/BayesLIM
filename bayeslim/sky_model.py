@@ -462,6 +462,8 @@ class PixelSkyResponse:
                 matrix. If None, will compute it given l, m
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
+            gln : dict, dictionary of gln modes for bessel mode
+            kbins : dict, dictionary of kln values for bessel mode
             f0 : float, fiducial frequency [Hz], used for poly
             Ndeg : int, number of degrees, used for poly
             kbins : ndarray, wavevector bins [Mpc-1], used for bessel
@@ -470,7 +472,7 @@ class PixelSkyResponse:
             decimate : bool, if True, decimate every other kbin
         log : bool, optional
             If True, assumed params is log sky and take
-            exp of params before return
+            exp of params just before return
         """
         self.freqs = freqs
         self.comp_params = comp_params
@@ -493,7 +495,7 @@ class PixelSkyResponse:
 
     def _setup(self):
         # freq setup
-        self.A, self.jl = None, None
+        self.A, self.gln = None, None
         if self.freq_mode == 'poly':
             f0 = getattr(self.freq_kwargs, 'f0', self.freqs.mean())
             self.dfreqs = (self.freqs - f0) / 1e6  # MHz
@@ -508,11 +510,11 @@ class PixelSkyResponse:
             self.z = self.cosmo.f2z(utils.tensor2numpy(self.freqs))
             self.r = self.cosmo.comoving_distance(self.z).value
             self.dr = self.r.max() - self.r.min()
-            if 'jl' in self.freq_kwargs and 'kbins' in self.freq_kwargs:
-                self.jl = self.freq_kwargs['jl']
+            if 'gln' in self.freq_kwargs and 'kbins' in self.freq_kwargs:
+                self.gln = self.freq_kwargs['gln']
                 self.kbins = self.freq_kwargs['kbins']
             else:
-                jl, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
+                gln, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
                                                   kmax=getattr(self.freq_kwargs, 'kmax'),
                                                   decimate=getattr(self.freq_kwargs, 'decimate', True),
@@ -522,7 +524,7 @@ class PixelSkyResponse:
                                                   Nproc=getattr(self.freq_kwargs, 'Nproc', None),
                                                   Ntask=getattr(self.freq_kwargs, 'Ntask', 10),
                                                   renorm=getattr(self.freq_kwargs, 'renorm', False))
-                self.jl = jl
+                self.gln = gln
                 self.kbins = kbins
 
         # spatial setup
@@ -606,7 +608,7 @@ class PixelSkyResponse:
                               device=params.device, dtype=params.dtype)
             for l in np.unique(self.freq_kwargs['l']):
                 inds = self.freq_kwargs['l'] == l
-                out[..., inds] += (params[:, :, inds].transpose(-1, -2) @ self.jl[l]).transpose(-1, -2)
+                out[..., inds] += (params[:, :, inds].transpose(-1, -2) @ self.gln[l]).transpose(-1, -2)
             return out
 
     def __call__(self, params):
@@ -635,8 +637,8 @@ class PixelSkyResponse:
         if self.freq_mode == 'poly':
             self.A = self.A.to(device)
         elif self.freq_mode == 'bessel':
-            for k in self.jl:
-                self.jl[k] = self.jl[k].to(device)
+            for k in self.gln:
+                self.gln[k] = self.gln[k].to(device)
 
         self.freqs = self.freqs.to(device)
         self.device = device
