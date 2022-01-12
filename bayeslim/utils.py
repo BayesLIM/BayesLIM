@@ -406,7 +406,7 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     return Y
 
 
-def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2):
+def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=False):
     """
     Generate (un-normalized) assoc. Legendre basis
 
@@ -430,6 +430,8 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2):
         1 (Dirichlet) sets func. to zero at boundary and
         2 (Neumann) sets its derivative to zero. Default = 2.
         Only needed for stripe method.
+    deriv : bool, optional
+        If True return derivative, else return function (default)
 
     Returns
     -------
@@ -437,16 +439,15 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2):
         Legendre basis: P + A * Q
     """
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True)
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv)
     if method == 'stripe':
         # spherical stripe: uses Plm and Qlm
         assert x_max is not None
         # compute Qlms
-        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True)
+        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv)
         # compute A coefficients
-        deriv = bc_type == 2
-        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=deriv) \
-            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=deriv)
+        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2) \
+            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2)
         # Ensure deriv = True for m == 0 for coupling coefficient A
         if bc_type == 1:
             if 0 in m:

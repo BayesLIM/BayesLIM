@@ -12,7 +12,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.1 with interval -1 < x < 1.
+    DLMF 14.3.1 & 14.10.5 with interval -1 < x < 1.
     Note 1: this is numerically continued to |x| = 1
     Note 2: stable to integer l = m ~ 800, for all x
 
@@ -96,13 +96,16 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         return dPdx
 
 
-def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
+def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True, dx=1e-5):
     """
     Associated Legendre function of the second kind
     in hypergeometric form, aka Ferrers function
     DLMF 14.3.12 with interval -1 < x < 1.
     Note 1: this will return infs or nan at |x| = 1
-    Note 2: stable to integer l = m ~ 800, for all x
+    Note 2: stable to integer l = m ~ 800, for all x.
+    Note 3: due to inability to get accurate analytic
+    representation of Qlm derivative, we currently
+    approximate this numerically (non-ideal).
 
     Parameters
     ----------
@@ -121,6 +124,8 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
+    dx : float, optional
+        Step size for approximating derivative
 
     Returns
     -------
@@ -142,9 +147,10 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         # compute w1 and w2, multiply in normalization
         w1 = 2**m * (1-x**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
         w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2))
-        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3/2, x**2, high_prec=high_prec)
+        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
         w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2))
         Q = .5 * np.pi * (-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
+
         if not keepdims:
             if 1 in Q.shape:
                 Q = Q.ravel()
@@ -152,11 +158,19 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True):
                 Q = Q[0]
         return Q
     else:
-        norm = 1 / (1 - x**2)
-        term1 = (m - l - 1) * Qlm(l+1, m, x, keepdims=True)
-        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
-        term2 = (l+1) * x * Qlm(l, m, x, keepdims=True)
-        dQdx = norm * (term1 + term2)
+        # LEGACY: DLMF 14.10.5, but this is actually inaccurate, idk why!
+        #norm = 1 / (1 - x**2)
+        #term1 = (m - l - 1) * Qlm(l+1, m, x, keepdims=True)
+        #term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        #term2 = (l+1) * x * Qlm(l, m, x, keepdims=True)
+        #dQdx = norm * (term1 + term2)
+
+        # compute Qlm, then approximate deriv with central diff
+        dx = 1e-5
+        back = Qlm(l, m, x-dx/2, deriv=False, keepdims=True, high_prec=high_prec)
+        forw = Qlm(l, m, x+dx/2, deriv=False, keepdims=True, high_prec=high_prec)
+        dQdx = (forw - back) / dx
+
         if not keepdims:
             if 1 in dQdx.shape:
                 dQdx = dQdx.ravel()
@@ -322,7 +336,8 @@ def pochln(a, n):
 
 def jl(l, z, deriv=False, keepdims=False):
     """
-    Spherical Bessel of the first kind
+    Spherical Bessel of the first kind.
+    DLMF 10.47.3
     
     Parameters
     ----------
@@ -386,7 +401,8 @@ def jl(l, z, deriv=False, keepdims=False):
 
 def yl(l, z, deriv=False, keepdims=False):
     """
-    Spherical Bessel of the second kind
+    Spherical Bessel of the second kind.
+    DLMF 10.47.4
     
     Parameters
     ----------
