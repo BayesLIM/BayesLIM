@@ -506,7 +506,7 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
 
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
-             colat_min=None, colat_max=None, az_min, az_max=None,
+             colat_min=None, colat_max=None, az_min=None, az_max=None,
              device=None, read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
