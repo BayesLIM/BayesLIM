@@ -361,7 +361,7 @@ def cmatmul(a, b):
     return c
 
 
-def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
+def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=0):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -380,7 +380,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
 
     .. math ::
 
-        D = (A.T N^{-1} A)^{-1}
+        D = (A.T N^{-1} A + eI)^{-1}
 
     If A is large this can be sped up by moving A and y
     to the GPU first.
@@ -403,8 +403,13 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
         None : no normalization, assume D is identity
         'inv' : invert A.T Ninv A
         'diag' : take inverse of diagonal of A.T Ninv A
+    pinv : bool, optional
+        Use pseudo inverse if inverting A (default).
+        Can also specify regularization parameter instead.
     rcond : float, optional
         rcond parameter for taking pseudo-inverse
+    e : float, optional
+        Regularization parameter (default is None)
 
     Returns
     -------
@@ -442,7 +447,13 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', rcond=1e-15):
             else:
                 # Ninv is diagonal
                 Dinv = (A.T.conj() * Ninv) @ A
-        D = torch.pinverse(Dinv, rcond=rcond)
+        # add regularization if desired
+        Dinv += torch.eye(len(Dinv)) * e
+        # invert
+        if pinv:
+            D = torch.pinverse(Dinv, rcond=rcond)
+        else:
+            D = torch.inverse(Dinv)
         x = x @ D
 
     elif norm == 'diag':

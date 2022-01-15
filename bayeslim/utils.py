@@ -506,7 +506,8 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
 
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
-             colat_min=None, colat_max=None, device=None, read_data=True):
+             colat_min=None, colat_max=None, az_min, az_max=None,
+             device=None, read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
 
@@ -530,6 +531,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     colat_max : float, optional
         truncate Ylm response for colat >= colat_max [deg]
         assuming angs[0] is colatitude (zenith)
+    az_min : float, optional
+        truncate Ylm response for azimuth >= az_min [deg]
+        assuming angs[1] is azimuth
+    az_max : float, optional
+        truncate Ylm response for azimuth <= az_max [deg]
+        assuming angs[1] is azimuth    
     device : str, optional
         Device to place Ylm
     read_data : bool, optional
@@ -576,7 +583,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     # truncate sky
     if colat_min is not None:
         colat, az = angs
-        keep = colat > colat_min
+        keep = colat >= colat_min
         colat = colat[keep]
         az = az[keep]
         angs = colat, az
@@ -584,7 +591,23 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             Ylm = Ylm[:, keep]
     if colat_max is not None:
         colat, az = angs
-        keep = colat < colat_max
+        keep = colat <= colat_max
+        colat = colat[keep]
+        az = az[keep]
+        angs = colat, az
+        if read_data:
+            Ylm = Ylm[:, keep]
+    if az_min is not None:
+        colat, az = angs
+        keep = az >= az_min
+        colat = colat[keep]
+        az = az[keep]
+        angs = colat, az
+        if read_data:
+            Ylm = Ylm[:, keep]
+    if az_max is not None:
+        colat, az = angs
+        keep = az <= az_max
         colat = colat[keep]
         az = az[keep]
         angs = colat, az
