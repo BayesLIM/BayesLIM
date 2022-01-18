@@ -380,7 +380,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=
 
     .. math ::
 
-        D = (A.T N^{-1} A + eI)^{-1}
+        D = (A.T N^{-1} A + \epsilon I)^{-1}
 
     If A is large this can be sped up by moving A and y
     to the GPU first.
@@ -408,13 +408,16 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=
         Can also specify regularization parameter instead.
     rcond : float, optional
         rcond parameter for taking pseudo-inverse
-    e : float, optional
+    eps : float, optional
         Regularization parameter (default is None)
 
     Returns
     -------
-    tensor
+    x : tensor
         estimated parameters
+    D : tensor
+        derived normalization matrix, depending
+        on choice of pinv and eps
     """
     # Note that we actually solve the transpose of x
     # and then re-transpose. 
@@ -448,7 +451,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=
                 # Ninv is diagonal
                 Dinv = (A.T.conj() * Ninv) @ A
         # add regularization if desired
-        Dinv += torch.eye(len(Dinv)) * e
+        Dinv += torch.eye(len(Dinv)) * eps
         # invert
         if pinv:
             D = torch.pinverse(Dinv, rcond=rcond)
@@ -473,7 +476,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=
     # return axis to dim
     x.moveaxis(-1, dim)
 
-    return x
+    return x, D
 
 
 
