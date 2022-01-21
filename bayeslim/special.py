@@ -47,6 +47,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     # reshape if needed
     l = np.atleast_1d(l)
     m = np.atleast_1d(m)
+    assert np.all(m <= l+1e-5)
     if l.ndim == 1:
         l = l[:, None]
     if m.ndim == 1:
@@ -82,7 +83,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     else:
         norm = 1 / (1 - x**2)
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True)
-        #term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True)
         dPdx = norm * (term1 + term2)
         # handle singularity: 1st order Euler
