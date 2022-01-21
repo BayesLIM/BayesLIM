@@ -205,8 +205,9 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     l, m
         Array of l and m values
     """
-    # solve for m modes
     assert bc_type in [1, 2]
+
+    # solve for m modes
     spacing = 2 * np.pi / phi_max
     assert np.isclose(spacing % 1, 0), "phi_max must evenly divide into 2pi"
     mmin = max([0, mmin])
@@ -223,6 +224,7 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         marr = np.ones_like(larr) * _m
         if len(larr) < 1:
             continue
+
         # boundary condition
         deriv = True if bc_type == 2 or _m == 0 else False
         if np.isclose(theta_min, 0):
@@ -388,18 +390,32 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     theta = np.atleast_1d(theta)
     phi = np.atleast_1d(phi)
 
-    # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    x = np.cos(theta)
+    # get unique theta values and their indices in theta
+    unq_theta, unq_idx = np.unique(theta, return_inverse=True)
+
+    # compute assoc. legendre: note orthonorm is already in Plm and Qlm
+    x = np.cos(unq_theta)
     if method == 'sphere':
-        theta_max = np.pi
+        if theta_max is not None:
+            assert np.isclose(theta_max, np.pi)
+        else:
+            theta_max = np.pi
     x_max = np.cos(theta_max)
-    H = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec, bc_type=bc_type)
+    H_unq = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec, bc_type=bc_type)
+
+    # now broadcast across redundant theta values
+    H = H_unq[:, unq_idx]
+
+    # compute azimuthal fourier term
     Phi = np.exp(1j * m * phi)
+
+    # combine into spherical harmonic
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
     # renormalize
     if renorm:
-        # Note: theta and phi must be part of a HEALpix grid
+        # Note: theta and phi must span the entire domain of Y
+        # in order to approximate its inner product
         norm = torch.sqrt(torch.sum(torch.abs(Y)**2, axis=1))
         Y /= norm[:, None]
 
@@ -507,7 +523,8 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
              colat_min=None, colat_max=None, az_min=None, az_max=None,
-             device=None, read_data=True):
+             device=None, discard_sectoral=False, discard_mono=False,
+             read_data=True):
     """
     Load an hdf5 file with Ylm and ang arrays
 
@@ -539,6 +556,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         assuming angs[1] is azimuth    
     device : str, optional
         Device to place Ylm
+    discard_sectoral : bool, optional
+        If True, discard all modes where m == l (except for l == 0)
+    discard_mono : bool, optional
+        If True, discard monopole (i.e. l == m == 0)
     read_data : bool, optional
         If True, read and return Ylm
         else return None, angs, l, m 
@@ -566,8 +587,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             cut_l, cut_m = discard
             for i in range(len(cut_l)):
                 keep = keep & ~(np.isclose(l, cut_l[i], atol=1e-6) & np.isclose(m, cut_m[i], atol=1e-6))
+        if discard_sectoral:
+            keep = keep & ~((l == m) & (l > 0))
+        if discard_mono:
+            keep = keep & ~((l == 0) & (m == 0))
 
-        # refactor keep slicing
+        # refactor keep as slicing if possible
         keep = np.where(keep)[0]
         if len(keep) == len(l):
             keep = slice(None)
