@@ -82,7 +82,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     else:
         norm = 1 / (1 - x**2)
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True)
-        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        #term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True)
         dPdx = norm * (term1 + term2)
         # handle singularity: 1st order Euler
