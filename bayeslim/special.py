@@ -8,7 +8,7 @@ import copy
 import warnings
 
 
-def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
+def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
@@ -30,7 +30,10 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
     x : float or array_like
         Argument of Legendre function, bounded by |x|<1
     deriv : bool, optional
-        If True return derivative wrt x
+        If True return derivative
+    dtheta : bool, optional
+        If True (default), return dP/dtheta instead 
+        of dP/dx where x = cos(theta)
     keepdims : bool, optional
         If False and (l,m) or x is len 1
         then ravel the output
@@ -81,6 +84,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         return P
     # compute derivative
     else:
+        # DLMF 14.10.5
         norm = 1 / (1 - x**2)
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True)
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
@@ -89,6 +93,9 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         # handle singularity: 1st order Euler
         if np.any(s):
             dPdx[:, s] += (dPdx[:, s] - Plm(l, m, x[s] * (1 - dx), deriv=True, keepdims=True))
+        # correct for change of variables if requested
+        if dtheta:
+            dPdx *= -np.sin(np.arccos(x))
         if not keepdims:
             if 1 in dPdx.shape:
                 dPdx = dPdx.ravel()
@@ -97,7 +104,7 @@ def Plm(l, m, x, deriv=False, keepdims=False, high_prec=True):
         return dPdx
 
 
-def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True, dx=1e-5):
+def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, dx=1e-5):
     """
     Associated Legendre function of the second kind
     in hypergeometric form, aka Ferrers function
@@ -117,7 +124,10 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True, dx=1e-5):
     x : float or array_like
         Argument of Legendre function, bounded by |x|<1
     deriv : bool, optional
-        If True return derivative wrt x
+        If True return derivative
+    dtheta : bool, optional
+        If True (default), return dQ/dtheta instead 
+        of dQ/dx where x = cos(theta)
     keepdims : bool, optional
         If False and (l,m) or x is len 1
         then ravel the output
@@ -171,6 +181,10 @@ def Qlm(l, m, x, deriv=False, keepdims=False, high_prec=True, dx=1e-5):
         back = Qlm(l, m, x-dx/2, deriv=False, keepdims=True, high_prec=high_prec)
         forw = Qlm(l, m, x+dx/2, deriv=False, keepdims=True, high_prec=high_prec)
         dQdx = (forw - back) / dx
+
+        # correct for change of variables if requested
+        if dtheta:
+            dQdx *= -np.sin(np.arccos(x))
 
         if not keepdims:
             if 1 in dQdx.shape:
