@@ -225,14 +225,14 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         if len(larr) < 1:
             continue
 
-        # boundary condition
-        deriv = True if bc_type == 2 or _m == 0 else False
         if np.isclose(theta_min, 0):
             # spherical cap
+            deriv = bc_type == 2 or _m == 0
             y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
 
         else:
             # spherical stripe
+            deriv = bc_type == 2
             y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
                 * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
                 - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
@@ -464,12 +464,6 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         # compute A coefficients
         A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2) \
             / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2)
-        # Ensure deriv = True for m == 0 for coupling coefficient A
-        if bc_type == 1:
-            if 0 in m:
-                mzero = np.ravel(m) == 0
-                A[mzero] = -special.Plm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True) \
-                           / special.Qlm(l[mzero], m[mzero], x_max, high_prec=high_prec, keepdims=True, deriv=True)
 
         H = P + A * Q
     else:
