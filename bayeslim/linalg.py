@@ -361,7 +361,7 @@ def cmatmul(a, b):
     return c
 
 
-def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, e=0):
+def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, eps=0):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
