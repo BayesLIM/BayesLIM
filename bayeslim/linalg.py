@@ -473,6 +473,9 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         D = 1 / Dinv
         x = x * D
 
+    else:
+        D = np.eye(A.shape[1])
+
     # return axis to dim
     x.moveaxis(-1, dim)
 
