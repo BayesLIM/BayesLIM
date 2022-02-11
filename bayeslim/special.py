@@ -8,7 +8,8 @@ import copy
 import warnings
 
 
-def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
+def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
+        sq_norm=True):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
@@ -41,6 +42,11 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
+    sq_norm : bool, optional
+        If True, return Plm with standard (1-x^2)^(-m/2)
+        normalization (default). Otherwise withold it,
+        which is needed for computing Plm - Qlm at
+        high degree to prevent catastrophic cancellation.
 
     Returns
     -------
@@ -66,12 +72,17 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
     if not deriv:
         # compute ortho normalization in logspace
         C = _log_legendre_norm(l, m)
-        # DLMF 14.10.11: compute w1 and w2, multiply in normalization
-        w1 = 2**m * (1-x**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
-        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2))
-        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
-        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2))
+        # DLMF 14.10.11: compute w1 and w2, then multiply in their normalization
+        w1 = 2**m * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
+        # gammaln(0.5+1) comes from extra factor in hypF!
+        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2) + gammaln(0.5+1))
+        w2 = 2**m * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
+        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2) + gammaln(3./2+1))
         P = np.cos(.5*(l+m)*np.pi) * w1 + np.sin(.5*(l+m)*np.pi) * w2
+
+        # add in sq_norm if desired
+        if sq_norm:
+            P *= (1-x**2)**(-m/2)
 
         # handle singularity: 1st order Euler
         if np.any(s):
@@ -87,13 +98,13 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
     else:
         # DLMF 14.10.5
         norm = 1 / (1 - x**2)
-        term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True)
+        term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
-        term2 = (l+1) * x * Plm(l, m, x, keepdims=True)
+        term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         dPdx = norm * (term1 + term2)
         # handle singularity: 1st order Euler
         if np.any(s):
-            dPdx[:, s] += (dPdx[:, s] - Plm(l, m, x[s] * (1 - dx), deriv=True, keepdims=True))
+            dPdx[:, s] += (dPdx[:, s] - Plm(l, m, x[s] * (1 - dx), deriv=True, keepdims=True, sq_norm=sq_norm, high_prec=high_prec))
         # correct for change of variables if requested
         if dtheta:
             dPdx *= -np.sin(np.arccos(x))
@@ -105,16 +116,13 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
         return dPdx
 
 
-def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, dx=1e-5):
+def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, sq_norm=True):
     """
     Associated Legendre function of the second kind
     in hypergeometric form, aka Ferrers function
     DLMF 14.3.12 with interval -1 < x < 1.
     Note 1: this will return infs or nan at |x| = 1
     Note 2: stable to integer l = m ~ 800, for all x.
-    Note 3: due to inability to get accurate analytic
-    representation of Qlm derivative, we currently
-    approximate this numerically (non-ideal).
 
     Parameters
     ----------
@@ -136,8 +144,11 @@ def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, dx=1e
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
-    dx : float, optional
-        Step size for approximating derivative
+    sq_norm : bool, optional
+        If True, return Plm with standard (1-x^2)^(-m/2)
+        normalization (default). Otherwise withold it,
+        which is needed for computing Plm - Qlm at
+        high degree to prevent catastrophic cancellation.
 
     Returns
     -------
@@ -157,11 +168,16 @@ def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, dx=1e
         # compute ortho normalization in logspace
         C = _log_legendre_norm(l, m)
         # compute w1 and w2, multiply in normalization
-        w1 = 2**m * (1-x**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
-        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2))
-        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
-        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2))
+        w1 = 2**m * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
+        # gammaln(0.5+1) comes from extra factor in hypF!
+        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2) + gammaln(0.5+1))
+        w2 = 2**m * x * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
+        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2) + gammaln(3./2+1))
         Q = .5 * np.pi * (-np.sin(.5*(l+m)*np.pi) * w1 + np.cos(.5*(l+m)*np.pi) * w2)
+
+        # add in sq_norm if desired
+        if sq_norm:
+            Q *= (1-x**2)**(-m/2)
 
         if not keepdims:
             if 1 in Q.shape:
@@ -170,18 +186,12 @@ def Qlm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True, dx=1e
                 Q = Q[0]
         return Q
     else:
-        # LEGACY: DLMF 14.10.5, but this is actually inaccurate, idk why!
-        #norm = 1 / (1 - x**2)
-        #term1 = (m - l - 1) * Qlm(l+1, m, x, keepdims=True)
-        #term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
-        #term2 = (l+1) * x * Qlm(l, m, x, keepdims=True)
-        #dQdx = norm * (term1 + term2)
-
-        # compute Qlm, then approximate deriv with central diff
-        dx = 1e-5
-        back = Qlm(l, m, x-dx/2, deriv=False, keepdims=True, high_prec=high_prec)
-        forw = Qlm(l, m, x+dx/2, deriv=False, keepdims=True, high_prec=high_prec)
-        dQdx = (forw - back) / dx
+        # DLMF 14.10.5
+        norm = 1 / (1 - x**2)
+        term1 = (m - l - 1) * Qlm(l+1, m, x, keepdims=True, high_prec=high_prec, sq_norm=sq_norm)
+        term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
+        term2 = (l+1) * x * Qlm(l, m, x, keepdims=True, high_prec=high_prec, sq_norm=sq_norm)
+        dQdx = norm * (term1 + term2)
 
         # correct for change of variables if requested
         if dtheta:
