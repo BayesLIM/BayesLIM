@@ -228,15 +228,15 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         if np.isclose(theta_min, 0):
             # spherical cap
             deriv = bc_type == 2 or _m == 0
-            y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False)
 
         else:
             # spherical stripe
             deriv = bc_type == 2
-            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True) \
-                * special.Qlm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True)
+            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                * special.Qlm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False)
 
         y = y.ravel()
         zeros = get_zeros(larr, y)
@@ -455,19 +455,22 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         Legendre basis: P + A * Q
     """
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv)
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=False)
     if method == 'stripe':
         # spherical stripe: uses Plm and Qlm
         assert x_max is not None
         # compute Qlms
-        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv)
+        Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=False)
         # compute A coefficients
-        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2) \
-            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2)
+        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False) \
+            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False)
 
         H = P + A * Q
     else:
         H = P
+
+    # add (1-x^2)^(-m/2) term in b/c it was left out due to roundoff errors in P + AQ
+    H *= (1 - x**2)**(-m/2)
 
     return H
 
