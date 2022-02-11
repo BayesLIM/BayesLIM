@@ -470,7 +470,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         H = P
 
     # add (1-x^2)^(-m/2) term in b/c it was left out due to roundoff errors in P + AQ
-    H *= (1 - x**2)**(-m/2)
+    H *= (1 - x**2)**(-m[:, None]/2)
 
     return H
 
