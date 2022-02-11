@@ -12,7 +12,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.1 & 14.10.5 with interval -1 < x < 1.
+    DLMF 14.3.11 & 14.10.5 with interval -1 < x < 1.
     Note 1: this is numerically continued to |x| = 1
     Note 2: stable to integer l = m ~ 800, for all x
 
@@ -64,15 +64,15 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
         x[s] *= (1 - dx)
     # compute Plm
     if not deriv:
-        # compute hyper-geometric
-        norm = ((1 + x) / (1 - x))**(m/2)
-        a, b, c = l+1, -l, 1-m
-        P = hypF(a, b, c, (1-x)/2, high_prec=high_prec, keepdims=True)
-        isf = np.isfinite(norm)
-        P[isf] *= norm[isf]
-        # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
+        # compute ortho normalization in logspace
         C = _log_legendre_norm(l, m)
-        P *= np.exp(C + gammaln(np.abs(c)+1))
+        # DLMF 14.10.11: compute w1 and w2, multiply in normalization
+        w1 = 2**m * (1-x**2)**(-m/2) * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
+        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2))
+        w2 = 2**m * x * (1-x**2)**(-m/2) * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
+        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2))
+        P = np.cos(.5*(l+m)*np.pi) * w1 + np.sin(.5*(l+m)*np.pi) * w2
+
         # handle singularity: 1st order Euler
         if np.any(s):
             P[:, s] += Plm(l, m, x[s], deriv=True, keepdims=True) * dx
@@ -82,6 +82,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True):
             if P.size == 1:
                 P = P[0]
         return P
+
     # compute derivative
     else:
         # DLMF 14.10.5
