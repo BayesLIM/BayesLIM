@@ -76,7 +76,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         w1 = 2**m * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
         # gammaln(0.5+1) comes from extra factor in hypF!
         w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2) + gammaln(0.5+1))
-        w2 = 2**m * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
+        w2 = 2**m * x * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
         w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2) + gammaln(3./2+1))
         P = np.cos(.5*(l+m)*np.pi) * w1 + np.sin(.5*(l+m)*np.pi) * w2
 
