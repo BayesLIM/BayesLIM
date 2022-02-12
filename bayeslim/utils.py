@@ -141,7 +141,7 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
-def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
+def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.03,
                   mmin=0, high_prec=True, add_mono=True,
                   add_sectoral=True, bc_type=2):
     """
@@ -476,9 +476,12 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
     else:
         H = P
 
-
     # add (1-x^2)^(-m/2) term in b/c it was left out due to roundoff errors in P + AQ
-    H *= (1 - x**2)**(-np.atleast_1d(m)[:, None]/2)
+    if not isinstance(m, np.ndarray):
+        m = np.atleast_1d(m)
+    if m.ndim == 1:
+        m = m[:, None]
+    H *= (1 - x**2)**(-np.atleast_1d(m)/2)
 
     return H
 
