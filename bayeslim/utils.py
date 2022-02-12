@@ -465,9 +465,17 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False) \
             / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False)
 
+        # construct legendre func without sq_norm
         H = P + A * Q
+
+        # set pixels close to zero to zero
+        H2 = np.abs(P) + np.abs(A * Q)
+        zero = np.abs(H / H2) < 1e-14  # double precision roundoff error
+        H[zero] = 0.0
+
     else:
         H = P
+
 
     # add (1-x^2)^(-m/2) term in b/c it was left out due to roundoff errors in P + AQ
     H *= (1 - x**2)**(-np.atleast_1d(m)[:, None]/2)
