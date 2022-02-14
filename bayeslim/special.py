@@ -13,7 +13,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     """
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
-    DLMF 14.3.11 & 14.10.5 with interval -1 < x < 1.
+    DLMF 14.3.1 & 14.10.5 with interval -1 < x < 1.
     Note 1: this is numerically continued to |x| = 1
     Note 2: stable to integer l = m ~ 800, for all x
 
@@ -70,19 +70,22 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         x[s] *= (1 - dx)
     # compute Plm
     if not deriv:
-        # compute ortho normalization in logspace
+        # compute hyper-geometric: DLMF 14.3.1
+        # Note this previously used DLMF 14.3.11
+        # but this was unstable at low theta. 14.3.1 works fine for Plm
+        norm = ((1 + x) / (1 - x))**(m/2)
+        a, b, c = l+1, -l, 1-m
+        P = hypF(a, b, c, (1-x)/2, high_prec=high_prec, keepdims=True)
+        isf = np.isfinite(norm)
+        P[isf] *= norm[isf]
+        # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
         C = _log_legendre_norm(l, m)
-        # DLMF 14.10.11: compute w1 and w2, then multiply in their normalization
-        w1 = 2**m * hypF((-l-m)/2, (l-m+1)/2, .5, x**2, high_prec=high_prec)
-        # gammaln(0.5+1) comes from extra factor in hypF!
-        w1 *= np.exp(C + gammaln((l+m+1)/2) - gammaln((l-m+2)/2) + gammaln(0.5+1))
-        w2 = 2**m * x * hypF((1-l-m)/2, (l-m+2)/2, 3./2, x**2, high_prec=high_prec)
-        w2 *= np.exp(C + gammaln((l+m+2)/2) - gammaln((l-m+1)/2) + gammaln(3./2+1))
-        P = np.cos(.5*(l+m)*np.pi) * w1 + np.sin(.5*(l+m)*np.pi) * w2
+        # gammaln(c+1) comes from extra factor in hypF!
+        P *= np.exp(C + gammaln(np.abs(c)+1))
 
-        # add in sq_norm if desired
-        if sq_norm:
-            P *= (1-x**2)**(-m/2)
+        # remove (1-x^2)^(-m/2) term if requested: when combining with Qlm
+        if not sq_norm:
+            P /= (1-x**2)**(-m/2)
 
         # handle singularity: 1st order Euler
         if np.any(s):
