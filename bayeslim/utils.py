@@ -455,7 +455,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         Legendre basis: P + A * Q
     """
     # compute assoc. legendre: orthonorm is already in Plm and Qlm
-    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=method=='stripe')
+    P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=method!='stripe')
     if method == 'stripe':
         # spherical stripe: uses Plm and Qlm
         assert x_max is not None
@@ -478,6 +478,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
             m = np.atleast_1d(m)
         if m.ndim == 1:
             m = m[:, None]
+        # multiply sq_norm back in
         H *= (1 - x**2)**(-np.atleast_1d(m)/2)
 
     else:
