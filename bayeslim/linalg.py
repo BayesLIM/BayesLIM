@@ -451,7 +451,8 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
                 # Ninv is diagonal
                 Dinv = (A.T.conj() * Ninv) @ A
         # add regularization if desired
-        Dinv += torch.eye(len(Dinv)) * eps
+        if eps > 0:
+            Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
         # invert
         if pinv:
             D = torch.pinverse(Dinv, rcond=rcond)
