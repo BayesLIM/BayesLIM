@@ -148,7 +148,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
                add_sectoral=True, bc_type=2,
                Nrefine_iter=2, refine_dl=1e-7,
-               Nproc=None, Ntask=10):
+               Nproc=None, Ntask=5):
     """
     Compute associated Legendre function degrees l on
     the spherical stripe or cap given boundary conditions.
@@ -291,7 +291,8 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     m = np.atleast_1d(m)
     for _m in m:
         # construct array of test l's, skip l == m
-        larr = _m + np.arange(1, (lmax - _m)//dl + 1) * dl
+        # larr goes out to lmax + dl (hence + 3)
+        larr = _m + np.arange(1, (lmax - _m)//dl + 3) * dl
         marr = np.ones_like(larr) * _m
         if len(larr) < 1:
             continue
