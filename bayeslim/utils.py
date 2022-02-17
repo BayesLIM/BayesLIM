@@ -140,11 +140,15 @@ def gen_lm(lmax, real_field=True):
             lms.append([l, m]) 
     return np.array(lms).T
 
+def _compute_lm_multiproc(job):
+    args, kwargs = job
+    return compute_lm(*args, **kwargs)
 
 def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
                add_sectoral=True, bc_type=2,
-               Nrefine_iter=2, refine_dl=1e-7):
+               Nrefine_iter=2, refine_dl=1e-7,
+               Nproc=None, Ntask=10):
     """
     Compute associated Legendre function degrees l on
     the spherical stripe or cap given boundary conditions.
@@ -206,12 +210,62 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         degree l given boundary conditions.
     refine_dl : float, optional
         delta-l step size for refinement iterations.
+    Nproc : int, optional
+        If not None, launch multiprocessing of Nprocesses
+    Ntask : int, optional
+        Number of m-modes to solve for for each process
 
     Returns
     -------
     l, m
         Array of l and m values
     """
+    # solve for m modes
+    spacing = 2 * np.pi / phi_max
+    assert np.isclose(spacing % 1, 0), "phi_max must evenly divide into 2pi"
+    mmin = max([0, mmin])
+    m = np.arange(mmin, mmax + 1.1, spacing)
+
+    # run multiproc mode
+    if Nproc is not None:
+        # setup multiprocessing
+        import multiprocessing
+        Njobs = len(m) / Ntask
+        if Njobs % 1 > 0:
+            Njobs = np.floor(Njobs) + 1
+        Njobs = int(Njobs)
+        jobs = []
+        for i in range(Njobs):
+            marr = m[i*Ntask:(i+1)*Ntask]
+            _mmin = marr.min()
+            _mmax = marr.max() - 1
+            jobs.append([(phi_max, _mmax, theta_min, theta_max, lmax),
+                         dict(dl=dl, mmin=_mmin, high_prec=high_prec,
+                              add_mono=add_mono, add_sectoral=add_sectoral,
+                              bc_type=bc_type, Nproc=None,
+                              Nrefine_iter=Nrefine_iter, refine_dl=refine_dl)
+                         ])
+
+        # run jobs
+        try:
+            pool = multiprocessing.Pool(Nproc)
+            output = pool.map(_compute_lm_multiproc, jobs)
+        finally:
+            pool.close()
+            pool.join()
+
+        # combine
+        larr, marr = [], []
+        for out in output:
+            larr.extend(out[0])
+            marr.extend(out[1])
+        larr = np.asarray(larr)
+        marr = np.asarray(marr)
+
+        return larr, marr
+
+
+    # run single proc mode
     def get_y(larr, marr):
         if np.isclose(theta_min, 0):
             # spherical cap
@@ -229,12 +283,6 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         return y
 
     assert bc_type in [1, 2]
-
-    # solve for m modes
-    spacing = 2 * np.pi / phi_max
-    assert np.isclose(spacing % 1, 0), "phi_max must evenly divide into 2pi"
-    mmin = max([0, mmin])
-    m = np.arange(mmin, mmax + 1.1, spacing)
 
     # solve for l modes
     assert theta_max < np.pi, "theta_max must be < pi for spherical cap or stripe"
