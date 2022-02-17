@@ -141,9 +141,10 @@ def gen_lm(lmax, real_field=True):
     return np.array(lms).T
 
 
-def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.03,
-                  mmin=0, high_prec=True, add_mono=True,
-                  add_sectoral=True, bc_type=2):
+def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
+               mmin=0, high_prec=True, add_mono=True,
+               add_sectoral=True, bc_type=2,
+               Nrefine_iter=2, refine_dl=1e-7):
     """
     Compute associated Legendre function degrees l on
     the spherical stripe or cap given boundary conditions.
@@ -199,12 +200,34 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.03,
         for m > 0, either 1 or 2. 1 (Dirichlet) sets
         func. to zero at boundary and 2 (Neumann) sets
         its derivative to zero. Default = 2.
+    Nrefine_iter : int, optional
+        Number of refinement interations (default = 2).
+        Use finite difference to refine computation of
+        degree l given boundary conditions.
+    refine_dl : float, optional
+        delta-l step size for refinement iterations.
 
     Returns
     -------
     l, m
         Array of l and m values
     """
+    def get_y(larr, marr):
+        if np.isclose(theta_min, 0):
+            # spherical cap
+            deriv = bc_type == 2 or _m == 0
+            y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True)
+
+        else:
+            # spherical stripe
+            deriv = bc_type == 2
+            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
+                * special.Qlm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False)
+
+        return y
+
     assert bc_type in [1, 2]
 
     # solve for m modes
@@ -225,32 +248,36 @@ def sph_stripe_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.03,
         if len(larr) < 1:
             continue
 
-        if np.isclose(theta_min, 0):
-            # spherical cap
-            deriv = bc_type == 2 or _m == 0
-            y = special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False)
+        # get y test values
+        y = get_y(larr, marr).ravel()
 
-        else:
-            # spherical stripe
-            deriv = bc_type == 2
-            y = special.Plm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
-                * special.Qlm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
-                - special.Plm(larr, marr, x_max, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False) \
-                * special.Qlm(larr, marr, x_min, deriv=deriv, high_prec=high_prec, keepdims=True, sq_norm=False)
-
-        y = y.ravel()
+        # look for zero crossings
         zeros = get_zeros(larr, y)
+
         # add sectoral
         if (_m == 0 and add_mono) or (_m > 0 and add_sectoral):
             zeros = [_m] + zeros
+
+        # append to l dictionary
         ls[_m] = np.asarray(zeros)
 
+    # unpack into arrays
     larr, marr = [], []
     for _m in ls:
         larr.extend(ls[_m])
         marr.extend([_m] * len(ls[_m]))
+    larr, marr = np.array(larr), np.array(marr)
 
-    return np.array(larr), np.array(marr)
+    # refinement steps
+    for i in range(Nrefine_iter):
+        # x_new = x_1 - y_1 * delta-x / delta-y
+        dx = refine_dl
+        y1 = get_y(larr, marr).ravel()
+        y2 = get_y(larr + dx, marr).ravel()
+        dy = y2 - y1
+        larr = larr - y1 * dx / dy
+
+    return larr, marr
 
 
 def _gen_sph2pix_multiproc(job):
