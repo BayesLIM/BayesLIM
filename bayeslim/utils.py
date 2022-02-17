@@ -259,8 +259,9 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
             for i in range(Nrefine_iter):
                 # x_new = x_1 - y_1 * delta-x / delta-y
                 dx = refine_dl
-                y1 = get_y(zeros, marr).ravel()
-                y2 = get_y(zeros + dx, marr).ravel()
+                _marr = np.ones_like(zeros) * _m
+                y1 = get_y(zeros, _marr).ravel()
+                y2 = get_y(zeros + dx, _marr).ravel()
                 dy = y2 - y1
                 zeros = zeros - y1 * dx / dy
 
