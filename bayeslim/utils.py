@@ -550,7 +550,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
 
         # set pixels close to zero to zero
         H2 = np.abs(P) + np.abs(A * Q)
-        zero = np.abs(H / H2) < 1e-14  # double precision roundoff error
+        zero = np.abs(H / H2) < 1e-13  # double precision roundoff error (conservative)
         H[zero] = 0.0
 
         # add (1-x^2)^(-m/2) term in b/c it was left out due to roundoff errors in P + AQ
