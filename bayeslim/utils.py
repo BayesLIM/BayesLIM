@@ -252,30 +252,33 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         y = get_y(larr, marr).ravel()
 
         # look for zero crossings
-        zeros = get_zeros(larr, y)
+        zeros = np.array(get_zeros(larr, y))
+
+        # refinement steps
+        if len(zeros) > 0:
+            for i in range(Nrefine_iter):
+                # x_new = x_1 - y_1 * delta-x / delta-y
+                dx = refine_dl
+                y1 = get_y(zeros, marr).ravel()
+                y2 = get_y(zeros + dx, marr).ravel()
+                dy = y2 - y1
+                zeros = zeros - y1 * dx / dy
 
         # add sectoral
         if (_m == 0 and add_mono) or (_m > 0 and add_sectoral):
-            zeros = [_m] + zeros
+            zeros = [_m] + zeros.tolist()
 
         # append to l dictionary
-        ls[_m] = np.asarray(zeros)
+        if len(zeros) > 0:
+            ls[_m] = np.asarray(zeros)
 
     # unpack into arrays
     larr, marr = [], []
     for _m in ls:
         larr.extend(ls[_m])
         marr.extend([_m] * len(ls[_m]))
-    larr, marr = np.array(larr), np.array(marr)
 
-    # refinement steps
-    for i in range(Nrefine_iter):
-        # x_new = x_1 - y_1 * delta-x / delta-y
-        dx = refine_dl
-        y1 = get_y(larr, marr).ravel()
-        y2 = get_y(larr + dx, marr).ravel()
-        dy = y2 - y1
-        larr = larr - y1 * dx / dy
+    larr, marr = np.array(larr), np.array(marr)
 
     return larr, marr
 
