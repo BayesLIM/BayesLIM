@@ -95,6 +95,7 @@ class RIME(utils.Module):
         self.beam = beam
         self.array = array
         self.device = device
+        self.verbose = verbose
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
@@ -290,7 +291,7 @@ class RIME(utils.Module):
                 # print info
                 message = "{} / {} times for {} / {} sky model".format(j+1, len(self.sim_times),
                                                                        i+1, len(sky_components))
-                log(message, verbose=verbose, style=1)
+                log(message, verbose=self.verbose, style=1)
 
                 # get beam tensor
                 if kind in ['pixel', 'point']:
