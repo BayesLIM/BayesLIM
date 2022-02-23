@@ -902,6 +902,26 @@ def write_catalogue(catfile, sky, names, overwrite=False):
             yaml.dump(d, f)
 
 
+def Jy2K(freqs, steradians):
+    """
+    Convert from Jansky (flux density) to
+    Kelvin (specific intensity).
+    Returns [K] / [Jy] factor w.r.t. frequency
+    given solid angle of pixel.
+
+    Parameters
+    ----------
+    freqs : ndarray
+        Frequencies [Hz]
+    steradians : float
+        Solid angle [str] to use in conversion.
+    """
+    c_cmps = 2.99792458e10  # cm/s
+    k_boltz = 1.380658e-16  # erg/K
+    lam = c_cmps / freqs    # cm
+    return 1e-23 * lam ** 2 / (2 * k_boltz * steradians)
+
+
 def stokes2linear(S):
     """
     Convert Stokes parameters to coherency matrix
