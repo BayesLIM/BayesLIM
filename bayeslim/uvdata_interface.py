@@ -155,7 +155,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
         ant2beam = {ant: 0 for ant in arr.ants}
 
     # setup RIME object
-    RIME = rime_model.RIME(sky, tele, beam, ant2beam, arr, sim_bls, times, freqs,
+    RIME = rime_model.RIME(sky, tele, beam, arr, sim_bls, times, freqs,
                            device=sky.device, verbose=verbose)
 
     with torch.no_grad():
