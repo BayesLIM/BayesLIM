@@ -37,7 +37,8 @@ class RIME(utils.Module):
     element from the diagonal is used.
     """
     def __init__(self, sky, telescope, beam, array, sim_bls,
-                 times, freqs, data_bls=None, device=None, name=None):
+                 times, freqs, data_bls=None, device=None, name=None,
+                 verbose=False):
         """
         RIME object. Takes a model
         of the sky brightness, passes it through
@@ -85,6 +86,8 @@ class RIME(utils.Module):
             is a parameter.
         name : str, optional
             Name for this object, stored as self.name
+        verbose : bool, optional
+            If True, print simulation progress info
         """
         super().__init__(name=name)
         self.sky = sky
@@ -284,6 +287,11 @@ class RIME(utils.Module):
             # iterate over observation times
             for j, time in enumerate(self.sim_times):
 
+                # print info
+                message = "{} / {} times for {} / {} sky model".format(j+1, len(self.sim_times),
+                                                                       i+1, len(sky_components))
+                log(message, verbose=verbose, style=1)
+
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
@@ -336,3 +344,25 @@ class RIME(utils.Module):
 
         # sum across sky
         vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1).to(self.device)
+
+
+def log(message, verbose=False, style=1):
+    """
+    Print message to stdout
+
+    Parameters
+    ----------
+    message : str
+
+    verbose : bool, optional
+        If True print, otherwise silence
+
+    style : 
+    """
+    if verbose:
+        if style == 1:
+            print("{}".format(message))
+        elif style == 2:
+            print("{}\n{}".format(message, '-'*30))
+        elif style == 3:
+            print("\n{}\n{}\n{}".format('-'*30, message, '-'*30))
