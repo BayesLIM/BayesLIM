@@ -917,7 +917,7 @@ def Jy2K(freqs, steradians):
         Solid angle [str] to use in conversion.
     """
     c_cmps = 2.99792458e10  # cm/s
-    k_boltz = 1.380658e-16  # erg/K
+    k_boltz = 1.38064852e-16  # erg/K
     lam = c_cmps / freqs    # cm
     return 1e-23 * lam ** 2 / (2 * k_boltz * steradians)
 
