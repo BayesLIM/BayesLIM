@@ -357,7 +357,8 @@ def log(message, verbose=False, style=1):
     verbose : bool, optional
         If True print, otherwise silence
 
-    style : 
+    style : int, optional
+        Style of message
     """
     if verbose:
         if style == 1:

@@ -20,7 +20,7 @@ except ImportError:
 
 def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
                  freq_interp='linear', array_kwargs={},
-                 outfname=None, overwrite=False, partial_write=False):
+                 outfname=None, overwrite=False, partial_write=False, verbose=False):
     """
     Run a RIME visibility simulation given models
     for the sky, beam, and a UVData object.
@@ -54,6 +54,8 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
         Overwrite output if it exists
     partial_write : bool, optional
         Overwrite part of the file, if doing a partial read/write
+    verbose : bool, optional
+        If True, print RIME simulation progress info
 
     Returns
     -------
@@ -154,7 +156,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
 
     # setup RIME object
     RIME = rime_model.RIME(sky, tele, beam, ant2beam, arr, sim_bls, times, freqs,
-                           device=sky.device)
+                           device=sky.device, verbose=verbose)
 
     with torch.no_grad():
         # forward model sky, beam, and fringe to get visibilities
