@@ -428,6 +428,7 @@ class PixelResponse(utils.PixInterp):
         self.powerbeam = powerbeam
         self.freqs = freqs
         self.comp_params = comp_params
+        assert isinstance(comp_params, bool)
         self.device = device
         self.log = log
         self.freq_mode = freq_mode

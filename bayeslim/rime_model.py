@@ -92,10 +92,21 @@ class RIME(utils.Module):
         self.beam = beam
         self.array = array
         self.device = device
-        self.freqs = freqs
-        self.Nfreqs = len(freqs)
+        self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
+
+    def setup_freqs(self, freqs):
+        """
+        Set frequency array
+
+        Parameters
+        ----------
+        freqs : tensor
+            Array of observational frequencies [Hz]
+        """
+        self.freqs = freqs
+        self.Nfreqs = len(freqs)
 
     def setup_sim_bls(self, sim_bls, data_bls=None):
         """

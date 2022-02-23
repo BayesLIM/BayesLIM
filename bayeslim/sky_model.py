@@ -92,6 +92,7 @@ class SkyBase(utils.Module):
             Kind of interpolation if freq_mode is channel
             see scipy.interp1d for options
         """
+        freqs = torch.as_tensor(freqs)
         if self.R.freq_mode == 'channel':
             # interpolate params across frequency
             interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
@@ -103,8 +104,8 @@ class SkyBase(utils.Module):
                 self.params = torch.nn.Parameter(params)
             else:
                 self.params = params
-            self.freqs = freqs.to(self.device)
 
+        self.freqs = freqs.to(self.device)
         self.R.freqs = freqs.to(self.device)
         self.R._setup()
 
@@ -454,7 +455,7 @@ class PixelSkyResponse:
         cosmo : Cosmology object
         spatial_kwargs : dict, optional
             Kwargs used to generate spatial transform matrix
-            lms : array, holding l, m vaues of shape (2, Nlm)
+            l, m : array, holding l, m vaues
             theta, phi : array, holds co-latitude and azimuth
                 angles [deg] of pixel model, used for generating
                 Ylm in alm mode
