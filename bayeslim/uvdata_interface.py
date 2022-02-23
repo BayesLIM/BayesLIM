@@ -160,25 +160,36 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
 
     with torch.no_grad():
         # forward model sky, beam, and fringe to get visibilities
-        vis = utils.tensor2numpy(RIME.forward(), clone=True)
-
-    # flatten polarization axis, move to back
-    vis = vis.reshape(-1, *vis.shape[2:])
-    vis = np.moveaxis(vis, 0, -1)
+        vis = RIME.forward()
+        # make sure data is on cpu
+        vis.data = vis.data.cpu()
 
     # get polarization indices
     vis_pols = np.array([['ee', 'en'], ['ne', 'nn']])
     if len(pols) == 1:
-        pol_inds = np.array([0])
+        # 1pol mode
+        pol_inds = [(0, 0)]
     elif len(pols) == 2:
-        pol_inds = np.array([list(vis_pols.diagonal()).index(p) for p in pols])
+        # 2pol mode, assume vis is ordered as vis_pols
+        pol_inds = []
+        for p in pols:
+            pi = np.where(vis_pols == p)
+            pol_inds.append((pi[0][0], pi[1][0]))
     else:
-        pol_inds = np.array([list(vis_pols.ravel()).index(p) for p in pols])
+        # 4pol mode, assume vis is ordered as vis_pols
+        pol_inds = []
+        for p in pols:
+            pi = np.where(vis_pols == p)
+            pol_inds.append((pi[0][0], pi[1][0]))
 
     # iterate over baselines and fill-in uvd
     for i, bl in enumerate(sim_bls):
+        # get baseline-time indices
         inds = uvd.antpair2ind(bl)
-        uvd.data_array[inds, 0] = vis[i][:, :, pol_inds]
+        # iterate over uvd pols
+        for j, pol in enumerate(pols):
+            # insert data
+            uvd.data_array[inds, 0, :, j] = vis.data[pol_inds[j] + (i,)]
 
     # write to file
     if outfname:
