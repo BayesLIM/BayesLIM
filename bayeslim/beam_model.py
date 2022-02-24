@@ -569,7 +569,7 @@ class AiryResponse:
 
     The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
     """
-    def __init__(self, freq_ratio=1.0):
+    def __init__(self, freq_ratio=1.0, powerbeam=True):
         """
         .. math::
 
@@ -580,10 +580,14 @@ class AiryResponse:
         freq_ratio : float, optional
             Multiplicative scalar acting on freqs before airy disk is
             evaluated. Makes the beam mimic a higher or lower frequency beam.
+        powerbeam : bool, optional
+            If True, treat this as a squared, "baseline beam"
+            otherwise treat this as a per-antenna beam (unsquared)
         """
         self.freq_ratio = freq_ratio
         self.freq_mode = 'other'
         self.freq_ax = None
+        self.powerbeam = powerbeam
 
     def _setup(self):
         pass
@@ -602,7 +606,8 @@ class AiryResponse:
         # get azimuth dependent sigma
         Dew = params[..., 0:1]
         Dns = params[..., 1:2] if params.shape[-1] > 1 else None
-        beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio)
+        beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
+                         square=self.powerbeam)
         return beam
   
     def push(self, device):
@@ -857,7 +862,7 @@ class AlmBeam(utils.Module):
         raise NotImplementedError
 
 
-def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0):
+def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
     """
     Generate a (asymmetric) airy disk function.
     Note: this is not differentiable!
@@ -871,16 +876,19 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0):
     zen, az : ndarray
         Zenith (co-latitude) and azimuth angles [rad]
     Dew : float or array
-        Effective diameter of aperture along the EW direction
+        Effective diameter [m] of aperture along the EW direction
     freqs : ndarray
         Frequency bins [Hz]
     Dns : float or array, optional
-        Effective diameter of aperture along the NS direction
+        Effective diameter [m] of aperture along the NS direction
     freq_ratio : float, optional
         Optional scalar to multiply frequencies by before
         evaluating airy disk. Can make the beam look like a
         lower or higher frequency beam
         (i.e. have a smaller or wider main lobe)
+    square : bool, optional
+        If True, square the output, otherwise don't
+        square it.
 
     Returns
     -------
@@ -904,10 +912,12 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0):
         diameter = Dns + ecc * (Dew - Dns)
 
     # get xvals
-    xvals = diameter * mod.sin(zen) * np.pi * freqs.reshape(-1, 1) * freq_ratio / 2.9979e8
+    xvals = diameter * mod.sin(zen) * np.pi * freqs.reshape(-1, 1) * freq_ratio / 2.99792458e8
     # add a small value to handle x=0: introduces error on level of 1e-10
     xvals += 1e-10
-    beam = (2.0 * scispecial.j1(xvals) / xvals)**2
+    beam = 2.0 * scispecial.j1(xvals) / xvals
+    if square:
+        beam = beam**2
 
     return beam
 
