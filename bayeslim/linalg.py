@@ -442,14 +442,14 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
     if norm == 'inv':
         # invert to get D
         if Ninv is None:
-            Dinv = A.T.conj() @ A
+            Dinv = (A.T.conj() @ A).real
         else:
             if Ninv.ndim == 2:
                 # Ninv is matrix
-                Dinv = A.T.conj() @ Ninv @ A
+                Dinv = (A.T.conj() @ Ninv @ A).real
             else:
                 # Ninv is diagonal
-                Dinv = (A.T.conj() * Ninv) @ A
+                Dinv = ((A.T.conj() * Ninv) @ A).real
         # add regularization if desired
         if eps > 0:
             Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
@@ -467,7 +467,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         else:
             if Ninv.ndim == 2:
                 # Ninv is a matrix
-                Dinv = torch.diag(A.T.conj() @ Ninv @ A)
+                Dinv = torch.diag(A.T.conj() @ Ninv @ A).real
             else:
                 # Ninv is diagonal
                 Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
