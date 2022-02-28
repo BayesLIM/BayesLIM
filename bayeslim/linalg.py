@@ -458,7 +458,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
             D = torch.pinverse(Dinv, rcond=rcond)
         else:
             D = torch.inverse(Dinv)
-        x = x @ D
+        x = x @ D.to(x.dtype)
 
     elif norm == 'diag':
         # just invert diagonal to get D
@@ -472,7 +472,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
                 # Ninv is diagonal
                 Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
         D = 1 / Dinv
-        x = x * D
+        x = x * D.to(x.dtype)
 
     else:
         D = np.eye(A.shape[1])
