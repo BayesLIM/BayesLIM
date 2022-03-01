@@ -498,12 +498,12 @@ class PixelSkyResponse:
         # freq setup
         self.A, self.gln = None, None
         if self.freq_mode == 'poly':
-            f0 = getattr(self.freq_kwargs, 'f0', self.freqs.mean())
+            f0 = self.freq_kwargs.get('f0', self.freqs.mean())
             self.dfreqs = (self.freqs - f0) / 1e6  # MHz
             poly_dtype = utils._cfloat() if self.comp_params else utils._float()
             self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
-                                      basis=getattr(self.freq_kwargs, 'basis', 'direct'),
-                                      whiten=getattr(self.freq_kwargs, 'whiten', None),
+                                      basis=self.freq_kwargs.get('basis', 'direct'),
+                                      whiten=self.freq_kwargs.get('whiten', None),
                                       device=self.device).to(poly_dtype)
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
@@ -517,14 +517,14 @@ class PixelSkyResponse:
             else:
                 gln, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
-                                                  kmax=getattr(self.freq_kwargs, 'kmax'),
-                                                  decimate=getattr(self.freq_kwargs, 'decimate', True),
-                                                  dk_factor=getattr(self.freq_kwargs, 'dk_factor', 1e-1),
+                                                  kmax=self.freq_kwargs.get('kmax'),
+                                                  decimate=self.freq_kwargs.get('decimate', True),
+                                                  dk_factor=self.freq_kwargs.get('dk_factor', 1e-1),
                                                   device=self.device,
-                                                  method=getattr(self.freq_kwargs, 'radial_method', 'shell'),
-                                                  Nproc=getattr(self.freq_kwargs, 'Nproc', None),
-                                                  Ntask=getattr(self.freq_kwargs, 'Ntask', 10),
-                                                  renorm=getattr(self.freq_kwargs, 'renorm', False))
+                                                  method=self.freq_kwargs.get('radial_method', 'shell'),
+                                                  Nproc=self.freq_kwargs.get('Nproc', None),
+                                                  Ntask=self.freq_kwargs.get('Ntask', 10),
+                                                  renorm=self.freq_kwargs.get('renorm', False))
                 self.gln = gln
                 self.kbins = kbins
 
@@ -572,6 +572,7 @@ class PixelSkyResponse:
 
         if self.spatial_mode == 'pixel':
             return params
+
         elif self.spatial_mode == 'alm':
             return (params * self.alm_mult) @ self.Ylm
 
