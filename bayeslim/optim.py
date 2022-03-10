@@ -79,15 +79,16 @@ class LogTaperedUniformPrior:
         P &= \tanh(c(x-b_l))\cdot\tanh(-c(x-b_u))
 
     """
-    def __init__(self, lower_bound, upper_bound, kind='sigmoid',
-                 alpha=100., index=None):
+    def __init__(self, lower_bound=None, upper_bound=None, kind='sigmoid',
+                 alpha=10000., index=None):
         """
         Parameters
         ---------
-        lower_bound, upper_bound : tensors
+        lower_bound, upper_bound : tensors, optional
             Tensors holding the min and max of the allowed
             parameter value. Tensors should broadcast with
-            the (indexed) params input
+            the (indexed) params input. If only one is provided,
+            then the prior is defined as open-ended on the other bound.
         kind : str, optional
             Kind of taper to apply, either ['sigmoid', 'tanh'].
             Sigmoid is defined on all R and thus does not enacting strict
@@ -96,18 +97,27 @@ class LogTaperedUniformPrior:
         alpha : tensor, optional
             A scaling coefficient that determines the amount of tapering.
             The scaling coefficient is determined as alpha / (upper - lower)
-            where good values for alpha are 1 < alpha < 1000
-            alpha -> 1000, less edge taper (like a tophat)
+            where good values for alpha are 1 < alpha < 100000
+            alpha -> inf, less edge taper (like a tophat)
             alpha -> 1, more edge taper (like an inverted quadratic)
+            If one of the upper or lower bound is not provided,
+            then dbound = upper - lower = 1.0
         index : slice or tuple of slice objects
             indexing of params tensor before computing prior.
             default is no indexing.
         """
-        self.lower_bound = torch.as_tensor(lower_bound)
-        self.upper_bound = torch.as_tensor(upper_bound)
+        assert lower_bound is not None or upper_bound is not None
+        self.lower_bound, self.upper_bound = lower_bound, upper_bound
+        if self.lower_bound is not None:
+            self.lower_bound = torch.as_tensor(self.lower_bound)
+        if self.upper_bound is not None:
+            self.upper_bound = torch.as_tensor(self.upper_bound)
         self.alpha = torch.as_tensor(alpha)
         self.index = index
-        self.dbound = self.upper_bound - self.lower_bound
+        if self.upper_bound is not None and self.lower_bound is not None:
+            self.dbound = self.upper_bound - self.lower_bound
+        else:
+            self.dbound = 1.0
         self.coeff = self.alpha / self.dbound
         self.kind = kind
 
@@ -128,8 +138,12 @@ class LogTaperedUniformPrior:
         elif self.kind == 'tanh':
             func = torch.tanh
 
-        prob = func(self.coeff * (params - self.lower_bound)) \
-                          * func(-self.coeff * (params - self.upper_bound))
+        prob = 1.0
+        if self.lower_bound is not None:
+            prob = prob * func(self.coeff * (params - self.lower_bound))
+        if self.upper_bound is not None:
+            prob = prob * func(-self.coeff * (params - self.upper_bound))
+
         return torch.sum(torch.log(prob))
 
     def __call__(self, params):
