@@ -212,7 +212,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         if parameter is False:
             # build redundant info
             (self.reds, self.redvec, self.bl2red, self.bls, self.redlens, self.redangs,
-             self.redtags) = build_reds(antpos, **red_kwargs)
+             self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
 
     def get_antpos(self, ant):
         """
@@ -356,9 +356,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
             vector across frequency. If kind = 'point'
             or 'pixel' its shape is (Nfreqs, Npix)
         sky : tensor
-            Holds the sky representatation. If kind = 'point'
-            or 'pixel', its shape is (Npol, Npol, Nfreqs, Npix)
-            elif 'alm', its shape is (Npol, Npol, Nfreqs, Nalm)
+            Holds the sky coherency matrix, which generally
+            has a shape of (Npol, Npol, Nfreqs, Npix)
         kind : str
             Kind of fringe and sky model. 
             One of either ['point', 'pixel', 'alm']
@@ -508,7 +507,7 @@ def JD2LST(jd, longitude):
     return t.sidereal_time('apparent', longitude=longitude * units.deg).radian
 
 
-def build_reds(antpos, bls=None, redtol=0.1, min_len=None, max_len=None,
+def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
                min_EW_len=None, exclude_reds=None):
     """
     Build redundant groups
