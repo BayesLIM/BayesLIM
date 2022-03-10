@@ -16,45 +16,59 @@ D2R = utils.D2R
 
 class PixelBeam(utils.Module):
     """
-    Handles antenna primary beam models,
-    which relate the directional and frequency
+    Handles antenna primary beam models for a
+    discrete pixelized or point source sky model.
+    This relates the directional and frequency
     response of the sky to the "perceived" sky for
     a baseline between antennas p and q
 
     .. math::
 
-        I_{pq}(\hat{s}, \nu) = A_p I A_q^\ast
+        B_{pq}(\hat{s}, \nu) = A_p B A_q^\ast
 
     Note that this can be thought of as a direction-
     dependent Jones term which takes the form
 
     .. math::
 
-        J_p = \\left[\\begin{array}{cc}J_{ee} & J_{en}\\\\
-                    J_{ne} & J_{nn}\\end{array}\\right]
+        J_a = \\left[\\begin{array}{cc}J_e^\alpha & J_e^\delta\\\\
+                    J_n^\alpha & J_n^\delta\\end{array}\\right]
 
     where e and n index the East and North feed polarizations.
     The amplitude of the beam should be normalized to unity
     at boresight. Also, a single beam can be used for all
     antennas, or one can fit for per-antenna models.
+
+    There are three distinct operating modes, which are determined
+    based on the shape of params and the shape of the input sky_comp.
+        '1pol' : One auto-feed polarization
+            powerbeam = True  : (Npol=1, Nvec=1, Nmodel=1, ...)
+            powerbeam = False : (Npol=1, Nvec=2, ...)
+        '2pol' : Two auto-feed polarization
+            powerbeam = True  : (Npol=2, Nvec=1, Nmodel=1, ...)
+        '4pol' : All four auto and cross pols
+            powerbeam = False : (Npol=2 Nvec=2, ...)
     """
     def __init__(self, params, freqs, ant2beam=None, response=None,
                  response_args=(), response_kwargs={},
-                 parameter=True, polmode='1pol', pol=None,
-                 powerbeam=True, fov=180, name=None):
+                 parameter=True, pol=None, powerbeam=True,
+                 fov=180, name=None):
         """
-        A generic pixelized beam model evaluated on the sky
+        A generic beam model evaluated on the pixelized sky
 
         Parameters
         ----------
         params : tensor
             Initial beam parameterization, matched to the adopted
-            response function R.
-            By default, params should be a tensor of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix), where Npix are the sky pixels
-            where the beam is defined. If params is complex, it should
-            have an additional dim of (..., 2) via utils.viewreal().
-            Furthermore, set its response function comp_params=True.
+            response function R. By default, params should be a tensor
+            of shape (Npol, Nvec, Nmodel, Nfreqs, Npix), where Npix are
+            the sky pixels where the beam is defined, Nmodel are the number
+            of unique antenna beam models, Npol are the number of 
+            feed polarizations and Nvec is the number of electric
+            field vectors (Nvec = 1 for Stokes I, 2 for full-Stokes).
+            If params is complex, it should have an additional dim of
+            (..., 2) via utils.viewreal(), in which case, set its response
+            function comp_params=True.
         freqs : tensor
             Observational frequency bins [Hz]
         ant2beam : dict
@@ -70,9 +84,10 @@ class PixelBeam(utils.Module):
             The instantiated object has a __call__ signature
             that takes (zen [deg], az [deg], freqs [Hz])
             as arguments and returns the beam values of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix). Note that unlike
+            (Npol, Nvec, Nmodel, Nfreqs, Npix). Note that unlike
             sky_model, params are stored on both the Model and
-            the Response function with the same pointer.
+            the Response function with the same pointer! Hence the
+            different intialization API.
         response_args : tuple, optional
             arguments for instantiating response object
             after passing params as first argument
@@ -81,17 +96,15 @@ class PixelBeam(utils.Module):
         parameter : bool, optional
             If True, fit for params (default), otherwise
             keep it fixed to its input value
-        polmode : str, optional
-            Polarization mode. params must conform to polmode.
-            1pol : single linear polarization (default) Npol=1
-            2pol : two linear polarizations (diag of Jones) Npol=2
-            4pol : four linear and cross pol (2x2 Jones) Npol=2
         pol : str, optional
-            This specifies the dipole polarization for 1pol mode.
-            Only used for 1pol mode. Options = ['ee', 'nn']
+            If Npol = 1, this is its polarization, either ['e', 'n'].
+            If Npol = 2, params ordering must be ['e', 'n'], so this
+            attribute is ignored.
         powerbeam : bool, optional
             If True, take the antenna beam to be a real-valued, baseline
-            "power" beam, or psky = beam * sky. Only valid for 1pol or 2pol.
+            "power" beam, or psky = beam * sky. Only valid under strict
+            assumption of identical antenna beams and a Stokes I sky model.
+            i.e. Nmodel = Nvec = Nstokes = 1.
         fov : float, optional
             Total angular extent of the field-of-view in degrees, centered
             at the pointing center (alitude). Parts of the sky outside of fov
@@ -118,23 +131,23 @@ class PixelBeam(utils.Module):
         self.powerbeam = powerbeam
         if hasattr(self.R, 'powerbeam'):
             assert self.powerbeam == self.R.powerbeam
+        self.Npol = params.shape[0]
+        self.Nvec = params.shape[1]
+        self.Nmodel = params.shape[2]
+        if self.powerbeam:
+            assert self.Nmodel == self.Nvec == 1
+        else:
+            assert self.Nvec == 2
         self.freqs = freqs
         self.Nfreqs = len(freqs)
-        self.polmode = polmode
         self.fov = fov
-        if self.powerbeam:
-            assert self.polmode in ['1pol', '2pol']
-        self.Npol = 1 if polmode == '1pol' else 2
         self.pol = pol
-        if self.polmode == '1pol':
-            assert self.pol is not None, "must specify pol for 1pol mode"
-            assert self.pol.lower() in ['ee', 'nn'], "must be 'ee' or 'nn'"
         if ant2beam is None:
             assert params.shape[2] == 1, "only 1 model for default ant2beam"
             self.ant2beam = utils.SimpleIndex()
 
         # construct _args for str repr
-        self._args = dict(powerbeam=powerbeam, fov=fov, polmode=polmode)
+        self._args = dict(powerbeam=powerbeam, fov=fov, Npol=self.Npol, Nmodel=self.Nmodel)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
     def push(self, device):
@@ -165,7 +178,7 @@ class PixelBeam(utils.Module):
         -------
         beam : tensor
             A tensor beam model of shape
-            (Npol, Npol, Nmodel, Nfreqs, Npix)
+            (Npol, Nvec, Nmodel, Nfreqs, Npix)
         cut : array
             Indexing of Npix axis given fov cut
         zen, az : tensor
@@ -194,10 +207,10 @@ class PixelBeam(utils.Module):
         Parameters
         ----------
         beam1 : tensor
-            Holds the beam response for one of the antennas in a
-            baseline, with shape (Npol, Npol, Nfreqs, Nsources).
+            Holds the beam response for the first antenna in a
+            baseline, with shape (Npol, Nvec, Nfreqs, Nsources).
         sky : tensor
-            sky representation (Npol, Npol, Nfreqs, Nsources)
+            sky coherency matrix (Nvec, Nvec, Nfreqs, Nsources)
         beam2 : tensor, optional
             The beam response for the second antenna in the baseline.
             If None, use beam1 for both ant1 and ant2.
@@ -217,16 +230,36 @@ class PixelBeam(utils.Module):
         else:
             beam2 = beam2.to(self.device)
 
-        if self.polmode in ['1pol', '2pol']:
-            if self.powerbeam:
-                # assume beam is baseline beam with identical antenna beams: only use beam1
-                psky = linalg.diag_matmul(beam1, sky)
+        # multiply in the beam(s) depending on polmode
+        if self.Npol == 1:
+            # only one feed polarization: 1-pol mode
+            if self.Nvec == 1:
+                # only stokes I
+                assert sky.shape[:2] == (1, 1)
+                # direct multiply
+                if self.powerbeam:
+                    psky = beam1 * sky
+                else:
+                    psky = beam1 * sky * beam2.conj()
             else:
-                # assume antenna beams
-                psky = linalg.diag_matmul(linalg.diag_matmul(beam1, sky), beam2.conj())
+                # full stokes
+                assert sky.shape[:2] == (2, 2)
+                psky = torch.einsum("ab...,bc...,dc...->ad...", beam1, sky, beam2.conj())
         else:
-            psky = torch.einsum("ab...,bc...,dc...->ad...", beam1,
-                                sky, beam2.conj())
+            # two feed polarizations
+            if self.powerbeam:
+                # this is 2-pol mode, a simplified version of the full 4-pol mode
+                assert self.Nvec == 1
+                assert sky.shape[:2] == (1, 1)
+                psky = torch.zeros(2, 2, *sky.shape[2:], dtype=sky.dtype, device=self.device)
+                psky[0, 0] = beam1[0, 0] * sky[0, 0]
+                psky[1, 1] = beam1[1, 0] * sky[0, 0]
+
+            else:
+                # this is 4-pol mode
+                assert not self.powerbeam
+                assert sky.shape[:2] == (2, 2)
+                psky = torch.einsum("ab...,bc...,dc...->ad...", beam1, sky, beam2.conj())
 
         return psky
 
@@ -284,7 +317,8 @@ class PixelBeam(utils.Module):
 
             # iterate over baselines
             shape = sky.shape
-            psky = torch.zeros(shape[:2] + (len(modelpairs),) + shape[2:], dtype=sky.dtype, device=self.device)
+            psky = torch.zeros((self.Npol, self.Npol) + (len(modelpairs),) + shape[2:],
+                               dtype=sky.dtype, device=self.device)
             for k, (ant1, ant2) in enumerate(modelpairs):
                 # get beam of each antenna
                 beam1 = beam[:, :, ant1]
@@ -372,7 +406,7 @@ class PixelResponse(utils.PixInterp):
     where zen, az are the zenith and azimuth angles [deg]
     to evaluate the beam, computed using nearest or bilinear
     interpolation of the input beam map (params). The output
-    beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
+    beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
 
     This object also has a caching system for the weights
     and indicies of a bilinear interpolation of the beam 
@@ -512,11 +546,11 @@ class GaussResponse:
 
     Recall azimuth is defined as the angle East of North.
 
-    The input params should have shape (Npol, Npol, Nmodel, Nfreqs, 2).
+    The input params should have shape (Npol, Nvec, Nmodel, Nfreqs, 2).
     The tensors are the Gaussian sigma in EW and NS sky directions,
     respectively (last axis), with units of the dimensionless image-plane
     l & m (azimuth sines & cosines).
-    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
+    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
     """
     def __init__(self):
         """
@@ -561,13 +595,13 @@ class AiryResponse:
 
     Recall azimuth is defined as the angle East of North.
 
-    params has shape (Npol, Npol, Nmodel, 1, 2). The tensors are
+    params has shape (Npol, Nvec, Nmodel, 1, 2). The tensors are
     the aperture diameter [meters] in the EW and NS aperture directions,
     respectively (last axis). The second-to-last axis is an empty slot
     for frequency broadcasting. In case one wants a single aperture diameter
-    for both EW and NS directions, this is shape (Npol, Npol, Nmodel, 1, 1)
+    for both EW and NS directions, this is shape (Npol, Nvec, Nmodel, 1, 1)
 
-    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix).
+    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
     """
     def __init__(self, freq_ratio=1.0, powerbeam=True):
         """
@@ -597,7 +631,7 @@ class AiryResponse:
         Parameters
         ----------
         params : tensor
-            parameter tensor of shape (Npol, Npol, Nmodel, 2)
+            parameter tensor of shape (Npol, Nvec, Nmodel, 2)
         zen, az : array or tensor
             zenith and azimuth arrays [deg]
         freqs : array or tensor
@@ -631,11 +665,11 @@ class YlmResponse(PixelResponse):
     and you get a RunTimeError.
 
     params holds a_lm coefficients of shape
-    (Npol, Npol, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
+    (Npol, Nvec, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
     of lm modes. Ndeg is the number of polynomial degree terms
     wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
 
-    The output beam has shape (Npol, Npol, Nmodel, Nfreqs, Npix)
+    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
@@ -780,7 +814,7 @@ class YlmResponse(PixelResponse):
         Parameters
         ----------
         params : tensor
-            Ylm coefficients of shape (Npol, Npol, Nmodel, Ndeg, Ncoeff)
+            Ylm coefficients of shape (Npol, Nvec, Nmodel, Ndeg, Ncoeff)
         zen, az : ndarrays
             zenith and azimuth angles [deg]
         freqs : ndarray
@@ -790,7 +824,7 @@ class YlmResponse(PixelResponse):
         -------
         beam : tensor
             pixelized beam on the sky
-            of shape (Npol, Npol, Nmodel, Nfreqs, Npix)
+            of shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
         """
         # pass to device
         if utils.device(params.device) != utils.device(self.device):

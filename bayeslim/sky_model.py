@@ -22,6 +22,7 @@ class SkyBase(utils.Module):
         params : tensor
             A sky model parameterization as a tensor to
             be pushed through the response function R().
+            In general this should be (Nstokes, 1, Nfreqs, Nsources)
         kind : str
             Kind of sky model. options = ['point', 'pixel', 'alm']
             for point source model, pixelized model, and spherical
@@ -32,7 +33,7 @@ class SkyBase(utils.Module):
             An arbitrary response function for the
             point source model, mapping self.params
             to a sky source tensor of shape
-            (Npol, Npol, Nfreqs, Nsources)
+            (Nstokes, 1, Nfreqs, Nsources)
         name : str, optional
             Name for this object, stored as self.name
         parameter : bool
@@ -147,21 +148,15 @@ class PointSky(SkyBase):
         ----------
         params : tensor
             Point source flux parameterization adopted by R().
-            In general, this is of shape (Npol, Npol, Ncoeff, Nsources),
+            In general, this is of shape (Nstokes, 1, Ncoeff, Nsources),
             where Ncoeff is the chosen parameterization across frequency.
             For no parameterization (default) this should be a tensor
-            of shape (Npol, Npol, Nfreqs, Nsources).
-            Npol is the number of feed polarizations, and
-            the first two axes are the coherency matrix B:
-
-            .. math::
-
-                B = \left(
-                    \begin{array}{cc}I + Q & U + iV \\
-                    U - iV & I - Q \end{array}
-                \right)
-
-            See bayeslim.sky_model.stokes2linear() for details.
+            of shape (Nstokes, 1, Nfreqs, Nsources).
+            Nstokes is the number of Stokes parameters ordered as
+            I, Q, U, V. The sky block should be followed by a 
+            Stokes2Coherency block. However, for just Stokes I
+            and in 1pol mode, this can be (1, 1, Nfreqs, Nsources)
+            with no Stokes2Coherency block.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -172,7 +167,7 @@ class PointSky(SkyBase):
             An arbitrary response function for the
             point source model, mapping self.params
             to a sky source tensor of shape
-            (Npol, Npol, Nfreqs, Nsources)
+            (Ntokes, 1, Nfreqs, Nsources)
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
@@ -199,8 +194,7 @@ class PointSky(SkyBase):
                 spix = params[1]
                 return S * (freqs / freqs[0])**spix
             P = bayeslim.sky.PointSky([amps, alpha],
-                                              angs, Nfreqs, R=R)
-
+                                      angs, Nfreqs, R=R)
         """
         super().__init__(params, 'point', freqs, R=R, name=name, parameter=parameter)
         self.angs = angs
@@ -223,7 +217,7 @@ class PointSky(SkyBase):
                 Kind of sky model ['point', 'pixel', 'alm']
             sky : tensor
                 Source brightness at discrete locations
-                (Npol, Npol, Nfreqs, Nsources)
+                (Nstokes, 1, Nfreqs, Nsources)
             angs : tensor
                 Sky source locations (RA, Dec) [deg]
                 (2, Nsources)
@@ -303,9 +297,9 @@ class PointSkyResponse:
         if self.freq_mode == 'channel':
             return params
         elif self.freq_mode == 'poly':
-            return self.A @ params
+            return (self.A @ params.moveaxis(-2, 0)).moveaxis(0, -2)
         elif self.freq_mode == 'powerlaw':
-            return params[..., 0, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1, :]
+            return params[..., 0:1, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1:2, :]
 
     def push(self, device):
         self.device = device
@@ -340,22 +334,14 @@ class PixelSky(SkyBase):
         ----------
         params : tensor
             Sky model flux parameterization of shape
-            (Npol, Npol, Nfreq_coeff, Nsky_coeff), where Nsky_coeff is
+            (Nstokes, 1, Nfreq_coeff, Nsky_coeff), where Nsky_coeff is
             the free parameters describing angular fluctations, and Nfreq_coeff
             is the number of free parameters describing frequency fluctuations,
             both of which should be expected by the response function R().
             By default, this is just Nfreqs and Npix, respectively.
-            Npol is the number of feed polarizations.
-            The first two axes are the coherency matrix B:
-
-            .. math::
-
-                B = \\left(
-                    \\begin{array}{cc}I + Q & U + iV \\\\
-                    U - iV & I - Q \\end{array}
-                \\right)
-
-            See sky_model.stokes2linear() for details.
+            Nstokes is the number of Stokes polarizations ordered as I, Q, U, V.
+            Unless operating in 1pol mode with only Stokes I, this should
+            be followed by a Stokes2Coherency block.
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
@@ -370,7 +356,7 @@ class PixelSky(SkyBase):
         R : callable, optional
             An arbitrary response function for the sky model, mapping
             self.params to a sky pixel tensor of shape
-            (Npol, Npol, Nfreqs, Npix)
+            (Nstokes, 1, Nfreqs, Npix)
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
@@ -397,7 +383,7 @@ class PixelSky(SkyBase):
                 Kind of sky model ['point', 'pixel', 'alm']
             amps : tensor
                 Pixel flux density at fixed locations on the sky
-                (Npol, Npol, Nfreqs, Npix)
+                (Nstokes, 1, Nfreqs, Npix)
             angs : tensor
                 Sky source locations (RA, Dec) [deg]
                 (2, Npix)
@@ -556,14 +542,14 @@ class PixelSkyResponse:
         Parameters
         ----------
         params : tensor
-            Sky model parameters (Npol, Npol, Ndeg, Ncoeff)
+            Sky model parameters (Nstokes, 1, Ndeg, Ncoeff)
             where Ndeg may equal Nfreqs, and Ncoeff
             are the coefficients for the sky representations.
 
         Returns
         -------
         tensor
-            Sky model of shape (Npol, Npol, Ndeg, Npix)
+            Sky model of shape (Nstokes, 1, Ndeg, Npix)
         """
         # detect if params needs to be casted into complex
         if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
@@ -584,14 +570,14 @@ class PixelSkyResponse:
         Parameters
         ----------
         params : tensor
-            Sky model parameters (Npol, Npol, Ndeg, Ncoeff)
+            Sky model parameters (Nstokes, 1, Ndeg, Ncoeff)
             where Ncoeff may equal Npix, and Ndeg
             are the coefficients for the frequency representations.
     
         Returns
         -------
         tensor
-            Sky model of shape (Npol, Npol, Nfreqs, Ncoeff)
+            Sky model of shape (Nstokes, 1, Nfreqs, Ncoeff)
         """
         # detect if params needs to be casted into complex
         if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
@@ -669,7 +655,7 @@ class SphHarmSky(SkyBase):
             Spherical harmonic parameterization of the sky.
             The first element of params must be a tensor holding
             the a_lm coefficients of shape
-            (Npol, Npol, Nfreqs, Ncoeff). Nfreqs may also be
+            (Nstokes, 1, Nfreqs, Ncoeff). Nfreqs may also be
             replaced by Nk for a spherical Fourier Bessel model.
             Additional tensors can also parameterize frequency axis.
         lms : array
@@ -681,7 +667,7 @@ class SphHarmSky(SkyBase):
             An arbitrary response function for the
             spherical harmonic model, mapping input self.params
             to an output a_lm basis of shape
-            (Npol, Npol, Nfreqs, Ncoeff).
+            (Nstokes, 1, Nfreqs, Ncoeff).
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
@@ -845,7 +831,7 @@ def read_catalogue(catfile, freqs=None, device=None,
         # still under development
         Nsources = params.shape[-1]
         sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
-        stokes = PolStokesModel(sparams, parameter=parameter)
+        stokes = FullStokesModel(frac_pol=True)
         sky = utils.Sequential(dict(sky=sky, stokes=stokes))
 
     return sky, sources['name']
@@ -923,154 +909,154 @@ def Jy2K(freqs, steradians):
     return 1e-23 * lam ** 2 / (2 * k_boltz * steradians)
 
 
-def stokes2linear(S):
+class Stokes2Coherency(utils.Module):
     """
     Convert Stokes parameters to coherency matrix
-    for xyz cartesian (aka linear) feed basis.
-    This can be included at the beginning of
-    the response matrix (R) of any of the sky model
-    objects in order to properly account for Stokes
-    Q, U, V parameters in a sky model.
+    for xy cartesian (i.e. linear) feed basis.
+    Input to forward call should be of shape (4, 1, ...)
+    with the zeroth axis holding the Stokes parameters
+    in the order of [I, frac_Q, frac_U, frac_V], where
+    frac_Q is defined as
 
     .. math::
 
-        S = \left(
-            \begin{array}{c}I\\ Q\\ U\\ V\end{array}
+        Q = I * f_Q
+
+    and is not the normal fractional pol of (Q/I)^2.
+    Optionally, if S is of shape (2, 2, ...) then it is assumed
+    that Stokes parameters are ordered
+        | I      frac_Q |
+        | frac_U frac_V |
+
+    Returns the coherency matrix of the form
+
+    .. math::
+
+        B = \left(
+            \begin{array}{cc}I + Q & U - iV \\
+            U + iV & I - Q \end{array}
         \right)
 
-    Parameters
-    ----------
-    S : tensor
-        Holds the Stokes parameter of a generalized
-        sky model parameterization, of shape (4, ...)
-        with the zeroth axis holding the Stokes parameters
-        in the order of [I, Q, U, V].
-
-    Returns
-    -------
-    B : tensor
-        Coherency matrix of electric field in xyz cartesian
-        basis of shape (2, 2, ...) with the form
-
-        .. math::
-
-            B = \left(
-                \begin{array}{cc}I + Q & U + iV \\
-                U - iV & I - Q \end{array}
-            \right)
-    """
-    device = S.device
-    if len(S) == 1:
-        # assume Stokes I was fed
-        B = torch.zeros(1, 1, *S.shape[1:], dtype=_float(), device=device)
-        B[0, 0] = S[0]
-    elif len(S) == 3:
-        # assume fractional Q, U, V was fed.
-        B = torch.zeros(2, 2, *S.shape[1:], dtype=_float(), device=device)
-        B[0, 0] = 1 + S[0]
-        B[0, 1] = S[1] + 1j * S[2]
-        B[1, 0] = S[1] - 1j * S[2]
-        B[1, 1] = 1 - S[0]
-    elif len(S) == 4:
-        # assume 4-Stokes was fed
-        B = torch.zeros(2, 2, *S.shape[1:], dtype=_float(), device=device)
-        B[0, 0] = S[0] + S[1]
-        B[0, 1] = S[2] + 1j * S[3]
-        B[1, 0] = S[2] - 1j * S[3]
-        B[1, 1] = S[0] - S[1]
-
-    return B
-
-
-class PolStokesModel(utils.Module):
-    """
-    A model for Stokes Q, U, V parameters of a SkyBase object
-
-    The output of a Stokes I-only sky model can be pushed
-    through this to become a polarized Stokes sky model, with
-    parameters dictating the relationship between
-    Stokes I and Stokes Q, U, V.
+    Note: the Stokes QUV parameters should not
+    sum in quadrature to more than I, i.e.
 
     .. math::
 
-            \left(
-                \begin{array}{cc}I + Q & U + iV \\
-                U - iV & I - Q \end{array}
-            \right) = 
-            \left(
-                \begin{array}{cc}1 + f_Q & f_U + i*f_V \\
-                f_U - i*f_V & 1 - f_Q \end{array}
-            \right)\cdot I
+        (Q^2 + U^2 + V^2) / I^2 \le 1
 
-    Note: the fractional stokes parameters should not
-    sum in quadrature to more than 1, i.e.
-
-    .. math::
-
-        f_Q^2 + f_U^2 + f_V^2 \le 1
-
-    which should be enforced by setting a prior
-    on their quadrature sum.
+    which should be enforced by setting a
+    prior on this quantity.
     """
-    def __init__(self, params, parameter=True):
+    def __init__(self, params=None, parameter=False):
         """
         Parameters
         ----------
-        params : tensor
-            The fractional relationship between
-            Stokes I and Stokes Q, U, V, i.e.
-            f_Q, f_U, f_V, of shape
-            (3, Nfreqs, Nsources), where both
-            Nfreqs and Nsources can be 1 to
-            reduce degrees of freedom and then
-            be broadcasted on the sky model.
+        params : tensor or utils.Module object, optional
+            If provided, this is the fractional polarization
+            tensor shape (3, 1, ...) where the zeroth dimension
+            holds fractional polarization for Q, U, V in
+            that order. This assumes that the input to the
+            forward call is a Stokes-I only sky model.
+            Alternatively, this can be a sky_model.SkyBase
+            object representing a forward model of the
+            fractional polarization sky, whose output['sky']
+            tensor takes the form of the params tensor above.
+            If params is not provided, assume that the input
+            sky model contains Stokes I[frac_Q,frac_U,frac_V].
         parameter : bool, optional
-            Treat params as tunable parameters,
-            or leave them fixed as is.
+            Make the fractional pol tensor a parameter.
         """
         super().__init__()
         self.params = params
-        self.device = self.params.device
         if parameter:
-            self.params = torch.nn.Parameter(self.params)
-
-    def push(self, device):
-        """
-        Parameters
-        ----------
-        device : str
-            Device to push to, e.g. 'cpu', 'cuda:0'
-        """
-        self.params = utils.push(self.params, device)
-        self.device = self.params.device
+            if isinstance(self.params, torch.Tensor):
+                self.params = torch.nn.Parameter(self.params)
 
     def forward(self, sky_comp, prior_cache=None):
         """
-        Forward model polarization state onto Stokes I basis
+        Forward sky model into coherency matrix form
 
         Parameters
         ----------
-        sky_comp : dict or tensor
-            A Stokes-I sky component dictionary output from
-            a SkyBase subclass, or a sky parameter tensor
-            of shape (1, 1, Nfreqs, Nsources). To reduce
-            dimensionality, one can set Nfreqs or Nsources = 1
-            and will broadcast the parameter across the sky model.
+        sky_comp : tensor or dict
+            Of shape (4, 1, ...) or (2, 2, ...)
+            holding IQUV or [[I, Q], [U, V]] respectively.
+            Can also be a sky_component dictionary, which will
+            index sky_comp['sky'] as the sky tensor
 
         Returns
         -------
-        dict or tensor
-            Polarized coherency matrix of shape (2, 2, Nfreqs, Nsources)
+        tensor or dict
         """
+        # check if params is actually a sky_component
         if isinstance(sky_comp, dict):
             sky_comp['sky'] = self.forward(sky_comp['sky'], prior_cache=prior_cache)
             return sky_comp
 
-        # evaluate prior
-        self.eval_prior(inp_params=self.params)
+        # assume sky_comp is a (Nstokes, 1, ...) tensor from here on out
+        device = sky_comp.device
+        if len(sky_comp) == 1:
+            # only Stokes I was fed
+            I = sky_comp[0, 0]
+            if self.params is not None:
+                if not isinstance(self.params, torch.Tensor):
+                    # forward model if params is a sky model
+                    params = self.params()['sky']
+                else:
+                    # otherwise use self.params
+                    params = self.params
+                # setup output coherency matrix
+                B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+                frac_Q = params[0, 0]
+                Q = I * frac_Q
+                if len(params) > 1:
+                    frac_U = params[1, 0]
+                    U = I * frac_U
+                else:
+                    frac_U = 0
+                    U = 0
+                if len(params) > 2:
+                    frac_V = params[2, 0]
+                    V = I * frac_V
+                else:
+                    frac_V = 0
+                    V = 0
 
-        # get fractional polarized coherency matrix
-        B = stokes2linear(self.params)
+            else:
+                # no fractional polarization just use Stokes I
+                B = torch.zeros(1, 1, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+                frac_Q, frac_U, frac_V = 0, 0, 0
+                Q, U, V = 0, 0, 0
+        else:
+            # assume some or all of Q, U, V was fed along with I
+            B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+            I = sky_comp[0, 0]
+            if sky_comp.shape[:2] == (2, 2):
+                # index sky_comp as (2, 2, ...)
+                frac_Q, frac_U, frac_V = sky_comp[0, 1], sky_comp[1, 0], sky_comp[1, 1]
+            else:
+                # index sky_comp as (N, 1, ...)
+                frac_Q = sky_comp[1, 0]
+                if len(sky_comp) > 2:
+                    frac_U = sky_comp[2, 0]
+                else:
+                    frac_U = 0
+                if len(sky_comp) > 3:
+                    frac_V = sky_comp[3, 0]
+                else:
+                    frac_V = 0
+            Q, U, V = I * frac_Q, I * frac_U, I * frac_V
 
-        return B * sky_comp
+        # populate coherency matrix
+        B[0, 0] = I + Q
+        if len(B) > 1:
+            B[0, 1] = U - 1j * V
+            B[1, 0] = U + 1j * V
+            B[1, 1] = I - Q
 
+        # evaluate prior on fractional polarization
+        # this should be less than or equal to 1.0
+        frac_pol = frac_Q**2 + frac_U**2 + frac_V**2
+        self.eval_prior(prior_cache, inp_params=frac_pol)
+
+        return B
