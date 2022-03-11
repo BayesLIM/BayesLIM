@@ -710,10 +710,11 @@ class Trainer:
             optimizer will not destroy self.loss array
         """
         if isinstance(opt, type):
-            # this is a class instance
-            self.opt = opt
-        else:
+            # this is a class object
             self.opt = opt(self.prob.parameters(), *args, **kwargs)
+        else:
+            # this is a class instsance
+            self.opt = opt
 
     def train(self, Nepochs=1, Nreport=None):
         """
