@@ -674,10 +674,10 @@ class Trainer:
             a chain during optimization.
         """
         self.prob = prob
-        self.opt = opt
         self.loss = []
         self.closure_eval = 0
         self.track = track
+        self.set_opt(opt)
 
         if prob.grad_type == 'accumulate':
             self.Nbatch = 1
@@ -691,6 +691,29 @@ class Trainer:
         else:
             for k in prob.named_parameters():
                 self.chain[k[0]] = []
+
+    def set_opt(self, opt, *args, **kwargs):
+        """
+        Set optimizer. If opt is a class instance,
+        this will instantiate it as
+
+        .. code-block:: python
+
+            self.opt = opt(self.prob.parameters(), *args, **kwargs)
+
+        otherwise if it is a instance just use it as is.
+
+        Parameters
+        ----------
+        opt : torch optimizer class or class-instance
+            Optimizer to use in the run. Setting the
+            optimizer will not destroy self.loss array
+        """
+        if isinstance(opt, type):
+            # this is a class instance
+            self.opt = opt
+        else:
+            self.opt = opt(self.prob.parameters(), *args, **kwargs)
 
     def train(self, Nepochs=1, Nreport=None):
         """
