@@ -389,9 +389,9 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
     ----------
     A : tensor
         Design matrix, mapping parameters to outputs
-        of shape (N, M)
+        of shape (Nsamples, Nvariables)
     y : tensor
-        Observation vector or matrix, of shape (M, ...)
+        Observation tensor of shape (..., Nsamples, ...)
     dim : int, optional
         Dimension in y to multiply into A. Default is 0th axis.
     Ninv : tensor, optional
@@ -442,17 +442,19 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
     if norm == 'inv':
         # invert to get D
         if Ninv is None:
-            Dinv = (A.T.conj() @ A).real
+            Dinv = A.T.conj() @ A
         else:
             if Ninv.ndim == 2:
                 # Ninv is matrix
-                Dinv = (A.T.conj() @ Ninv @ A).real
+                Dinv = A.T.conj() @ Ninv @ A
             else:
                 # Ninv is diagonal
-                Dinv = ((A.T.conj() * Ninv) @ A).real
+                Dinv = (A.T.conj() * Ninv) @ A
         # add regularization if desired
         if eps > 0:
             Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
+        if torch.is_complex(Dinv):
+            Dinv = Dinv.real
         # invert
         if pinv:
             D = torch.pinverse(Dinv, rcond=rcond)
@@ -467,10 +469,12 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         else:
             if Ninv.ndim == 2:
                 # Ninv is a matrix
-                Dinv = torch.diag(A.T.conj() @ Ninv @ A).real
+                Dinv = torch.diag(A.T.conj() @ Ninv @ A)
             else:
                 # Ninv is diagonal
                 Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
+        if torch.is_complex(Dinv):
+            Dinv = Dinv.real
         D = 1 / Dinv
         x = x * D.to(x.dtype)
 
@@ -481,7 +485,4 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
     x = x.moveaxis(-1, dim)
 
     return x, D
-
-
-
 
