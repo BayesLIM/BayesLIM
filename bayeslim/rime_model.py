@@ -269,7 +269,7 @@ class RIME(utils.Module):
         # initialize visibility tensor
         Npol = self.beam.Npol
         if Npol == 1:
-            pol = "{}{}".format(self.pol, self.pol)
+            pol = "{}{}".format(self.beam.pol, self.beam.pol)
         else:
             pol = None
         vd = VisData()
