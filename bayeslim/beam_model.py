@@ -854,14 +854,14 @@ class YlmResponse(PixelResponse):
 
     def __call__(self, params, zen, az, freqs):
         # cast to complex if needed
-        if self.comp_params:
+        if self.comp_params and torch.is_complex(params) is False:
             params = utils.viewcomp(params)
 
         # for generate mode, forward model the beam exactly at zen, az
         if self.mode == 'generate':
             beam = self.forward(params, zen, az, freqs)
 
-        # otherwise interpolate the pre-forwarded beam at zen, az
+        # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
                 # beam must first be forwarded at theta and phi
