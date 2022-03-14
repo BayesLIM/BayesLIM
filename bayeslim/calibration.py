@@ -782,6 +782,88 @@ class VisModelResponse:
             self.time_A = self.time_A.to(device)
 
 
+class VisCoupling(utils.Module):
+    """
+    A visibility coupling module, describing
+    a Nbls x Nbls coupling matrix
+    """
+    def __init__(self, params, bls, R=None, parameter=True, name=None):
+        """
+        Visibility coupling model
+
+        Parameters
+        ----------
+        params : tensor
+            (Npol, Npol, Nbls, Nbls, Ntimes, Nfreqs) tensor
+            describing coupling between baselines
+        bls : list
+            List of antenna pair tuples (i.e. baselines) of
+            params along its Nbls axis
+        R : callable, optional
+            Response object for params, mapping it from
+            sparse basis to its (Npol, Npol, ... Nfreqs) shape
+            Default is VisModelResponse
+        parameter : bool, optional
+            If True, treat params as differentiable
+        name : str, optional
+            Name for this module, default is class name
+        """
+        super().__init__(name=name)
+        self.params = params
+        self.device = params.device
+        self.bls = bls
+        self.Nbls = len(bls)
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
+        if R is None:
+            # default response is per freq channel and time bin
+            R = VisModelResponse()
+        self.R = R
+
+    def forward(self, vd, prior_cache=None, **kwargs):
+        """
+        Forward pass vd through visibility coupling
+        model term.
+
+        Parameters
+        ----------
+        vd : VisData
+            Starting model visibilities
+            of shape (Npol, Npol, Nbl, Ntimes, Nfreqs).
+        prior_cache : dict, optional
+            Cache for storing computed priors on self.params
+
+        Returns
+        -------
+        VisData
+            The predicted visibilities, having pushed input
+            through coupling matrix
+        """
+        vout = vd.copy(detach=False)
+        coupling = self.R(self.params)
+
+        if vout.Nbls == self.Nbls:
+            # if Nbls is the same, assume bl ordering matches!
+            bl_idx = slice(None)
+        else:
+            # otherwise get relevant bls in vout for this coupling model
+            bl_idx = vout._bl2ind(coupling.bls)
+
+        # multiply coupling tensor
+        vout.data[:, :, bl_idx] = torch.einsum("iijk...,iik...->iij...", coupling, vout.data)
+
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
+
+        return vout
+
+    def push(self, device):
+        """
+        Push to a new device
+        """
+        self.params = utils.push(self.params, device)
+
+
 class CalData:
     """
     Work in progress...

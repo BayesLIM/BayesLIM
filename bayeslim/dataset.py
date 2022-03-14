@@ -120,15 +120,16 @@ class VisData:
         if self.icov is not None:
             self.icov = self.icov.to(device)
 
-    def copy(self):
+    def copy(self, detach=True):
         """
-        Copy and return self. Data tensor
-        is detached and cloned.
+        Copy and return self. This is equivalent
+        to a detach and clone. Detach is optional
         """
         vd = VisData()
         vd.setup_meta(telescope=self.telescope, antpos=self.antpos)
+        data = self.data.detach() if detach else self.data
         vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
-                      data=self.data.detach().clone(),
+                      data=data.clone(),
                       flags=self.flags, cov=self.cov, icov=self.icov,
                       cov_axis=self.cov_axis, history=self.history)
         return vd
