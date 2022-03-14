@@ -342,7 +342,7 @@ def _gen_sph2pix_multiproc(job):
 
 def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
                 lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
-                high_prec=True, renorm=False, bc_type=2):
+                high_prec=True, bc_type=2, renorm=False, **norm_kwargs):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -356,12 +356,15 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     For computing integer degree spherical harmonics, high_prec is
     likely not needed.
 
-    The orthonormalized, full-sky spherical harmonics are
+    The orthonormalized cut-sky spherical harmonics are
 
     .. math::
 
         Y_{lm}(\theta,\phi) = \sqrt{\frac{2l+1}{4\pi}\frac{(l-m)!}{(l+m)!}}
                                 e^{im\phi}(P_{lm} + A_{lm}Q_{lm})(\cos(\theta))
+
+    Renormalization (optional) can be done to ensure the inner product 
+    sums to one.
 
     Parameters
     ----------
@@ -398,23 +401,23 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
         Matters mostly for non-integer degree
-    renorm : bool, optional
-        Re-normalize the spherical harmonics such that their
-        norm is 1 over the cut-sky. This is done using the sampled
-        theta, phi points as a numerical inner product approx.
-        Note this assumes that the theta, phi are drawn from
-        part of a HEALpix grid with a pixelization
-        density enough to resolve the fastest spatial frequency
     bc_type : int, optional
         Boundary condition type on x for m > 0, either 1 or 2.
         1 (Dirichlet) sets func. to zero at boundary and
         2 (Neumann) sets its derivative to zero. Default = 2.
         Only needed for stripe method.
+    renorm : bool, optional
+        Re-normalize the spherical harmonics such that their
+        inner product is 1 over their domain. This is done using
+        the sampled theta, phi points as a numerical inner product
+        approximation, see normalize_Ylm() for details.
+    norm_kwargs : dict, optional
+        Kwargs for renormalization see normalize_Ylm() for details.
 
     Returns
     -------
     Ylm : array_like
-        An (Npix x Ncoeff) matrix encoding a spherical
+        An (Ncoeff, Npix) tensor encoding a spherical
         harmonic transform from a_lm -> map
 
     Notes
@@ -440,7 +443,8 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
             _m = m[i*Ntask:(i+1)*Ntask]
             jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_max=theta_max,
                                                       l=_l, m=_m, high_prec=high_prec,
-                                                      renorm=renorm, bc_type=bc_type)])
+                                                      renorm=renorm, renorm_idx=renorm_idx,
+                                                      pxarea=pxarea, bc_type=bc_type)])
 
         # run jobs
         try:
@@ -492,14 +496,67 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     # combine into spherical harmonic
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
-    # renormalize
     if renorm:
-        # Note: theta and phi must span the entire domain of Y
-        # in order to approximate its inner product
-        norm = torch.sqrt(torch.sum(torch.abs(Y)**2, axis=1))
-        Y /= norm[:, None]
+        norm_kwargs['theta'] = theta
+        Y = normalize_Ylm(Y, **norm_kwargs)[0]
 
     return Y
+
+
+def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
+                  hpix=True, pxarea=None, renorm_idx=None):
+    """
+    Normalize spherical harmonic Ylm tensor by diagonal of its
+    inner product, or by a custom normalization.
+
+    Parameters
+    ----------
+    Ylm : tensor
+        Forward model tensor of shape (Ncoeff, Npix)
+        encoding transfrom from a_lm -> map
+    norm : tensor, optional
+        (Ncoeff,) shaped tensor. Divide Ylm by norm along
+        its 0th axis. Supercedes all other kwargs.
+    theta : tensor, optional
+        Co-latitude (i.e. zenith) points of Ylm [rad]. Needed
+        for computing pixel areas of non-healpix grids. If not provided,
+        assume pixel areas are 1.
+    dtheta, dphi : tensor, optional
+        Delta theta and delta phi differential sizes [rad] of each
+        theta, phi sample. Needed for computing areas of non-healpix grids.
+        If not provided, assume pixel areas are 1.
+    hpix : bool, optional
+        If True, Ylm is an equal-area healpix sampling
+    pxarea : float, optional
+        If hpix, this is the pixel area multiply inner product
+        when computing normalization.
+    renorm_idx : array, optional
+        An indexing array along Ylm's Npix axis
+        picking out Ylm samples to use in computing
+        its inner product.
+
+    Returns
+    -------
+    Ylm : tensor
+        Normalized Ylm
+    norm : tensor
+        Computed normalization (divisor of input Ylm)
+    """
+    if norm is None:
+        if renorm_idx is None:
+            renorm_idx = slice(None)
+        if pxarea is None:
+            pxarea = 1.0
+        if hpix:
+            pxarea = torch.as_tensor([pxarea], device=Ylm.device)[None, :]
+        else:
+            if theta is None or phi is None or dtheta is None or dphi is None:
+                pxarea = torch.as_tensor([1.0], device=Ylm.device)[None, :]
+            else:
+                pxarea = torch.as_tensor(np.sin(theta) * dtheta * dphi, device=Ylm.device)[None, :]
+        norm = torch.sqrt(torch.sum(torch.abs((Ylm * pxarea)[:, renorm_idx])**2, axis=1))
+
+    return Ylm / norm[:, None], norm
 
 
 def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=False):
