@@ -21,12 +21,8 @@ class BaseResponse:
         time_mode : str, optional
             Time parameterization, ['channel', 'poly']
         param_type : str, optional
-            Type of gain parameter. One of
-            ['com', 'dly', 'amp', 'phs']
-                'com' : complex gains
-                'dly' : delay, g = exp(2i * pi * freqs * delay)
-                'amp' : amplitude, g = exp(amp)
-                'phs' : phase, g = exp(i * phs)
+            dtype of input params. If 'com' push linear A matrices
+            to complex type, and viewcomp params when input.
         device : str, optional
             Device to place class attributes if needed
         freq_kwargs : dict, optional
@@ -105,6 +101,38 @@ class BaseResponse:
             pass
         elif self.time_mode == 'poly':
             params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
+
+        params = self.params2complex(params)
+
+        return params
+
+    def params2complex(self, params):
+        """
+        Given param_type, convert params to complex form.
+
+        Parameters
+        ----------
+        params : tensor
+            shape (..., Ntimes, Nfreqs)
+
+        Returns
+        -------
+        tensor
+        """
+        # convert to gains
+        if self.param_type == 'com':
+            # assume params are already complex
+            pass
+
+        elif self.param_type == 'real':
+            params =  params + 0j
+
+        elif self.param_type == 'amp':
+            # assume params are amplitude
+            params = torch.exp(params) + 0j
+
+        elif self.param_type == 'phs':
+            params = torch.exp(1j * params)
 
         return params
 
@@ -386,7 +414,7 @@ class JonesResponse(BaseResponse):
 
         assert self.param_type in ['com', 'amp', 'phs', 'dly', 'phs_slope', 'dly_slope']
 
-    def param2gain(self, jones):
+    def params2complex(self, jones):
         """
         Convert jones to complex gain given apram_type.
         Note this should be after passing jones through
@@ -403,24 +431,14 @@ class JonesResponse(BaseResponse):
         tensor
             Complex gain tensor (Npol, Npol, Nant, Ntimes, Nfreqs)
         """
-        # convert to gains
-        if self.param_type == 'com':
-            # assume jones are complex gains
-            return jones
+        jones = super().params2complex(jones)
 
-        elif self.param_type == 'dly':
+        if self.param_type == 'dly':
             # assume jones are in delay [nanosec]
             if self.vis_type == 'dly':
-                return jones
+                pass
             elif self.vis_type == 'com':
-                return torch.exp(2j * np.pi * jones * torch.as_tensor(self.freqs / 1e9, dtype=jones.dtype))
-
-        elif self.param_type == 'amp':
-            # assume jones are gain amplitude
-            return torch.exp(jones) + 0j
-
-        elif self.param_type == 'phs':
-            return torch.exp(1j * jones)
+                jones = torch.exp(2j * np.pi * jones * torch.as_tensor(self.freqs / 1e9, dtype=jones.dtype))
 
         elif self.param_type == 'dly_slope':
             # extract EW and NS delay slopes: ns / meter
@@ -431,9 +449,9 @@ class JonesResponse(BaseResponse):
                       + NS * self.antpos_NS
             if self.vis_type == 'com':
                 # convert to complex gains
-                return torch.exp(2j * np.pi * tot_dly * self.freqs / 1e9)
+                jones = torch.exp(2j * np.pi * tot_dly * self.freqs / 1e9)
             elif self.vis_type == 'dly':
-                return tot_dly
+                jones = tot_dly
 
         elif self.param_type == 'phs_slope':
             # extract EW and NS phase slopes: rad / meter
@@ -443,7 +461,9 @@ class JonesResponse(BaseResponse):
             tot_phs = EW * self.antpos_EW \
                       + NS * self.antpos_NS
             # convert to complex gains
-            return torch.exp(1j * tot_phs)
+            jones = torch.exp(1j * tot_phs)
+
+        return jones
 
     def forward(self, params):
         """
@@ -453,7 +473,7 @@ class JonesResponse(BaseResponse):
         super().forward(params)
 
         # convert params to complex gains based on param_type
-        jones = self.param2gain(params)
+        jones = self.params2complex(params)
 
         return jones
 
@@ -657,7 +677,7 @@ class VisModel(utils.Module):
 
 class VisModelResponse(BaseResponse):
     """
-    A response object for VisModel and RedVisModel
+    A response object for VisModel and RedVisModel, subclass of BaseResponse
     """
     def __init__(self, freq_mode='channel', time_mode='channel',
                  param_type='com', device=None,
@@ -669,16 +689,10 @@ class VisModelResponse(BaseResponse):
             Frequency parameterization, ['channel', 'poly']
         time_mode : str, optional
             Time parameterization, ['channel', 'poly']
-        device : str, optional
-            Device to place class attributes if needed
-        freqs : tensor, optional
-            Frequency array [Hz], only needed for poly freq_mode
-        times : tensor, optional
-            Time array [arb. units], only needed for poly time_mode
         device : str, None
             Device for object
         param_type : str, optional
-            Type of params ['com', 'amp_phs']
+            Type of params ['com', 'real' 'amp', 'amp_phs']
             com : visibility represented as real and imag params
                 where the last dim is [real, imag]
             amp_phs : visibility represented as amplitude and phase
