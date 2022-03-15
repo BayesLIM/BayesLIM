@@ -7,6 +7,121 @@ import numpy as np
 from . import utils, linalg, dataset
 
 
+class BaseResponse:
+    """
+    A base parameter response object for JonesModel and VisModel
+    """
+    def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
+                 device=None, freq_kwargs={}, time_kwargs={}):
+        """
+        Parameters
+        ----------
+        freq_mode : str, optional
+            Frequency parameterization, ['channel', 'poly']
+        time_mode : str, optional
+            Time parameterization, ['channel', 'poly']
+        param_type : str, optional
+            Type of gain parameter. One of
+            ['com', 'dly', 'amp', 'phs']
+                'com' : complex gains
+                'dly' : delay, g = exp(2i * pi * freqs * delay)
+                'amp' : amplitude, g = exp(amp)
+                'phs' : phase, g = exp(i * phs)
+        device : str, optional
+            Device to place class attributes if needed
+        freq_kwargs : dict, optional
+            Keyword arguments for _setup_freqs(). Note, must pass
+            freqs [Hz] for dly param_type
+        time_kwargs : dict, optional
+            Keyword arguments for _setup_times().
+        """
+        self.freq_mode = freq_mode
+        self.time_mode = time_mode
+        self.param_type = param_type
+        self.device = device
+        self.freq_kwargs = freq_kwargs
+        self.time_kwargs = time_kwargs
+        self._setup_freqs(**freq_kwargs)
+        self._setup_times(**time_kwargs)
+
+        # construct _args for str repr
+        self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
+                          param_type=self.param_type)
+
+    def _setup_times(self, times=None, t0=None, Ndeg=None,
+                     basis='direct', whiten=False):
+        """
+        Setup time basis
+        """
+        self.times = times
+        if self.time_mode == 'channel':
+            pass  # nothing to do
+        elif self.time_mode == 'poly':
+            # get polynomial A matrix wrt time
+            assert Ndeg is not None, "need Ndeg for poly time_mode"
+            t0 = t0 if t0 is not None else self.times.mean()
+            dtimes = (self.times - t0)
+            self.time_A = utils.gen_poly_A(dtimes, Ndeg, basis=basis, whiten=whiten)
+            if self.param_type == 'com':
+                self.time_A = self.time_A.to(utils._cfloat())
+            self.time_A = self.time_A.to(self.device)
+
+    def _setup_freqs(self, freqs=None, f0=None, Ndeg=None,
+                     basis='direct', whiten=False):
+        """
+        Setup freq basis
+        """
+        self.freqs = freqs
+        if self.freq_mode == 'channel':
+            pass  # nothing to do
+        elif self.freq_mode == 'poly':
+            # get polynomial A matrix wrt freq
+            assert Ndeg is not None, "need Ndeg for poly freq_mode"
+            f0 = f0 if f0 is not None else self.freqs.mean()
+            dfreqs = (self.freqs - f0) / 1e6  # MHz
+            self.freq_A = utils.gen_poly_A(dfreqs, Ndeg, basis=basis, whiten=whiten)
+            if self.param_type == 'com':
+                self.freq_A = self.freq_A.to(utils._cfloat())
+            self.freq_A = self.freq_A.to(self.device)
+
+    def forward(self, params):
+        """
+        Forward pass params through response
+        """
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
+        # detect if params needs to be casted into complex
+        if self.param_type == 'com' and not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
+        # convert representation to full Ntimes, Nfreqs
+        if self.freq_mode == 'channel':
+            pass
+        elif self.freq_mode == 'poly':
+            params = params @ self.freq_A.T
+        if self.time_mode == 'channel':
+            pass
+        elif self.time_mode == 'poly':
+            params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
+
+        return params
+
+    def __call__(self, params):
+        return self.forward(params)
+
+    def push(self, device):
+        """
+        Push class attrs to new device
+        """
+        self.device = device
+        if self.freq_mode == 'poly':
+            self.freq_A = self.freq_A.to(device)
+        if self.time_mode == 'poly':
+            self.time_A = self.time_A.to(device)
+
+
 class JonesModel(utils.Module):
     """
     A generic, antenna-based, direction-independent
@@ -208,16 +323,17 @@ class JonesModel(utils.Module):
         self.R.push(device)
 
 
-class JonesResponse:
+class JonesResponse(BaseResponse):
     """
-    A response object for JonesModel
+    A response object for JonesModel, subclass of BaseResponse
 
     Allows for polynomial parameterization across time and/or frequency,
     and for a gain type of complex, amplitude, phase, delay, EW & NS delay slope,
     and EW & NS phase slope (the latter two are relevant for redundant calibration) 
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
-                 vis_type='com', device=None, freqs=None, times=None, **setup_kwargs):
+                 vis_type='com', antpos=None, device=None,
+                 freq_kwargs={}, time_kwargs={}):
         """
         Parameters
         ----------
@@ -229,103 +345,33 @@ class JonesResponse:
             Type of gain parameter. One of
             ['com', 'dly', 'amp', 'phs', 'dly_slope', 'phs_slope']
                 'com' : complex gains
-                'dly' : delay g = exp(2i * pi * freqs * delay)
-                'amp' : amplitude g = amp
-                'phs' : phase  g = exp(i * phs)
-                '*_slope' : spatial gradient across the array
+                'dly' : delay, g = exp(2i * pi * freqs * delay)
+                'amp' : amplitude, g = exp(amp)
+                'phs' : phase, g = exp(i * phs)
+                '*_slope' : spatial gradient, [EastWest, NorthSouth]
         vis_type : str, optional
             Type of visibility, complex or delay ['com', 'dly']
+        antpos : dict
+            Antenna position dictionary for dly_slope or phs_slope
+            Keys as antenna integers, values as 3-vector in ENU frame
         device : str, optional
             Device to place class attributes if needed
-        freqs : tensor, optional
-            Frequency array [Hz], only needed for poly freq_mode
-        times : tensor, optional
-            Time array [arb. units], only needed for poly time_mode
+        freq_kwargs : dict, optional
+            Keyword arguments for _setup_freqs(). Note, must pass
+            freqs [Hz] for dly param_type
+        time_kwargs : dict, optional
+            Keyword arguments for _setup_times().
 
         Notes
         -----
-        Required setup_kwargs (see self._setup for details)
-        if freq_mode == 'poly'
-            f0 : float
-                Anchor frequency [Hz]
-            f_Ndeg : int
-                Frequency polynomial degree
-            freq_poly_basis : str
-                Polynomial basis (see utils.gen_poly_A)
-
-        if time_mode == 'poly'
-            t0 : float
-                Anchor time [arb. units]
-            t_Ndeg : int
-                Time polynomial degree
-            time_poly_basis : str
-                Polynomial basis (see utils.gen_poly_A)
-
-        if param_type == 'phs_slope' or 'dly_slope:
-            antpos : dictionary
-                Antenna vector in local ENU frame [meters]
-                number as key, tensor (x, y, z) as value
-            params tensor is assumed to hold the [EW, NS]
-            slope along its antenna axis.
+        For param_type in ['phs_slope', 'dly_slope]
+            antpos is required. params tensor is assumed
+            to hold the [EW, NS] slope along its antenna axis.
         """
-        self.freq_mode = freq_mode
-        self.time_mode = time_mode
-        self.param_type = param_type
+        super().__init__(freq_mode=freq_mode, time_mode=time_mode,
+                         param_type=param_type, device=device,
+                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs)
         self.vis_type = vis_type
-        self.device = device
-        self.freqs = freqs
-        self.times = times
-        self.setup_kwargs = setup_kwargs
-        self._setup(**setup_kwargs)
-
-    def _setup(self, f0=None, f_Ndeg=None, freq_poly_basis='direct',
-               t0=None, t_Ndeg=None, time_poly_basis='direct', antpos=None):
-        """
-        Setup the JonesResponse given the mode and type
-
-        Parameters
-        ----------
-        f0 : float
-            anchor frequency for poly [Hz]
-        f_Ndeg : int
-            Number of frquency degrees for poly
-        freq_poly_basis : str
-            Polynomial basis across freq (see utils.gen_poly_A)
-        t0 : float
-            anchor time for poly
-        t_Ndeg : int
-            Number of time degrees for poly
-        time_poly_basis : str
-            Polynomial basis across time (see utils.gen_poly_A)
-        antpos : dict
-            Antenna position dictionary for dly_slope or phs_slope
-        """
-        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'phs_slope', 'dly_slope']
-        if self.freq_mode == 'channel':
-            pass  # nothing to do
-        elif self.freq_mode == 'poly':
-            # get polynomial A matrix wrt freq
-            assert f_Ndeg is not None, "need f_Ndeg for poly freq_mode"
-            if f0 is None:
-                f0 = self.freqs.mean()
-            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
-            self.freq_A = utils.gen_poly_A(self.dfreqs, f_Ndeg,
-                                           basis=freq_poly_basis, device=self.device)
-            if self.param_type == 'com':
-                self.freq_A = self.freq_A.to(utils._cfloat())
-
-        if self.time_mode == 'channel':
-            pass  # nothing to do
-        elif self.time_mode == 'poly':
-            # get polynomial A matrix wrt times
-            assert t_Ndeg is not None, "need t_Ndeg for poly time_mode"
-            if t0 is None:
-                t0 = self.times.mean()
-            self.dtimes = self.times - t0
-            self.time_A = utils.gen_poly_A(self.dtimes, t_Ndeg,
-                                           basis=time_poly_basis, device=self.device)
-            if self.param_type == 'com':
-                self.time_A = self.time_A.to(utils._cfloat())
 
         if self.param_type in ['dly_slope', 'phs_slope']:
             # setup antpos tensors
@@ -335,13 +381,10 @@ class JonesResponse:
             self.antpos_EW = EW[None, None, :, None, None]  
             NS = torch.as_tensor([antpos[a][1] for a in antpos], device=self.device)
             self.antpos_NS = NS[None, None, :, None, None]
-
         elif 'dly' in self.param_type:
             assert self.freqs is not None, 'need frequencies for delay gain type'
 
-        # construct _args for str repr
-        self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
-                          param_type=self.param_type)
+        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'phs_slope', 'dly_slope']
 
     def param2gain(self, jones):
         """
@@ -407,43 +450,18 @@ class JonesResponse:
         Forward pass params through response to get
         complex antenna gains per time and frequency
         """
-        # pass to device
-        if utils.device(params.device) != utils.device(self.device):
-            params = params.to(self.device)
-
-        # detect if params needs to be casted into complex
-        if self.param_type == 'com' and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
-        # convert representation to full Ntimes, Nfreqs
-        if self.freq_mode == 'channel':
-            pass
-        elif self.freq_mode == 'poly':
-            params = params @ self.freq_A.T
-        if self.time_mode == 'channel':
-            pass
-        elif self.time_mode == 'poly':
-            params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
+        super().forward(params)
 
         # convert params to complex gains based on param_type
         jones = self.param2gain(params)
 
         return jones
 
-    def __call__(self, params):
-        return self.forward(params)
-
     def push(self, device):
         """
         Push class attrs to new device
         """
-        self.device = device
-        if self.freq_mode == 'poly':
-            self.dfreqs = self.dfreqs.to(device)
-            self.freq_A = self.freq_A.to(device)
-        if self.time_mode == 'poly':
-            self.dtimes = self.dtimes.to(device)
-            self.time_A = self.time_A.to(device)
+        super().push(device)
         if self.param_type in ['dly_slope', 'phs_slope']:
             self.antpos_EW = self.antpos_EW.to(device) 
             self.antpos_NS = self.antpos_NS.to(device)
@@ -637,13 +655,13 @@ class VisModel(utils.Module):
         self.params = utils.push(self.params, device)
 
 
-class VisModelResponse:
+class VisModelResponse(BaseResponse):
     """
     A response object for VisModel and RedVisModel
     """
     def __init__(self, freq_mode='channel', time_mode='channel',
-                 freqs=None, times=None, device=None, param_type='com',
-                 **setup_kwargs):
+                 param_type='com', device=None,
+                 freq_kwargs={}, time_kwargs={}):
         """
         Parameters
         ----------
@@ -665,121 +683,23 @@ class VisModelResponse:
                 where the last dim is [real, imag]
             amp_phs : visibility represented as amplitude and phase
                 params, where the last dim of params is [amp, phs]
-
-        Notes
-        -----
-        Required setup_kwargs (see self._setup for details)
-        if freq_mode == 'poly'
-            f0 : float
-                Anchor frequency [Hz]
-            f_Ndeg : int
-                Frequency polynomial degree
-            freq_poly_basis : str
-                Polynomial basis (see utils.gen_poly_A)
-
-        if time_mode == 'poly'
-            t0 : float
-                Anchor time [arb. units]
-            t_Ndeg : int
-                Time polynomial degree
-            time_poly_basis : str
-                Polynomial basis (see utils.gen_poly_A)
         """
-        self.freq_mode = freq_mode
-        self.time_mode = time_mode
-        self.device = device
-        self.freqs = freqs
-        self.times = times
-        self.setup_kwargs = setup_kwargs
-        self.param_type = param_type
-        self._setup(**setup_kwargs)
-
-    def _setup(self, f0=None, f_Ndeg=None, freq_poly_basis='direct',
-               t0=None, t_Ndeg=None, time_poly_basis='direct'):
-        """
-        Setup the JonesResponse given the mode and type
-
-        Parameters
-        ----------
-        f0 : float
-            anchor frequency for poly [Hz]
-        f_Ndeg : int
-            Number of frquency degrees for poly
-        freq_poly_basis : str
-            Polynomial basis across freq (see utils.gen_poly_A)
-        t0 : float
-            anchor time for poly
-        t_Ndeg : int
-            Number of time degrees for poly
-        time_poly_basis : str
-            Polynomial basis across time (see utils.gen_poly_A)
-        """
-        if self.freq_mode == 'channel':
-            pass  # nothing to do
-        elif self.freq_mode == 'poly':
-            # get polynomial A matrix wrt freq
-            assert f_Ndeg is not None, "need f_Ndeg for poly freq_mode"
-            if f0 is None:
-                f0 = self.freqs.mean()
-            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
-            self.freq_A = utils.gen_poly_A(self.dfreqs, f_Ndeg,
-                                           basis=freq_poly_basis, device=self.device)
-
-        if self.time_mode == 'channel':
-            pass  # nothing to do
-        elif self.time_mode == 'poly':
-            # get polynomial A matrix wrt times
-            assert t_Ndeg is not None, "need t_Ndeg for poly time_mode"
-            if t0 is None:
-                t0 = self.times.mean()
-            self.dtimes = self.times - t0
-            self.time_A = utils.gen_poly_A(self.dtimes, t_Ndeg,
-                                           basis=time_poly_basis, device=self.device)
-
-        # construct _args for str repr
-        self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode)
+        super().__init__(freq_mode=freq_mode, time_mode=time_mode,
+                         param_type=param_type, device=device,
+                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs)
 
     def forward(self, params):
         """
         Forward pass params through response to get
         complex visibility model per time and frequency
         """
-        # pass to device
-        if utils.device(params.device) != utils.device(self.device):
-            params = params.to(self.device)
-
-        # convert representation to full Ntimes, Nfreqs
-        if self.freq_mode == 'channel':
-            pass
-        elif self.freq_mode == 'poly':
-            params = (params.moveaxis(-2, -1) @ self.freq_A.T).moveaxis(-1, -2)
-        if self.time_mode == 'channel':
-            pass
-        elif self.time_mode == 'poly':
-            params = (params.moveaxis(-3, -1) @ self.time_A.T).moveaxis(-1, -3)
+        params = super().forward(params)
 
         # detect if params needs to be casted into complex
-        if self.param_type == 'com' and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-        elif self.param_type == 'amp_phs':
+        if self.param_type == 'amp_phs':
             params = torch.exp(params[..., 0] + 1j * params[..., 1])
 
         return params
-
-    def __call__(self, params):
-        return self.forward(params)
-
-    def push(self, device):
-        """
-        Push class attrs to new device
-        """
-        self.device = device
-        if self.freq_mode == 'poly':
-            self.dfreqs = self.dfreqs.to(device)
-            self.freq_A = self.freq_A.to(device)
-        if self.time_mode == 'poly':
-            self.dtimes = self.dtimes.to(device)
-            self.time_A = self.time_A.to(device)
 
 
 class VisCoupling(utils.Module):
