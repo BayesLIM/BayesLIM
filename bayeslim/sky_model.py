@@ -4,6 +4,7 @@ Module for torch sky models and relevant functions
 import torch
 import numpy as np
 from scipy import special, interpolate
+import copy
 
 from . import utils, cosmology
 from .utils import _float, _cfloat
@@ -83,7 +84,7 @@ class SkyBase(utils.Module):
         """
         Interpolate params onto new set of frequencies
         if response freq_mode is channel. If freq_mode is
-        poly or powerlaw, just update response frequencies
+        linear or powerlaw, just update response frequencies
 
         Parameters
         ----------
@@ -243,11 +244,10 @@ class PointSkyResponse:
     fixed locations but variable flux wrt frequency
     options include
         - channel : vary all frequency channels
-        - poly : low-order polynomial across freqs, centered at f0.
+        - linear : linear mapping across frequency
         - powerlaw : amplitude and freq exponent, centered at f0.
     """
-    def __init__(self, freqs, freq_mode='poly', f0=None,
-                 device=None, Ndeg=None):
+    def __init__(self, freqs, freq_mode='linear', log=False, device=None, **freq_kwargs):
         """
         Choose a frequency parameterization for PointSky
 
@@ -256,29 +256,27 @@ class PointSkyResponse:
         freqs : tensor
             Frequency array [Hz]
         freq_mode : str, optional
-            options = ['channel', 'poly', 'powerlaw']
+            options = ['channel', 'linear', 'powerlaw']
             Frequency parameterization mode. Choose between
             channel - each frequency is a parameter
-            poly - polynomial basis of Ndeg
-            powerlaw - amplitude and powerlaw basis anchored at f0
-        f0 : float, optional
-            Fiducial frequency [Hz]. Used for poly and powerlaw.
+            linear - linear (e.g. polynomial) basis
+            powerlaw - amplitude and powerlaw basis
+        log : bool, optional
+            Treat parameter as log(amplitude)
         device : str, optional
             Device of point source params
-        Ndeg : int, optional
-            Polynomial degrees if freq_mode is 'poly'
+        freq_kwargs : dict, optional
+            Kwargs for different freq_modes, see Notes below
 
         Notes
         -----
-        The ordering of the coeff axis in params should be
-            poly - follows that of utils.gen_poly_A()
-            powerlaw - ordered as (amplitude, exponent)
+        freq_mode == 'linear'
+            See utils.gen_linear_A() for necessary kwargs
         """
         self.freqs = freqs
-        self.f0 = f0
         self.freq_mode = freq_mode
-        self.Ndeg = Ndeg
         self.device = device
+        self.freq_kwargs = freq_kwargs
         self._setup()
 
         # construct _args for str repr
@@ -286,26 +284,41 @@ class PointSkyResponse:
 
     def _setup(self):
         # setup
-        if self.freq_mode == 'poly':
-            self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
-            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device)
+        if self.freq_mode == 'linear':
+            assert 'linear_mode' in self.freq_kwargs
+            fkwargs = copy.deepcopy(self.freq_kwargs)
+            linear_mode = fkwargs.pop('linear_mode')
+            if 'x' not in fkwargs: fkwargs['x'] = self.freqs
+            if 'f0' in fkwargs: fkwargs['x0'] = fkwargs.pop('f0')
+            self.A = utils.gen_linear_A(linear_mode, device=self.device,
+                                        **fkwargs)
+
+        elif self.freq_mode == 'powerlaw':
+            assert 'f0' in self.freq_kwargs
 
     def __call__(self, params):
         # pass to device
         if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
+
         if self.freq_mode == 'channel':
-            return params
-        elif self.freq_mode == 'poly':
-            return (self.A @ params.moveaxis(-2, 0)).moveaxis(0, -2)
+            pass
+
+        elif self.freq_mode == 'linear':
+            params = (self.A @ params.moveaxis(-2, 0)).moveaxis(0, -2)
+
         elif self.freq_mode == 'powerlaw':
-            return params[..., 0:1, :] * (self.freqs[None, None, :, None] / self.f0)**params[..., 1:2, :]
+            params = params[..., 0:1, :] * (self.freqs[None, None, :, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
+
+        if self.log:
+            params = torch.exp(params)
+
+        return params
 
     def push(self, device):
         self.device = device
         self.freqs = self.freqs.to(device)
-        if self.freq_mode == 'poly':
-            self.dfreqs = self.dfreqs.to(device)
+        if self.freq_mode == 'linear':
             self.A = self.A.to(device)
 
 
@@ -412,7 +425,7 @@ class PixelSkyResponse:
 
     options for frequency parameterization include
         - 'channel' : frequency channels
-        - 'poly' : low-order polynomials
+        - 'linear' : linear mapping
         - 'powerlaw' : power law model
         - 'bessel' : spherical bessel g_l (for spatial mode 'alm')
     """
@@ -432,7 +445,7 @@ class PixelSkyResponse:
             options = ['pixel', 'alm']
         freq_mode : str, optional
             Choose the freq parameterization (default is channel)
-            options = ['channel', 'poly', 'powerlaw', 'bessel']
+            options = ['channel', 'linear', 'powerlaw', 'bessel']
         device : str, optional
             Device to put model on
         transform_order : int, optional
@@ -449,6 +462,7 @@ class PixelSkyResponse:
                 matrix. If None, will compute it given l, m
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
+            for 'linear' freq_mode, see utils.gen_linear_A()
             gln : dict, dictionary of gln modes for bessel mode
             kbins : dict, dictionary of kln values for bessel mode
             f0 : float, fiducial frequency [Hz], used for poly
@@ -483,14 +497,15 @@ class PixelSkyResponse:
     def _setup(self):
         # freq setup
         self.A, self.gln = None, None
-        if self.freq_mode == 'poly':
-            f0 = self.freq_kwargs.get('f0', self.freqs.mean())
-            self.dfreqs = (self.freqs - f0) / 1e6  # MHz
-            poly_dtype = utils._cfloat() if self.comp_params else utils._float()
-            self.A = utils.gen_poly_A(self.dfreqs, self.freq_kwargs['Ndeg'],
-                                      basis=self.freq_kwargs.get('basis', 'direct'),
-                                      whiten=self.freq_kwargs.get('whiten', None),
-                                      device=self.device).to(poly_dtype)
+        if self.freq_mode == 'linear':
+            freq_kwargs = copy.deepcopy(self.freq_kwargs)
+            assert 'linear_mode' in freq_kwargs, "must specify linear_mode"
+            linear_mode = freq_kwargs.pop('linear_mode')
+            dtype = utils._cfloat() if self.comp_params else utils._float()
+            if 'x' not in freq_kwargs: freq_kwargs['x'] = self.freqs
+            self.A = utils.gen_linear_A(linear_mode, dtype=dtype, device=self.device,
+                                        **freq_kwargs)
+
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
             # compute comoving line of sight distances
@@ -586,7 +601,7 @@ class PixelSkyResponse:
 
         if self.freq_mode == 'channel':
             return params
-        elif self.freq_mode == 'poly':
+        elif self.freq_mode == 'linear':
             return (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
         elif self.freq_mode == 'powerlaw':
             return params[..., 0:1, :] * (self.freqs[:, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
@@ -622,7 +637,7 @@ class PixelSkyResponse:
             self.Ylm = self.Ylm.to(device)
             self.alm_mult = self.alm_mult.to(device)
 
-        if self.freq_mode == 'poly':
+        if self.freq_mode == 'linear':
             self.A = self.A.to(device)
         elif self.freq_mode == 'bessel':
             for k in self.gln:
@@ -738,7 +753,7 @@ class CompositeModel(utils.Module):
         """
         Interpolate params onto new set of frequencies
         if response freq_mode is channel. If freq_mode is
-        poly or powerlaw, just update response frequencies
+        linear or powerlaw, just update response frequencies
 
         Parameters
         ----------
@@ -866,7 +881,7 @@ def write_catalogue(catfile, sky, names, overwrite=False):
         elif sky.R.freq_mode == 'powerlaw':
             d['mode_kwargs']['f0'] = sky.R.f0
 
-        elif sky.R.freq_mode == 'poly':
+        elif sky.R.freq_mode == 'linear':
             raise NotImplementedError
         
         else:

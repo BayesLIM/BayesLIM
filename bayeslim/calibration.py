@@ -17,9 +17,9 @@ class BaseResponse:
         Parameters
         ----------
         freq_mode : str, optional
-            Frequency parameterization, ['channel', 'poly']
+            Frequency parameterization, ['channel', 'linear']
         time_mode : str, optional
-            Time parameterization, ['channel', 'poly']
+            Time parameterization, ['channel', 'linear']
         param_type : str, optional
             dtype of input params. If 'com' push linear A matrices
             to complex type, and viewcomp params when input.
@@ -44,38 +44,44 @@ class BaseResponse:
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
                           param_type=self.param_type)
 
-    def _setup_times(self, times=None, t0=None, Ndeg=None,
-                     basis='direct', whiten=False):
+    def _setup_times(self, times=None, linear_mode=None, A=None, t0=None,
+                     Ndeg=None, basis='direct', whiten=False):
         """
         Setup time basis
+
+        For time_mode == 'linear', see utils.gen_linear_A
+        for info on kwargs.
         """
         self.times = times
+
         if self.time_mode == 'channel':
             pass  # nothing to do
-        elif self.time_mode == 'poly':
-            # get polynomial A matrix wrt time
-            assert Ndeg is not None, "need Ndeg for poly time_mode"
-            t0 = t0 if t0 is not None else self.times.mean()
-            dtimes = (self.times - t0)
-            self.time_A = utils.gen_poly_A(dtimes, Ndeg, basis=basis, whiten=whiten)
+
+        elif self.time_mode == 'linear':
+            # get linear A mapping wrt time
+            self.time_A = utils.gen_linear_A(linear_mode, A=A, x=times, x0=t0,
+                                             Ndeg=Ndeg, basis=basis, whiten=whiten)
             if self.param_type == 'com':
                 self.time_A = self.time_A.to(utils._cfloat())
             self.time_A = self.time_A.to(self.device)
 
-    def _setup_freqs(self, freqs=None, f0=None, Ndeg=None,
-                     basis='direct', whiten=False):
+    def _setup_freqs(self, freqs=None, linear_mode=None, A=None, f0=None,
+                     Ndeg=None, basis='direct', whiten=False):
         """
         Setup freq basis
+
+        For freq_mode == 'linear', see utils.gen_linear_A
+        for info on kwargs
         """
         self.freqs = freqs
+
         if self.freq_mode == 'channel':
             pass  # nothing to do
-        elif self.freq_mode == 'poly':
-            # get polynomial A matrix wrt freq
-            assert Ndeg is not None, "need Ndeg for poly freq_mode"
-            f0 = f0 if f0 is not None else self.freqs.mean()
-            dfreqs = (self.freqs - f0) / 1e6  # MHz
-            self.freq_A = utils.gen_poly_A(dfreqs, Ndeg, basis=basis, whiten=whiten)
+
+        elif self.freq_mode == 'linear':
+            # get linear A mapping wrt freq
+            self.freq_A = utils.gen_linear_A(linear_mode, A=A, x=freqs, x0=f0,
+                                             Ndeg=Ndeg, basis=basis, whiten=whiten)
             if self.param_type == 'com':
                 self.freq_A = self.freq_A.to(utils._cfloat())
             self.freq_A = self.freq_A.to(self.device)
@@ -95,11 +101,12 @@ class BaseResponse:
         # convert representation to full Ntimes, Nfreqs
         if self.freq_mode == 'channel':
             pass
-        elif self.freq_mode == 'poly':
+        elif self.freq_mode == 'linear':
             params = params @ self.freq_A.T
+
         if self.time_mode == 'channel':
             pass
-        elif self.time_mode == 'poly':
+        elif self.time_mode == 'linear':
             params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
 
         params = self.params2complex(params)
@@ -144,9 +151,9 @@ class BaseResponse:
         Push class attrs to new device
         """
         self.device = device
-        if self.freq_mode == 'poly':
+        if self.freq_mode == 'linear':
             self.freq_A = self.freq_A.to(device)
-        if self.time_mode == 'poly':
+        if self.time_mode == 'linear':
             self.time_A = self.time_A.to(device)
 
 
@@ -366,9 +373,9 @@ class JonesResponse(BaseResponse):
         Parameters
         ----------
         freq_mode : str, optional
-            Frequency parameterization, ['channel', 'poly']
+            Frequency parameterization, ['channel', 'linear']
         time_mode : str, optional
-            Time parameterization, ['channel', 'poly']
+            Time parameterization, ['channel', 'linear']
         param_type : str, optional
             Type of gain parameter. One of
             ['com', 'dly', 'amp', 'phs', 'dly_slope', 'phs_slope']
@@ -412,11 +419,11 @@ class JonesResponse(BaseResponse):
         elif 'dly' in self.param_type:
             assert self.freqs is not None, 'need frequencies for delay gain type'
 
-        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'phs_slope', 'dly_slope']
+        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'real', 'phs_slope', 'dly_slope']
 
     def params2complex(self, jones):
         """
-        Convert jones to complex gain given apram_type.
+        Convert jones to complex gain given param_type.
         Note this should be after passing jones through
         its response function, such that the jones tensor
         is a function of time and frequency.
@@ -462,18 +469,6 @@ class JonesResponse(BaseResponse):
                       + NS * self.antpos_NS
             # convert to complex gains
             jones = torch.exp(1j * tot_phs)
-
-        return jones
-
-    def forward(self, params):
-        """
-        Forward pass params through response to get
-        complex antenna gains per time and frequency
-        """
-        super().forward(params)
-
-        # convert params to complex gains based on param_type
-        jones = self.params2complex(params)
 
         return jones
 
@@ -686,9 +681,9 @@ class VisModelResponse(BaseResponse):
         Parameters
         ----------
         freq_mode : str, optional
-            Frequency parameterization, ['channel', 'poly']
+            Frequency parameterization, ['channel', 'linear']
         time_mode : str, optional
-            Time parameterization, ['channel', 'poly']
+            Time parameterization, ['channel', 'linear']
         device : str, None
             Device for object
         param_type : str, optional

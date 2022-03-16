@@ -550,11 +550,11 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
         if hpix:
             pxarea = torch.as_tensor([pxarea], device=Ylm.device)[None, :]
         else:
-            if theta is None or phi is None or dtheta is None or dphi is None:
+            if theta is None or dtheta is None or dphi is None:
                 pxarea = torch.as_tensor([1.0], device=Ylm.device)[None, :]
             else:
                 pxarea = torch.as_tensor(np.sin(theta) * dtheta * dphi, device=Ylm.device)[None, :]
-        norm = torch.sqrt(torch.sum(torch.abs((Ylm * pxarea)[:, renorm_idx])**2, axis=1))
+        norm = torch.sqrt(torch.sum((torch.abs(Ylm)**2 * pxarea)[:, renorm_idx], axis=1))
 
     return Ylm / norm[:, None], norm
 
@@ -1094,7 +1094,50 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     return np.asarray(k)
 
 
-def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True):
+def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
+                 Ndeg=None, basis='direct', device=None, dtype=None, **kwargs):
+    """
+    Generate a linear mapping design matrix A
+
+    Parameters
+    ----------
+    linear_mode : str
+        One of ['poly', 'custom']
+    A : tensor, optional
+        (mode='custom') Linear mapping of shape (Nsamples, Nfeatures)
+    x : tensor, optional
+        (mode='poly') sample values
+    whiten : bool, optional
+        (mode='poly') whiten samples
+    x0 : float, optional
+        (mode='poly') center x by x0
+    dx : float, optional
+        (mode='poly') scale x by 1/dx
+    Ndeg : int, optional
+        (mode='poly') Number of poly degrees
+    basis : str, optional
+        (mode='poly') poly basis
+    device : str, optional
+        Device to push A to
+    dtype : type, optional
+        data type to cast A to. Default is float
+
+    Returns
+    -------
+    tensor
+        Linear mapping of shape (Nsamples, Nfeatures)
+    """
+    dtype = dtype if dtype is not None else _float()
+    if linear_mode == 'poly':
+        A = gen_poly_A(x, Ndeg, basis=basis, whiten=whiten, x0=x0, dx=dx)
+    elif linear_mode == 'custom':
+        A = A
+
+    return A.to(dtype).to(device)
+
+
+def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
+               x0=None, dx=None):
     """
     Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
@@ -1117,6 +1160,10 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True):
     whiten : bool, optional
         If True, center (i.e. subtract mean) and scale (i.e. range of -1, 1) x.
         Useful when using orthogonal polynomial bases
+    x0 : float, optional
+        If whiten, use this centering instead of x.mean()
+    dx : float, optional
+        If whiten, use this scaling instead of (x-x0).max()
 
     Returns
     -------
@@ -1127,8 +1174,12 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True):
     #A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
     #                    dtype=_float(), device=device).T
     if whiten:
-        x = x - x.mean()
-        x = x / x.max()
+        if x0 is None:
+            x0 = x.mean()
+        x = x - x0
+        if dx is None:
+            dx = x.max()
+        x = x / dx
     from emupy.linear import setup_polynomial
     A = setup_polynomial(x[:, None], Ndeg - 1, basis=basis)[0]
     return torch.as_tensor(A, dtype=_float(), device=device)

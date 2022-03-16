@@ -365,7 +365,7 @@ class PixelBeam(utils.Module):
         """
         Interpolate params onto new set of frequencies
         if freq_mode is channel. If freq_mode is
-        poly, powerlaw or other, just update response frequencies
+        linear, powerlaw or other, just update response frequencies
 
         Parameters
         ----------
@@ -420,7 +420,7 @@ class PixelResponse(utils.PixInterp):
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  Nnn=4, theta=None, phi=None, freq_mode='channel', nside=None,
                  device=None, log=False, f0=None, Ndeg=None,
-                 poly_kwargs={}, powerbeam=True):
+                 freq_kwargs={}, powerbeam=True):
         """
         Parameters
         ----------
@@ -442,18 +442,14 @@ class PixelResponse(utils.PixInterp):
         freq_mode : str, optional
             Frequency parameterization model.
             channel - each freq channel is an independent parameter
-            poly - low-order polynomial basis
+            linear - linear mapping
         device : str, optional
             Device to put intermediary products on
         log : bool, optional
             If True, assume params is logged and take
             exp before returning.
-        f0 : float, optional
-            Fiducial frequency [Hz] for freq_mode = 'poly'
-        Ndeg : int, optional
-            Number of poly degrees for freq_mode = 'poly'
-        poly_kwargs : dict, optional
-            Optional kwargs to pass to utils.gen_poly_A
+        freq_kwargs : dict, optional
+            Optional kwargs to pass to utils.gen_linear_A
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
         """
@@ -466,10 +462,8 @@ class PixelResponse(utils.PixInterp):
         self.device = device
         self.log = log
         self.freq_mode = freq_mode
-        self.f0 = f0
-        self.Ndeg = Ndeg
         self.freq_ax = 3
-        self.poly_kwargs = poly_kwargs
+        self.freq_kwargs = freq_kwargs
         self.clear_beam()
 
         self._setup()
@@ -480,14 +474,17 @@ class PixelResponse(utils.PixInterp):
     def _setup(self):
         if self.freq_mode == 'channel':
             pass
-        elif self.freq_mode == 'poly':
-            # get polynomial A matrix wrt freq
-            if self.f0 is None:
-                self.f0 = self.freqs.mean()
-            self.dfreqs = (self.freqs - self.f0) / 1e6  # MHz
-            poly_dtype = utils._cfloat() if self.comp_params else utils._float()
-            self.A = utils.gen_poly_A(self.dfreqs, self.Ndeg, device=self.device,
-                                      **self.poly_kwargs).to(poly_dtype)
+        elif self.freq_mode == 'linear':
+            # get A matrix wrt freq
+            freq_kwargs = copy.deepcopy(self.freq_kwargs)
+            freq_kwargs['x'] = self.freqs
+            if 'x0' not in freq_kwargs:
+                freq_kwargs['x0'] = freq_kwargs.get("f0", None)
+            assert 'linear_mode' in self.freq_kwargs, "must specify linear_mode"
+            linear_mode = freq_kwargs.pop('linear_mode')
+            dtype = utils._cfloat() if self.comp_params else utils._float()
+            self.A = utils.gen_linear_A(linear_mode, device=self.device, dtype=dtype,
+                                        **freq_kwargs)
 
     def push(self, device):
         """push attrs to device"""
@@ -495,8 +492,7 @@ class PixelResponse(utils.PixInterp):
         super().push(device)
         # other attrs
         self.freqs = self.freqs.to(device)
-        if self.freq_mode == 'poly':
-            self.dfreqs = self.dfreqs.to(device)
+        if self.freq_mode == 'linear':
             self.A = self.A.to(device)
 
     def __call__(self, params, zen, az, *args):
@@ -511,7 +507,7 @@ class PixelResponse(utils.PixInterp):
                 params = params.to(self.device)
 
             # pass through frequency response
-            if self.freq_mode == 'poly':
+            if self.freq_mode == 'linear':
                 params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
             # now cache it for future calls
@@ -651,8 +647,8 @@ class AiryResponse:
 class YlmResponse(PixelResponse):
     """
     A spherical harmonic representation for PixelBeam,
-    mapping a_lm to pixel space. Adopts a polynomial
-    basis across frequency in units of MHz.
+    mapping a_lm to pixel space. Adopts a linear
+    mapping across frequency in units of MHz.
 
     .. code-block:: python
 
@@ -666,7 +662,7 @@ class YlmResponse(PixelResponse):
 
     params holds a_lm coefficients of shape
     (Npol, Nvec, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
-    of lm modes. Ndeg is the number of polynomial degree terms
+    of lm modes. Ndeg is the number of linear mapping terms
     wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
 
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
@@ -674,8 +670,8 @@ class YlmResponse(PixelResponse):
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
                  Nnn=4, theta=None, phi=None, nside=None,
-                 powerbeam=True, log=False, freq_mode='channel', f0=None,
-                 Ndeg=None, poly_kwargs={},
+                 powerbeam=True, log=False, freq_mode='channel',
+                 freq_kwargs={},
                  Ylm_kwargs={}):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -712,13 +708,9 @@ class YlmResponse(PixelResponse):
         log : bool, optional
             If True assume params is logged and take exp(params) before returning.
         freq_mode : str, optional
-            Frequency parameterization ['channel', 'poly']
-        f0 : float, optional
-            fiducial frequency [Hz], for 'poly' freq_mode
-        Ndeg : int, optional
-            Number of poly terms, for 'poly' freq_mode
-        poly_kwargs : dict, optional
-            Kwargs for generating poly modes, for 'poly' freq_mode
+            Frequency parameterization ['channel', 'linear']
+        freq_kwargs : dict, optional
+            Kwargs for generating linear modes, see utils.gen_linear_A()
         Ylm_kwargs : dict, optional
             Kwargs for generating Ylm modes
 
@@ -730,8 +722,8 @@ class YlmResponse(PixelResponse):
         ## TODO: enable pix_type other than healpix
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
                                           interp_mode=interp_mode, Nnn=Nnn,
-                                          freq_mode=freq_mode, f0=f0, Ndeg=Ndeg,
-                                          comp_params=comp_params, poly_kwargs=poly_kwargs,
+                                          freq_mode=freq_mode,
+                                          comp_params=comp_params, freq_kwargs=freq_kwargs,
                                           theta=theta, phi=phi)
         self.l, self.m = l, m
         dtype = utils._cfloat() if comp_params else utils._float()
@@ -832,7 +824,7 @@ class YlmResponse(PixelResponse):
 
         if self.freq_mode == 'channel':
             p = params
-        elif self.freq_mode == 'poly':
+        elif self.freq_mode == 'linear':
             # first do fast dot product along frequency axis
             p = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
