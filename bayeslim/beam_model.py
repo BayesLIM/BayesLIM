@@ -357,7 +357,7 @@ class PixelBeam(utils.Module):
                 out_params = None
                 # we can evaluate prior on PixelResponse beam
                 if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
-                    out_params = self.beam_cache
+                    out_params = self.R.beam_cache
 
             self._eval_prior(prior_cache, inp_params, out_params)
 
