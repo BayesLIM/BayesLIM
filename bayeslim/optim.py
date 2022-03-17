@@ -512,9 +512,10 @@ class LogProb(utils.Module):
                 for _, mod in self.model.named_modules():
                     if hasattr(mod, 'params'):
                         mod.eval_prior(self.prior_cache)
-                # add priors
-                for k in self.prior_cache:
-                    logprior = logprior + self.prior_cache[k]
+
+            # add priors
+            for k in self.prior_cache:
+                logprior = logprior + self.prior_cache[k]
 
         # clear prior cache
         self.clear_prior_cache()
@@ -709,6 +710,8 @@ class Trainer:
             Optimizer to use in the run. Setting the
             optimizer will not destroy self.loss array
         """
+        if opt is None:
+            return
         if isinstance(opt, type):
             # this is a class object
             self.opt = opt(self.prob.parameters(), *args, **kwargs)
