@@ -1870,13 +1870,15 @@ class Module(torch.nn.Module):
                 inp_params is not None and
                 self.priors_inp_params is not None):
                 for prior in self.priors_inp_params:
-                    prior_value = prior_value + prior(inp_params).to('cpu')
+                    if prior is not None:
+                        prior_value = prior_value + prior(inp_params).to('cpu')
 
             if (hasattr(self, 'priors_out_params') and
                 out_params is not None and
                 self.priors_out_params is not None):
                 for prior in self.priors_out_params:
-                    prior_value = prior_value + prior(out_params).to('cpu')
+                    if prior is not None:
+                        prior_value = prior_value + prior(out_params).to('cpu')
 
             prior_cache[self.name] = prior_value
 
