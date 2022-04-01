@@ -1010,6 +1010,7 @@ class Stokes2Coherency(utils.Module):
 
         # assume sky_comp is a (Nstokes, 1, ...) tensor from here on out
         device = sky_comp.device
+        noV = True
         if len(sky_comp) == 1:
             # only Stokes I was fed
             I = sky_comp[0, 0]
@@ -1021,7 +1022,7 @@ class Stokes2Coherency(utils.Module):
                     # otherwise use self.params
                     params = self.params
                 # setup output coherency matrix
-                B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+                B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_float(), device=device)
                 frac_Q = params[0, 0]
                 Q = I * frac_Q
                 if len(params) > 1:
@@ -1033,22 +1034,26 @@ class Stokes2Coherency(utils.Module):
                 if len(params) > 2:
                     frac_V = params[2, 0]
                     V = I * frac_V
+                    B = B.to(_cfloat())
+                    noV = False
                 else:
                     frac_V = 0
                     V = 0
 
             else:
                 # no fractional polarization just use Stokes I
-                B = torch.zeros(1, 1, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+                B = torch.zeros(1, 1, *sky_comp.shape[2:], dtype=_float(), device=device)
                 frac_Q, frac_U, frac_V = 0, 0, 0
                 Q, U, V = 0, 0, 0
         else:
             # assume some or all of Q, U, V was fed along with I
-            B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_cfloat(), device=device)
+            B = torch.zeros(2, 2, *sky_comp.shape[2:], dtype=_float(), device=device)
             I = sky_comp[0, 0]
             if sky_comp.shape[:2] == (2, 2):
                 # index sky_comp as (2, 2, ...)
                 frac_Q, frac_U, frac_V = sky_comp[0, 1], sky_comp[1, 0], sky_comp[1, 1]
+                B = B.to(_cfloat())
+                noV = False
             else:
                 # index sky_comp as (N, 1, ...)
                 frac_Q = sky_comp[1, 0]
@@ -1058,6 +1063,8 @@ class Stokes2Coherency(utils.Module):
                     frac_U = 0
                 if len(sky_comp) > 3:
                     frac_V = sky_comp[3, 0]
+                    B = B.to(_cfloat())
+                    noV = False
                 else:
                     frac_V = 0
             Q, U, V = I * frac_Q, I * frac_U, I * frac_V
@@ -1065,9 +1072,12 @@ class Stokes2Coherency(utils.Module):
         # populate coherency matrix
         B[0, 0] = I + Q
         if len(B) > 1:
-            B[0, 1] = U - 1j * V
-            B[1, 0] = U + 1j * V
+            B[0, 1] = U
+            B[1, 0] = U
             B[1, 1] = I - Q
+            if not noV:
+                B[0, 1] -= 1j * V
+                B[1, 0] += 1j * V
 
         # evaluate prior on fractional polarization
         # this should be less than or equal to 1.0
