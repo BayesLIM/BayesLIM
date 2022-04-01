@@ -73,7 +73,7 @@ class LogTaperedUniformPrior:
     Log of an edge-tapered uniform prior, constructed by
     multiplying two mirrored tanh functions and taking log.
 
-    .. math ::
+    .. math::
         
         c &= \alpha/(b_u - b_l) \\
         P &= \tanh(c(x-b_l))\cdot\tanh(-c(x-b_u))
@@ -152,7 +152,7 @@ class LogTaperedUniformPrior:
 
 class LogGaussPrior:
     """
-    log Gaussian prior
+    log Gaussian prior. L2 norm regularization
     """
     def __init__(self, mean, cov, sparse_cov=True, index=None):
         """
@@ -207,6 +207,55 @@ class LogGaussPrior:
             chisq = torch.sum(res @ self.icov @ res)
 
         return -0.5 * chisq - self.norm
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogLaplacePrior:
+    """
+    Log Laplacian Prior. L1 norm regularization
+    """
+    def __init__(self, mean, scale, index=None):
+        """
+        mean and scale must match shape of params, or be scalars
+
+        .. math::
+
+            \log P(y|m,s) = -|y-m|/s
+
+        The derivative of the residual at zero is defined
+        to be zero.
+
+        Parameters
+        ----------
+        mean : tensor
+            mean tensor, broadcasting with (indexed) params shape
+        scale : tensor
+            scale tensor, broadcasting with params
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        """
+        self.mean = torch.as_tensor(mean)
+        self.scale = torch.as_tensor(scale)
+        self.index = index
+        self.norm = torch.log(1/(2*scale))
+
+    def forward(self, params):
+        """
+        Evaluate log Laplacian prior
+
+        Parameters
+        ----------
+        params : tensor
+            Parameter tensor
+        """
+        if self.index is not None:
+            params = params[self.index]
+        res = params - self.mean
+
+        return torch.sum(torch.abs(res) / self.scale) - self.norm
 
     def __call__(self, params):
         return self.forward(params)
@@ -284,6 +333,9 @@ class LogProb(utils.Module):
         self.negate = negate
         self.closure_eval = 0
         self.grad_type = grad_type
+
+        # set default clamp parameters
+        self.set_grad_clamp()
 
         # clear prior cache
         self.clear_prior_cache()
@@ -588,14 +640,66 @@ class LogProb(utils.Module):
                 if out.requires_grad:
                     out.backward()
                 loss = loss + out.detach()
-            return loss / self.Nbatch
+            loss = loss / self.Nbatch
 
         # if stochastic, just run current batch, then backprop
         elif self.grad_type == 'stochastic':
             out = self()
             if out.requires_grad:
                 out.backward()
-            return out.detach()
+            loss = out.detach()
+
+        # clamp gradients if desired
+        self.grad_clamp()
+
+        return loss
+
+    def set_grad_clamp(self, clamps=None, alpha=1.0):
+        """
+        Setup parameter gradient clamps
+
+        Parameters
+        ----------
+        clamps : list, optional
+            Gradient clamp dictionary of the form
+            {"model.module1.params" : 
+                {"value" : tensor(...),
+                 "idx" : (slice(None), slice(None), (0, 1, 2), ...),
+                 "clamp_type" : "soft",
+                 }
+             "model.module2.params" : ...
+            }
+            where "clamp_type" is the kind of clamping,
+                "clamp" : params.grad[idx] > value, set to zero
+                "replace" : set params.grad[idx] to value
+        alpha : float, optional
+            Overall factor to multiply all
+            clamp values by
+        """
+        self.clamps = clamps
+        self.alpha = alpha
+
+    def grad_clamp(self):
+        """
+        Clamp parameter gradients
+        """
+        if self.clamps is not None:
+            for param, clamp in enumerate(self.clamps):
+                grad = self.__getattr__(param).grad
+                idx = clamp.get('idx', ())
+                value = clamp.get('value') * self.alpha
+                clamp_type = clamp.get("clamp_type", "clamp")
+                if grad is not None:
+                    if clamp_type == 'clamp':
+                        # set grad to zero when outside bounds
+                        gidx = grad[idx]
+                        out_bounds = (gidx < -value) | (gidx > value)
+                        gidx[out_bounds] = 0.0
+                        grad[idx] = gidx
+
+                    elif clamp_type == 'replace':
+                        # set grad to value
+                        grad[idx] = value
 
     def push(self, device):
         """
@@ -664,21 +768,19 @@ class LogProb(utils.Module):
 class Trainer:
     """Object for training a model wrapped with
     the LogProb posterior class"""
-    def __init__(self, prob, opt, track=False):
+    def __init__(self, prob, track=False):
         """
         Parameters
         ----------
         prob : LogProb object
-        opt : torch.Optimizer object
         track : bool, optional
             If True, track value of all prob.parameters and append to
             a chain during optimization.
         """
         self.prob = prob
-        self.loss = []
+        self._loss = []
         self.closure_eval = 0
         self.track = track
-        self.set_opt(opt)
 
         if prob.grad_type == 'accumulate':
             self.Nbatch = 1
@@ -745,7 +847,7 @@ class Trainer:
             self.opt.zero_grad()
 
             # iterate over minibatches
-            _loss = 0
+            L = 0
             for i in range(self.Nbatch):
                 # append current params
                 if self.track:
@@ -753,10 +855,10 @@ class Trainer:
                         self.chain[k].append(self.prob[k].detach().clone())
 
                 # evaluate forward model, backprop, make a step
-                _loss += self.opt.step(self.prob.closure)
+                L += self.opt.step(self.prob.closure)
 
             # append batch-averaged loss
-            self.loss.append(_loss / self.Nbatch) 
+            self._loss.append(L / self.Nbatch) 
 
         time_elapsed = time.time() - start
         info = dict(duration=time_elapsed)
@@ -781,6 +883,10 @@ class Trainer:
             return torch.stack(self.chain[name])
         else:
             return {k: torch.stack(c) for k, c in self.chain.items()}
+
+    @property
+    def loss(self):
+        return torch.as_tensor(self._loss)
 
 
 def apply_icov(data, icov, cov_axis):
