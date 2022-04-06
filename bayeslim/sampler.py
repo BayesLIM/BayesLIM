@@ -403,6 +403,7 @@ class NUTS(HMC):
             a 2D tensor for each param.ravel()
             in x0.
         """
+        raise NotImplementedError
 
     def build_tree(self, ):
         pass

@@ -38,26 +38,28 @@ class TelescopeModel:
         self.conv_cache = {}
         self.device = device
 
-    def hash(self, time, sky):
+    def hash(self, *args):
         """
-        Create a hash from an observation time
-        and sky model object. It is assumed that
-        the ra, dec arrays of the sky model object
-        are immutable.
+        Create a hash from a unique set of arguments,
+        for example, observation time and ra/dec arrays.
 
         Parameters
         ----------
+        args : tuple
+            unique arguments to hash
+
+        e.g. (time, angs)
         time : float
             observation julian date (e.g. 2458101.245501)
-        sky : sky model object
-            A sky object (e.g. PointSky, PixelSky)
+        angs : tuple
+            First (ra, dec) of array.
 
         Returns
         -------
         hash : int
             A unique integer hash
         """
-        return hash((time, sky))
+        return hash(args)
 
     def _clear_cache(self, key=None):
         """Clear conversion cache, or just a single
@@ -75,10 +77,11 @@ class TelescopeModel:
         else:
             del self.conv_cache[key]
 
-    def eq2top(self, time, ra, dec, sky=None, store=False):
+    def eq2top(self, time, ra, dec, store=False):
         """
         Convert equatorial coordinates to topocentric (aka AltAz).
-        Pull from the conv_cache if saved.
+        Pull from the conv_cache if saved. Take care of how
+        the hashing is performed in this function!
 
         Parameters
         ----------
@@ -88,10 +91,6 @@ class TelescopeModel:
             right ascension in degrees [J2000]
         dec : tensor or ndarray
             declination in degrees [J2000]
-        sky : SkyBase subclass or int
-            The SkyBase subclass object, or some unique
-            identifier of that specific instantiated
-            sky model. Used for caching.
         store : bool, optional
             If True, store output to cache.
 
@@ -102,7 +101,7 @@ class TelescopeModel:
             oriented along East-North-Up frame
         """
         # create hash
-        h = self.hash(time, sky)
+        h = self.hash(time, ra[0], dec[0], ra[-1], dec[-1])
 
         # pull from cache
         if h in self.conv_cache:
@@ -415,7 +414,7 @@ def eq2top(location, time, ra, dec):
 
     Notes
     -----
-    zenith angle (zen) is alt + 90
+    zenith angle (zen) is 90 - alt
     """
     # if ra/dec are tensors, then this is a lot slower
     if isinstance(ra, torch.Tensor):

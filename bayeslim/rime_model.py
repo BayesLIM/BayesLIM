@@ -300,8 +300,7 @@ class RIME(utils.Module):
                 # get beam tensor
                 if kind in ['pixel', 'point']:
                     # convert sky pixels from ra/dec to alt/az
-                    alt, az = self.telescope.eq2top(time, ra, dec, store=True,
-                                                    sky=(float(ra[0]), float(ra[-1])))
+                    alt, az = self.telescope.eq2top(time, ra, dec, store=True)
 
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
