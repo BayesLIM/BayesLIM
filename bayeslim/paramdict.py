@@ -170,8 +170,7 @@ class ParamDict:
             If True overwrite fname if it exists
         """
         from bayeslim import io
-        pd = ParamDict({k: self.params[k].detach() for k in self.keys()})
-        io.write_pkl(fname, pd, overwrite=overwrite)
+        io.write_pkl(fname, self.clone(), overwrite=overwrite)
 
     @staticmethod
     def read_pkl(fname, force_cpu=False):
