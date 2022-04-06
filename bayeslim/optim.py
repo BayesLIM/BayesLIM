@@ -240,7 +240,7 @@ class LogLaplacePrior:
         self.mean = torch.as_tensor(mean)
         self.scale = torch.as_tensor(scale)
         self.index = index
-        self.norm = torch.log(1/(2*scale))
+        self.norm = torch.log(2*self.scale)
 
     def forward(self, params):
         """
@@ -255,7 +255,7 @@ class LogLaplacePrior:
             params = params[self.index]
         res = params - self.mean
 
-        return torch.sum(torch.abs(res) / self.scale) - self.norm
+        return -torch.sum(torch.abs(res) / self.scale) - self.norm
 
     def __call__(self, params):
         return self.forward(params)
@@ -334,7 +334,7 @@ class LogProb(utils.Module):
         self.closure_eval = 0
         self.grad_type = grad_type
 
-        # set default clamp parameters
+        # set empty clamp parameters
         self.set_grad_clamp()
 
         # clear prior cache
@@ -364,7 +364,7 @@ class LogProb(utils.Module):
         model_params : list, optional
             List of submodules params tensors (with model as root) to
             collect sort into main_params.
-            E.g. ['rime.sky.params', 'cal.params']
+            E.g. ['sky.params', 'cal.params']
             If None, main_params is set as None.
         """
         self.main_params = None
@@ -660,18 +660,20 @@ class LogProb(utils.Module):
 
         Parameters
         ----------
-        clamps : list, optional
-            Gradient clamp dictionary of the form
-            {"model.module1.params" : 
+        clamps : list of tuples, optional
+            List of parameter names and clamp dictionaries
+            [("model.module1.params",
                 {"value" : tensor(...),
-                 "idx" : (slice(None), slice(None), (0, 1, 2), ...),
+                 "index" : (slice(None), slice(None), (0, 1, 2), ...),
                  "clamp_type" : "soft",
                  }
-             "model.module2.params" : ...
-            }
+             ),
+             ("model.module2.params",
+                {...}
+             )]
             where "clamp_type" is the kind of clamping,
-                "clamp" : params.grad[idx] > value, set to zero
-                "replace" : set params.grad[idx] to value
+                "clamp" : params.grad[index] > value, set to zero
+                "replace" : set params.grad[index] to value
         alpha : float, optional
             Overall factor to multiply all
             clamp values by
@@ -684,9 +686,9 @@ class LogProb(utils.Module):
         Clamp parameter gradients
         """
         if self.clamps is not None:
-            for param, clamp in enumerate(self.clamps):
-                grad = self.__getattr__(param).grad
-                idx = clamp.get('idx', ())
+            for param, clamp in self.clamps:
+                grad = self[param].grad
+                idx = clamp.get('index', slice(None))
                 value = clamp.get('value') * self.alpha
                 clamp_type = clamp.get("clamp_type", "clamp")
                 if grad is not None:
@@ -717,7 +719,7 @@ class LogProb(utils.Module):
             del self.prior_cache
         self.prior_cache = {}
 
-    def set_icov(self, icov):
+    def _set_icov(self, icov):
         """
         LEGACY
         Set inverse covariance as self.icov
@@ -734,6 +736,9 @@ class LogProb(utils.Module):
             two should therefore be consistent.
         """
         ### LEGACY ###
+        # in order to make icov a parameter, needs to be attached to prob, not
+        # target.data!
+        raise NotImplementedError
         # push cov to device is needed
         if self.cov.device is not self.device:
             self.cov = self.cov.to(self.device)
@@ -868,6 +873,7 @@ class Trainer:
     def get_chain(self, name=None):
         """
         Extract and return chain history
+        if tracking
 
         Parameters
         ----------
@@ -879,6 +885,7 @@ class Trainer:
         tensor or dict
             Chain for given name
         """
+        assert self.track
         if name is not None:
             return torch.stack(self.chain[name])
         else:
