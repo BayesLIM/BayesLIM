@@ -31,8 +31,8 @@ class PixelBeam(utils.Module):
 
     .. math::
 
-        J_a = \\left[\\begin{array}{cc}J_e^\alpha & J_e^\delta\\\\
-                    J_n^\alpha & J_n^\delta\\end{array}\\right]
+        J_a = \left[\begin{array}{cc}J_e^\alpha & J_e^\delta\\\\
+                    J_n^\alpha & J_n^\delta\end{array}\right]
 
     where e and n index the East and North feed polarizations.
     The amplitude of the beam should be normalized to unity
@@ -137,7 +137,7 @@ class PixelBeam(utils.Module):
         if self.powerbeam:
             assert self.Nmodel == self.Nvec == 1
         else:
-            assert self.Nvec == 2
+            assert self.Nvec == 2, "Jones matrix must be Npol x 2"
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.fov = fov
@@ -307,7 +307,7 @@ class PixelBeam(utils.Module):
         if kind in ['point', 'pixel']:
             # get coords
             alt, az = telescope.eq2top(time, sky_comp['angs'][0], sky_comp['angs'][1],
-                                       sky=kind, store=False)
+                                       store=False)
             zen = utils.colat2lat(alt, deg=True)
 
             # evaluate beam
@@ -416,11 +416,39 @@ class PixelResponse(utils.PixInterp):
     you need to clear_beam() after every backwards call,
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
+
+    Note that this also supports the multiplication of a
+    DD polarization rotation matrix, which transforms
+    the polarized response of the beam from TOPO spherical
+    coordinates to Equatorial coordaintes, i.e. from
+
+    .. math::
+
+        J_{\phi\theta} = \left[\begin{array}{cc}
+        J_e^\phi & J_e^\theta \\\\
+        J_n^\phi & J_n^\theta \end{array}\right]
+
+    to
+
+    .. math::
+
+        J_{\alpha\delta} = \left[\begin{array}{cc}
+        J_e^\alpha & J_e^\delta \\\\
+        J_n^\alpha & J_n^\delta \end{array}\right]
+
+    via
+
+    .. math::
+
+        J_{\alpha\delta} = J_{\phi\theta} R_\chi
+
+    where the rotation matrix is DD and is derived in
+    BayesLIM Memo 1.
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  Nnn=4, theta=None, phi=None, freq_mode='channel', nside=None,
                  device=None, log=False, f0=None, Ndeg=None,
-                 freq_kwargs={}, powerbeam=True):
+                 freq_kwargs={}, powerbeam=True, Rchi=None):
         """
         Parameters
         ----------
@@ -452,6 +480,11 @@ class PixelResponse(utils.PixInterp):
             Optional kwargs to pass to utils.gen_linear_A
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
+        Rchi : tensor, optional
+            Polarization rotation matrix, rotating polarized Jones
+            matrix from J phi theta to J alpha delta (see Memo 1),
+            should be shape (2, 2, Npix) where Npix is the spatial
+            size of the pixelized beam cache, i.e. len(theta)
         """
         super().__init__(pixtype, interp_mode=interp_mode, Nnn=Nnn, nside=nside,
                          device=device, theta=theta, phi=phi)
@@ -464,6 +497,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_mode = freq_mode
         self.freq_ax = 3
         self.freq_kwargs = freq_kwargs
+        self.Rchi = Rchi
         self.clear_beam()
 
         self._setup()
@@ -525,10 +559,35 @@ class PixelResponse(utils.PixInterp):
         if self.log:
             b = torch.exp(b)
 
+        # apply polarization rotation if desired
+        b = self.apply_Rchi(b)
+
         return b
 
     def clear_beam(self):
         self.beam_cache = None
+
+    def apply_Rchi(self, beam):
+        """
+        Apply DD polarization rotation matrix to
+        pixel beam model. beam must have
+        Nvec == 2.
+
+        Parameters
+        ----------
+        beam : tensor
+            Pixelized beam tensor of shape
+            (Npol, Nvec, Nmodel, Nfreqs, Npix)
+
+        Returns
+        -------
+        tensor
+        """
+        if self.Rchi is None:
+            return beam
+        assert self.Rchi.shape[-1] == beam.shape[-1]
+        assert self.beam.shape[1] == 2, "Nvec must be 2"
+        return torch.einsum("ij...l,jkl->ik...l", beam, self.Rchi)
 
 
 class GaussResponse:
@@ -671,8 +730,7 @@ class YlmResponse(PixelResponse):
                  mode='interpolate', device=None, interp_mode='nearest',
                  Nnn=4, theta=None, phi=None, nside=None,
                  powerbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs={},
-                 Ylm_kwargs={}):
+                 freq_kwargs={}, Ylm_kwargs={}, Rchi=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -713,6 +771,11 @@ class YlmResponse(PixelResponse):
             Kwargs for generating linear modes, see utils.gen_linear_A()
         Ylm_kwargs : dict, optional
             Kwargs for generating Ylm modes
+        Rchi : tensor, optional
+            Polarization rotation matrix, rotating polarized Jones
+            matrix from J phi theta to J alpha delta (see Memo 1),
+            should be shape (2, 2, Npix) where Npix is the spatial
+            size of the pixelized beam cache, i.e. len(theta)
 
         Notes
         -----
@@ -724,7 +787,7 @@ class YlmResponse(PixelResponse):
                                           interp_mode=interp_mode, Nnn=Nnn,
                                           freq_mode=freq_mode,
                                           comp_params=comp_params, freq_kwargs=freq_kwargs,
-                                          theta=theta, phi=phi)
+                                          theta=theta, phi=phi, Rchi=Rchi)
         self.l, self.m = l, m
         dtype = utils._cfloat() if comp_params else utils._float()
         self.mult = torch.ones(len(m), dtype=dtype, device=device)
@@ -837,10 +900,14 @@ class YlmResponse(PixelResponse):
         if self.powerbeam:
             if torch.is_complex(beam):
                 beam = torch.real(beam)
-            beam = torch.abs(beam)
+            #beam = torch.abs(beam)
 
         if self.log:
             beam = torch.exp(beam)
+
+        if self.mode != 'generate':
+            # apply polarization rotation to beam_cache
+            beam = self.apply_Rchi(beam)
 
         return beam
 
@@ -865,6 +932,42 @@ class YlmResponse(PixelResponse):
             beam = self.interp(self.beam_cache, zen, az)
 
         return beam
+
+
+def __call__(skyelf, params, zen, az, *args):
+    # cast to complex if needed
+    if self.comp_params:
+        params = utils.viewcomp(params)
+
+    # set beam cache if it doesn't exist
+    if self.beam_cache is None:
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
+        # pass through frequency response
+        if self.freq_mode == 'linear':
+            params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+
+        # now cache it for future calls
+        self.beam_cache = params
+
+    # interpolate at sky values
+    b = self.interp(self.beam_cache, zen, az)
+
+    if self.powerbeam:
+        ## TODO: replace abs with non-neg prior on beam?
+        if torch.is_complex(b):
+            b = torch.real(b)
+        b = torch.abs(b)
+
+    if self.log:
+        b = torch.exp(b)
+
+    return b
+
+
+
 
     def push(self, device):
         """push attrs to device"""
