@@ -1050,3 +1050,115 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
 
     return beam
 
+
+# define the transformation from eq to xyz
+def R_eq_to_xyz(alpha, delta):
+    """
+    Expresses Equatorial alpha and delta unit vectors,
+    each at location (alpha, delta), in terms of xyz
+    unit vectors. Dotted into a alpha, delta unit
+    vectors [1, 0], [0, 1], this is a rotation matrix.
+
+    Parameters
+    ----------
+    alpha : ndarray
+        Right ascension [rad]
+    delta : ndarray
+        Declination [rad]
+        Note this is an altitude, not polar angle!
+
+    Returns
+    -------
+    Req2xyz : ndarray
+        Of shape (3, 2)
+    """
+    ## Depending on whether you use declination as an altitude (standard) or polar unit vector, you can negate
+    ## the second column, however, this leads to R_chi having a det of 1 or -1 (rotation / reflection).
+    ## not sure which is most appropriate, to study...
+    return np.array([[-np.sin(alpha), np.cos(alpha)*np.sin(delta)],#, np.cos(alpha)*np.cos(delta)],
+                     [np.cos(alpha), np.sin(alpha)*np.sin(delta)],# np.sin(alpha)*np.cos(delta)],
+                     [np.zeros_like(alpha), -np.cos(delta)],# np.sin(delta)]
+                     ])
+
+def R_beta(beta):
+    """
+    Rotation matrix from xyz to XYZ by angle beta
+    about hat(y) (rotate in the x-z plane)
+
+    Parameters
+    ----------
+    beta : float
+        Angle [rad]
+
+    Returns
+    -------
+    R_beta : ndarray
+        3x3 rotation matrix
+    """
+    # define the transformation from xyz to XYZ
+    return np.array([[np.cos(beta), 0, np.sin(beta)],
+                     [0, 1, 0],
+                     [-np.sin(beta), 0, np.cos(beta)]])
+
+def R_XYZ_to_top(phi, theta):
+    """
+    Project XYZ unit vectors onto topocentric
+    unit vectors, phi, theta.
+
+    Parameters
+    ----------
+    phi : ndarray
+        Azimuth angle [rad]
+    theta : ndarray
+        Polar (zenith) angle [rad]
+
+    Returns
+    -------
+    R_xyz2top : ndarray
+        2x3 projection matrix, projecting from
+        XYZ to (phi,theta)
+    """
+    return np.array([[-np.sin(phi), np.cos(phi), np.zeros_like(phi)],
+                     [np.cos(phi)*np.cos(theta), np.sin(phi)*np.cos(theta), -np.sin(theta)]])
+
+def R_chi(alpha, delta, beta):
+    """
+    Compute rotation matrix for rotating equatorial basis vectors
+    [e_a, e_d] to spherical basis vectors [e_phi, e_theta]
+    (defined in the xyz frame)
+    
+    Parameters
+    ----------
+    alpha : ndarray
+        right ascension [rad]
+    delta : ndarray
+        declination [rad]
+    beta : float
+        angle of observer latitude from north pole [rad]
+
+    Returns
+    -------
+    Rchi : tensor
+        (2, 2, Npix) rotation matrix for each sky
+        pixel
+    """
+    # get the pointing vector in xyz coords
+    s_hat_xyz = np.array([np.cos(delta)*np.cos(alpha), np.cos(delta)*np.sin(alpha), np.sin(delta)])
+
+    # (3, 2, Nsamples)
+    R_eq = R_eq_to_xyz(alpha, delta)
+
+    # (3, 3)
+    R_b = R_beta(beta)
+    s_hat_XYZ = R_b @ s_hat_xyz
+
+    theta = np.arctan2(np.sqrt(s_hat_XYZ[0]**2+s_hat_XYZ[1]**2), s_hat_XYZ[2])
+    phi = np.arctan2(s_hat_XYZ[1], s_hat_XYZ[0])
+
+    # (2, 3, Nsamples)
+    R_top = R_XYZ_to_top(phi, theta)
+
+    # get total transformation matrix
+    R_chi = np.einsum('ijk,jl,lmk->imk', R_top, R_b, R_eq)
+
+    return R_chi
