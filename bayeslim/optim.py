@@ -154,7 +154,8 @@ class LogGaussPrior:
     """
     log Gaussian prior. L2 norm regularization
     """
-    def __init__(self, mean, cov, sparse_cov=True, index=None):
+    def __init__(self, mean, cov, sparse_cov=True, index=None,
+                 side='both', density=True):
         """
         mean and cov must match shape of params, unless
         sparse_cov == False, in which case cov is 2D matrix
@@ -173,11 +174,22 @@ class LogGaussPrior:
         index : slice or tuple of slice objects
             indexing of params tensor before computing prior.
             default is no indexing.
+        side : str, optional
+            Half or double-sided Gaussian
+            'lower' : for y > mean, set residual to zero
+            'upper' : for y < mean, set residual to zero
+            'both'  : standard gaussian behavior (default)
+            Normalization is standard in all cases.
+        density : bool, optional
+            If True, normalize by PDF area (i.e. prob density)
+            otherwise normalize by peak
         """
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.cov = torch.atleast_1d(torch.as_tensor(cov))
         self.sparse_cov = sparse_cov
         self.index = index
+        self.side = side
+        self.density = density
         if self.sparse_cov:
             self.icov = 1 / self.cov
             self.logdet = torch.sum(torch.log(self.cov))
@@ -200,13 +212,21 @@ class LogGaussPrior:
         if self.index is not None:
             params = params[self.index]
         res = params - self.mean
+        if self.side == 'upper':
+            res[res < 0] = 0
+        elif self.side == 'lower':
+            res[res > 0] = 0
         if self.sparse_cov:
             chisq = torch.sum(res**2 * self.icov)
         else:
             res = res.ravel()
             chisq = torch.sum(res @ self.icov @ res)
 
-        return -0.5 * chisq - self.norm
+        out = -0.5 * chisq
+        if self.density:
+            out -= self.norm
+
+        return out
 
     def __call__(self, params):
         return self.forward(params)
@@ -216,7 +236,7 @@ class LogLaplacePrior:
     """
     Log Laplacian Prior. L1 norm regularization
     """
-    def __init__(self, mean, scale, index=None):
+    def __init__(self, mean, scale, index=None, side='both', density=True):
         """
         mean and scale must match shape of params, or be scalars
 
@@ -236,11 +256,22 @@ class LogLaplacePrior:
         index : slice or tuple of slice objects
             indexing of params tensor before computing prior.
             default is no indexing.
+        side : str, optional
+            Half or double-sided exponential
+            'lower' : for y > mean, set residual to zero
+            'upper' : for y < mean, set residual to zero
+            'both'  : standard Laplacian behavior (default)
+            Normalization is standard in all cases.
+        density : bool, optional
+            If True, normalize by PDF area (i.e. prob density)
+            otherwise normalize by peak
         """
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.scale = torch.atleast_1d(torch.as_tensor(scale))
         self.index = index
         self.norm = torch.log(2*self.scale)
+        self.side = side
+        self.density = density
 
     def forward(self, params):
         """
@@ -255,7 +286,16 @@ class LogLaplacePrior:
             params = params[self.index]
         res = params - self.mean
 
-        return -torch.sum(torch.abs(res) / self.scale) - self.norm
+        if self.side == 'upper':
+            res[res < 0] = 0
+        elif self.side == 'lower':
+            res[res > 0] = 0
+
+        out = -torch.sum(torch.abs(res) / self.scale)
+        if self.density:
+            out -= self.norm
+
+        return out
 
     def __call__(self, params):
         return self.forward(params)
