@@ -174,8 +174,8 @@ class LogGaussPrior:
             indexing of params tensor before computing prior.
             default is no indexing.
         """
-        self.mean = torch.as_tensor(mean)
-        self.cov = torch.as_tensor(cov)
+        self.mean = torch.atleast_1d(torch.as_tensor(mean))
+        self.cov = torch.atleast_1d(torch.as_tensor(cov))
         self.sparse_cov = sparse_cov
         self.index = index
         if self.sparse_cov:
@@ -237,8 +237,8 @@ class LogLaplacePrior:
             indexing of params tensor before computing prior.
             default is no indexing.
         """
-        self.mean = torch.as_tensor(mean)
-        self.scale = torch.as_tensor(scale)
+        self.mean = torch.atleast_1d(torch.as_tensor(mean))
+        self.scale = torch.atleast_1d(torch.as_tensor(scale))
         self.index = index
         self.norm = torch.log(2*self.scale)
 
@@ -334,8 +334,8 @@ class LogProb(utils.Module):
         self.closure_eval = 0
         self.grad_type = grad_type
 
-        # set empty clamp parameters
-        self.set_grad_clamp()
+        # set empty grad mod parameters
+        self.set_grad_mod()
 
         # clear prior cache
         self.clear_prior_cache()
@@ -649,59 +649,87 @@ class LogProb(utils.Module):
                 out.backward()
             loss = out.detach()
 
-        # clamp gradients if desired
-        self.grad_clamp()
+        # modify gradients if desired
+        self.grad_mod()
 
         return loss
 
-    def set_grad_clamp(self, clamps=None, alpha=1.0):
+    def set_grad_mod(self, mods=None, alpha=1.0):
         """
-        Setup parameter gradient clamps
+        Setup parameter gradient modification given mod type.
+        Required kwargs are "value" and "mod_type",
+        optional includes "index" and others
+
+        The following modification types are allowed
+        "clamp" : set |params.grad[index]| > value to zero.
+        "replace" : set params.grad[index] to value.
+        "isolate" : multiply gradients by dynamic range
+            with respect to largest gradient, i.e.
+            params.grad *= (params.grad/params.grad.max(dim))**value.
+            This has the effect of "isolating" the total gradient
+            along its steepest dimension.
+        "clip" : keep top N entries in params.grad[index]
+            along "dim" axis and set all others to zero,
+            where N = value. "dim" is optional kwarg.
+            This can be thought of as a form of binary
+            isolation.
 
         Parameters
         ----------
-        clamps : list of tuples, optional
-            List of parameter names and clamp dictionaries
+        mods : list of tuples, optional
+            List of parameter names and mod dictionaries, e.g.
             [("model.module1.params",
-                {"value" : tensor(...),
+                {"value" : float or tensor(...),
                  "index" : (slice(None), slice(None), (0, 1, 2), ...),
-                 "clamp_type" : "soft",
+                 "mod_type" : "clamp",
                  }
              ),
              ("model.module2.params",
                 {...}
              )]
-            where "clamp_type" is the kind of clamping,
-                "clamp" : params.grad[index] > value, set to zero
-                "replace" : set params.grad[index] to value
         alpha : float, optional
             Overall factor to multiply all
-            clamp values by
+            mod "values" by
         """
-        self.clamps = clamps
+        self.mods = mods
         self.alpha = alpha
 
-    def grad_clamp(self):
+    def grad_mod(self):
         """
-        Clamp parameter gradients
+        Modify parameter gradients
         """
-        if self.clamps is not None:
-            for param, clamp in self.clamps:
+        if self.mods is not None:
+            for param, mod in self.mods:
                 grad = self[param].grad
-                idx = clamp.get('index', slice(None))
-                value = clamp.get('value') * self.alpha
-                clamp_type = clamp.get("clamp_type", "clamp")
+                idx = mod.get('index', slice(None))
+                value = mod.get('value') * self.alpha
+                mod_type = mod.get("mod_type")
                 if grad is not None:
-                    if clamp_type == 'clamp':
+                    if mod_type == 'clamp':
                         # set grad to zero when outside bounds
                         gidx = grad[idx]
                         out_bounds = (gidx < -value) | (gidx > value)
                         gidx[out_bounds] = 0.0
                         grad[idx] = gidx
 
-                    elif clamp_type == 'replace':
+                    elif mod_type == 'replace':
                         # set grad to value
                         grad[idx] = value
+
+                    elif mod_type == 'isolate':
+                        dim = mod.get('dim', None)
+                        if dim is None:
+                            gmax = torch.max(grad[idx], None)
+                        else:
+                            gmax = torch.max(grad[idx], dim=dim, keepdims=True).values
+                        grad[idx] *= (grad[idx] / gmax)**value
+
+                    elif mod_type == 'clip':
+                        # keep N strongest gradients along dim (N = value)
+                        dim = mod.get('dim')
+                        asort = torch.argsort(torch.abs(grad[idx]), dim=dim,
+                                              descending=True)
+                        grad[idx] *= (asort <= value)
 
     def push(self, device):
         """
@@ -894,6 +922,14 @@ class Trainer:
     @property
     def loss(self):
         return torch.as_tensor(self._loss)
+
+    def shrinkage_step(self):
+        """
+        Perform a proximal gradient projected gradient
+        shrinkage step via soft-thresholding (ISTA)
+
+        """
+        raise NotImplementedError
 
 
 def apply_icov(data, icov, cov_axis):
