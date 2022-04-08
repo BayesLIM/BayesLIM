@@ -52,7 +52,7 @@ class PixelBeam(utils.Module):
     def __init__(self, params, freqs, ant2beam=None, response=None,
                  response_args=(), response_kwargs={},
                  parameter=True, pol=None, powerbeam=True,
-                 fov=180, name=None):
+                 fov=180, name=None, p0=None):
         """
         A generic beam model evaluated on the pixelized sky
 
@@ -114,9 +114,15 @@ class PixelBeam(utils.Module):
             Default is full sky above the horizon.
         name : str, optional
             Name for this model, stored as self.name.
+        p0 : tensor, optional
+            A fixed "prior starting model" for params, which is summed with
+            params before passing through the response function.
+            This recasts params as a delta perturbation from p0.
+            Must have same shape as params.
         """
         super().__init__(name=name)
         self.params = params
+        self.p0 = p0
         self.device = self.params.device
         if parameter:
             self.params = torch.nn.Parameter(self.params)
@@ -136,8 +142,6 @@ class PixelBeam(utils.Module):
         self.Nmodel = params.shape[2]
         if self.powerbeam:
             assert self.Nmodel == self.Nvec == 1
-        else:
-            assert self.Nvec == 2, "Jones matrix must be Npol x 2"
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.fov = fov
@@ -192,7 +196,11 @@ class PixelBeam(utils.Module):
         zen, az = zen[cut], az[cut]
 
         # get beam
-        beam = self.R(self.params, zen, az, self.freqs)
+        if self.p0 is None:
+            p = self.params
+        else:
+            p = self.params + self.p0
+        beam = self.R(p, zen, az, self.freqs)
 
         # evaluate prior
         self.eval_prior(prior_cache)
@@ -550,11 +558,12 @@ class PixelResponse(utils.PixInterp):
         # interpolate at sky values
         b = self.interp(self.beam_cache, zen, az)
 
-        if self.powerbeam:
-            ## TODO: replace abs with non-neg prior on beam?
-            if torch.is_complex(b):
-                b = torch.real(b)
-            b = torch.abs(b)
+        if torch.is_complex(b):
+            b = torch.real(b)
+
+#        if self.powerbeam:
+#            ## TODO: replace abs with non-neg prior on beam?
+#            b = torch.abs(b)
 
         if self.log:
             b = torch.exp(b)
@@ -586,7 +595,7 @@ class PixelResponse(utils.PixInterp):
         if self.Rchi is None:
             return beam
         assert self.Rchi.shape[-1] == beam.shape[-1]
-        assert self.beam.shape[1] == 2, "Nvec must be 2"
+        assert beam.shape[1] == 2, "Nvec must be 2"
         return torch.einsum("ij...l,jkl->ik...l", beam, self.Rchi)
 
 
@@ -897,10 +906,8 @@ class YlmResponse(PixelResponse):
         # next do slower dot product over Ncoeff
         beam = (p * self.mult) @ Ylm
 
-        if self.powerbeam:
-            if torch.is_complex(beam):
-                beam = torch.real(beam)
-            #beam = torch.abs(beam)
+        if torch.is_complex(beam):
+            beam = torch.real(beam)
 
         if self.log:
             beam = torch.exp(beam)
@@ -1051,10 +1058,9 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
     return beam
 
 
-# define the transformation from eq to xyz
 def R_eq_to_xyz(alpha, delta):
     """
-    Expresses Equatorial alpha and delta unit vectors,
+    Expresses equatorial alpha and delta unit vectors,
     each at location (alpha, delta), in terms of xyz
     unit vectors. Dotted into a alpha, delta unit
     vectors [1, 0], [0, 1], this is a rotation matrix.
@@ -1080,6 +1086,7 @@ def R_eq_to_xyz(alpha, delta):
                      [np.zeros_like(alpha), -np.cos(delta)],# np.sin(delta)]
                      ])
 
+
 def R_beta(beta):
     """
     Rotation matrix from xyz to XYZ by angle beta
@@ -1099,6 +1106,7 @@ def R_beta(beta):
     return np.array([[np.cos(beta), 0, np.sin(beta)],
                      [0, 1, 0],
                      [-np.sin(beta), 0, np.cos(beta)]])
+
 
 def R_XYZ_to_top(phi, theta):
     """
@@ -1120,6 +1128,7 @@ def R_XYZ_to_top(phi, theta):
     """
     return np.array([[-np.sin(phi), np.cos(phi), np.zeros_like(phi)],
                      [np.cos(phi)*np.cos(theta), np.sin(phi)*np.cos(theta), -np.sin(theta)]])
+
 
 def R_chi(alpha, delta, beta):
     """
