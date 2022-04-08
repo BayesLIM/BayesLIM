@@ -2251,8 +2251,14 @@ def _make_hex(N, D=15):
 
 
 class SimpleIndex:
+    """
+    Returns value for any getitem call
+    """
+    def __init__(self, value=0):
+        self.value = value
+
     def __getitem__(self, k):
-        return 0
+        return self.value
 
 
 def smi(name, fname='nvidia_mem.txt'):
