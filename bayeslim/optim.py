@@ -391,7 +391,7 @@ class LogProb(utils.Module):
         be on a single tensor (e.g. Hessian computation).
         This can also be used for funcs that need all parameters
         on a single device, although this can also be handled
-        easily by moving parameters to a single device but
+        easily by moving each mod.params to a single device but
         keeping their response functions on a separate device.
 
         For any call to self, the values from self.main_params are
@@ -403,23 +403,35 @@ class LogProb(utils.Module):
         ----------
         model_params : list, optional
             List of submodules params tensors (with model as root) to
-            collect sort into main_params.
+            collect and stack in main_params.
             E.g. ['sky.params', 'cal.params']
             If None, main_params is set as None.
+            You can also index each params by passing
+            a 2-tuple as (str, index)
+            e.g. [('sky.params', (range(10), 0, 0), ...]
         """
         self.main_params = None
         self._main_indices = None
         self._main_shapes = None
         self._main_devices = None
+        self._main_index = None
         if model_params is not None:
             N = 0
             params = []
             self._main_indices = {}
             self._main_shapes = {}
             self._main_devices = {}
+            self._main_index = {}
             for param in model_params:
+                if isinstance(param, str):
+                    idx = None
+                else:
+                    param, idx = param
                 # get parameter and metadata
-                p = self.model[param].detach().to('cpu').to(utils._float())
+                if idx is None:
+                    p = self.model[param].detach().to('cpu').to(utils._float())
+                else:
+                    p = self.model[param][idx].detach().to('cpu').to(utils._float())
                 shape = p.shape
                 numel = shape.numel()
                 device = p.device
@@ -429,16 +441,19 @@ class LogProb(utils.Module):
                 self._main_indices[param] = slice(N, N + numel) 
                 self._main_shapes[param] = shape
                 self._main_devices[param] = device
+                self._main_index[param] = idx
                 N += numel
 
             self.main_params = torch.nn.Parameter(torch.cat(params))
+            # this last call removes all names in model_params as Parameters
+            # and makes the leaf views of main_params
             self.send_main_params()
 
     def send_main_params(self):
         """
         Take existing value of self.main_params and using
-        _main_indices, _main_shapes and _main_types, and
-        send its values to the relevant submodule params.
+        _main_indices, _main_shapes, _main_types,_main_index,
+        and send its values to the relevant submodule params.
         """
         if self.main_params is not None:
             for param in self._main_indices:
@@ -446,7 +461,8 @@ class LogProb(utils.Module):
                 value = self.main_params[self._main_indices[param]]
                 value = value.reshape(self._main_shapes[param])
                 value = value.to(self._main_devices[param])
-                utils.set_model_attr(self.model, param, value,
+                idx = self._main_index[param]
+                utils.set_model_attr(self.model, param, value, idx=idx,
                                      clobber_param=True, no_grad=False)
 
     @property
@@ -690,11 +706,11 @@ class LogProb(utils.Module):
             loss = out.detach()
 
         # modify gradients if desired
-        self.grad_mod()
+        self.grad_modify()
 
         return loss
 
-    def set_grad_mod(self, mods=None, alpha=1.0):
+    def set_grad_mod(self, grad_mods=None, alpha=1.0):
         """
         Setup parameter gradient modification given mod type.
         Required kwargs are "value" and "mod_type",
@@ -716,7 +732,7 @@ class LogProb(utils.Module):
 
         Parameters
         ----------
-        mods : list of tuples, optional
+        grad_mods : list of tuples, optional
             List of parameter names and mod dictionaries, e.g.
             [("model.module1.params",
                 {"value" : float or tensor(...),
@@ -731,15 +747,15 @@ class LogProb(utils.Module):
             Overall factor to multiply all
             mod "values" by
         """
-        self.mods = mods
+        self.grad_mods = grad_mods
         self.alpha = alpha
 
-    def grad_mod(self):
+    def grad_modify(self):
         """
         Modify parameter gradients
         """
-        if self.mods is not None:
-            for param, mod in self.mods:
+        if self.grad_mods is not None:
+            for param, mod in self.grad_mods:
                 grad = self[param].grad
                 idx = mod.get('index', slice(None))
                 value = mod.get('value') * self.alpha

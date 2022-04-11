@@ -2002,7 +2002,7 @@ def get_model_attr(model, name, pop=0):
 
 
 def set_model_attr(model, name, value, clobber_param=False,
-                   no_grad=True):
+                   no_grad=True, idx=None):
     """
     Set value to model as model.name
 
@@ -2013,43 +2013,64 @@ def set_model_attr(model, name, value, clobber_param=False,
     ----------
     model : utils.Module object
     name : str
+        Name of attribute to set
     value : tensor
+        New tensor values to set
     clobber_param : bool, optional
-        If True and key from pdict is an existing
-        Parameter on self, del the param then assign
-        it from pdict (this removes Parameter object
-        but keeps memory address from pdict).
-        If False (default), insert value from pdict
-        into existing Parameter object, changing
-        its memory address.
+        If True and name already exists as a Parameter,
+        detach & clone it then assign value as name
+        (this removes existing name from graph).
+        If False (default) and name already exists,
+        try to insert value into existing model.name. 
     no_grad : bool, optional
         If True, enter a torch.no_grad() context,
         otherwise enter a nullcontext.
+    idx : tuple, optional
+        If model.name already exists, insert value as
+        model.name[idx] = value. Note that if clobber_param = False
+        and model.name is a Paramter, this will only work with
+        simple indexing schemes. Note that value should already
+        have a shape that matches model.name[idx]
     """
     context = torch.no_grad if no_grad else nullcontext
     with context():
         if isinstance(name, str):
             name = name.split('.')
         if len(name) == 1:
-            # assign value to model as name
+            # this is the last entry in name = "first.second.third"
+            # so assign value as name[0]
+            name = name[0]
             device = None
             parameter = False
             if clobber_param:
-                # if overwriting name del existing attr
-                if hasattr(model, name[0]):
-                    delattr(model, name[0])
-            elif hasattr(model, name[0]):
+                # if clobbering name, del then reattach w/o requires_grad
+                if hasattr(model, name):
+                    p = getattr(model, name).detach().clone()
+                    delattr(model, name)
+                    setattr(model, name, p)
+            elif hasattr(model, name):
                 # if not clobber and this attr exists
                 # get device and parameter status from attr
-                device = getattr(model, name[0]).device
-                parameter = isinstance(getattr(model, name[0]), torch.nn.Parameter)
+                device = getattr(model, name).device
+                parameter = isinstance(getattr(model, name), torch.nn.Parameter)
                 value = value.to(device)
-            if parameter and not value.requires_grad:
-                value = torch.nn.Parameter(value)
-            setattr(model, name[0], value)
+                if parameter and not value.requires_grad:
+                    # if model.name is a Parameter and value is not a leaf
+                    # or view of a leaf, make it a Parameter too
+                    value = torch.nn.Parameter(value)
+            # set the attribute!
+            if idx is None:
+                setattr(model, name, value)
+            else:
+                # this only works if model.name already exists
+                # and 1. requires_grad=False or 2. clobber_param=True
+                model[name][idx] = value
+
         else:
+            # recurse through the '.' names until you get to the end
             set_model_attr(get_model_attr(model, '.'.join(name[:-1])),
-                           name[-1], value, clobber_param=clobber_param)
+                           name[-1], value, clobber_param=clobber_param,
+                           idx=idx, no_grad=no_grad)
 
 
 def del_model_attr(model, name):
