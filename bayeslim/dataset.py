@@ -995,9 +995,9 @@ class CalData:
             modeled covariance. All other axes should broadcast
             with other unmodeled axes.
             E.g. if
-                cov_axis = 'ant': (Nant, Nant, Npol, Npol, Nfreqs, Ntimes)
-                cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
-                cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nbl, Nfreqs)
+                cov_axis = 'ant': (Nants, Nant, Npol, Npol, Nfreqs, Ntimes)
+                cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nants, Ntimes)
+                cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nants, Nfreqs)
         cov_axis : str, optional
             If cov represents on and off diagonal components, this is the
             axis over which off-diagonal is modeled.
@@ -1067,7 +1067,7 @@ class CalData:
             # this is a list of ants or antpols
             ant_list, pol_list = [], []
             for a in ant:
-                _ant, _pol = self._ant2uniq_blpol(b)
+                _ant, _pol = self._ant2uniq_antpol(b)
                 if _ant not in ant_list:
                     ant_list.extend(_ant_list)
                 if _pol not in pol_list:
@@ -1394,11 +1394,11 @@ class CalData:
             icov = self.icov
         return self.get_cov(ant=ant, cov=icov, **kwargs)
 
-    def __getitem__(self, bl):
-        return self.get_data(bl, squeeze=True)
+    def __getitem__(self, ant):
+        return self.get_data(ant, squeeze=True)
 
-    def __setitem__(self, bl, val):
-        self.set(bl, val)
+    def __setitem__(self, ant, val):
+        self.set(ant, val)
 
     def set(self, ant, val, arr='data'):
         """
