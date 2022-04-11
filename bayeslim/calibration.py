@@ -339,13 +339,12 @@ class JonesModel(utils.Module):
                 tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
             jones = jones[..., tselect, :]
 
-
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
 
-        # calibrate and insert into output vis
-        vout.data = vis_calibrate(vd.data, self.bls, jones, self._vis2ants, self.polmode,
-                                  vis_type=self.vis_type, undo=undo)
+        # apply calibration and insert into output vis
+        vout.data, _ = apply_cal(vd.data, self.bls, jones, self._vis2ants, self.polmode,
+                                 vis_type=self.vis_type, undo=undo)
 
         return vout
 
@@ -356,6 +355,46 @@ class JonesModel(utils.Module):
         self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
+
+    def to_CalData(self, pol=None, flags=None, cov=None, cov_axis=None,
+                   telescope=None, antpos=None, history=''):
+        """
+        Export gains as CalData object
+
+        Parameters
+        ----------
+        pol : str, optional
+            If 1pol mode, this is the feed pol string ('Jee' or 'Jnn').
+        flags : tensor, optional
+            Flag (boolean) tensor of data shape to attach to CalData
+        cov : tensor, optional
+            Covariance of data to attach to CalData
+        cov_axis : tensor, optional
+            Covariance shape of cov, see optim.apply_icov() for details.
+        telescope : TelescopeModel object, optional
+            TelescopeModel object associated with
+            telescope to attach to CalData
+        antpos : dict, optional
+            Antenna position dictionry to attach to CalData,
+            keys are antenna numbers, values are ENU vectors [meter]
+        history : str, optional
+            History to attach to CalData
+
+        Returns
+        -------
+        CalData object
+        """
+        with torch.no_grad():
+            cd = dataset.CalData()
+            cd.setup_meta(telescope=telescope, antpos=antpos)
+            jones = self.R(self.params)
+            cd.setup_data(ants=self.ants, times=self.times,
+                          freqs=self.freqs, pol=pol,
+                          data=jones, flags=flags, cov=cov,
+                          cov_axis=cov_axis,
+                          history=history)
+
+            return cd
 
 
 class JonesResponse(BaseResponse):
@@ -793,59 +832,13 @@ class VisCoupling(utils.Module):
         self.params = utils.push(self.params, device)
 
 
-class CalData:
+def apply_cal(vis, bls, gains, vis2ants, polmode, cov=None,
+              vis_type='com', undo=False, inplace=False):
     """
-    Work in progress...
-
-    An object for holding complex calibration
-    solutions of shape (Npol, Npol, Nant, Ntimes, Nfreqs).
-    Optionally, Ntimes and Nfreqs may be replaced by
-    Ncoeff describing a sparse linear basis across
-    those dimensions, which can be propagated to
-    the time and/or frequency domain via the
-    attached JonesResponse object, self.R.
-    """
-    def __init__(self):
-        """
-        """
-        raise NotImplementedError
-
-    def setup_response(self, freq_mode='channel', time_mode='channel', param_type='com',
-                       vis_type='com', freqs=None, times=None, device=None, **setup_kwargs):
-        """
-        Setup response object for complex gains, mapping self.params to self.gains
-        """
-        self.R = JonesResponse(freq_mode=freq_mode, time_mode=time_mode,
-                               param_type=param_type, vis_type=vis_type,
-                               freqs=freqs, times=times, device=device, **setup_kwargs)
-
-    def setup_data(self, ):
-        """
-        """
-        pass
-
-    def write_hdf5(self, ):
-        """
-        """
-        pass
-
-    def read_hdf5(self, ):
-        """
-        """
-        pass
-
-    def read_uvcal(self, ):
-        """
-        """
-        pass
-
-
-def vis_calibrate(vis, bls, gains, vis2ants, polmode, vis_type='com',
-                  undo=False):
-    """
-    Calibrate a visibility tensor with a complex
+    Apply calibration to a visibility tensor with a complex
     gain tensor. Default behavior is to multiply
-    vis with gains, i.e. when undo = False.
+    vis with gains, i.e. when undo = False. To divide
+    vis by gains, set undo = True.
 
     .. math::
 
@@ -871,6 +864,11 @@ def vis_calibrate(vis, bls, gains, vis2ants, polmode, vis_type='com',
         Polarization mode of data ['1pol', '2pol', '4pol'].
         For 1pol data Npol = 1, for 2pol and 4pol data Npol = 2,
         but in 2pol mode off-diagonal pols are ignored.
+    cov : tensor, optional
+        The covariance of vis, to be updated by gains. Note this
+        currently only works for a cov with a cov_axis of None,
+        i.e. it is just the data variance of the same shape,
+        for 1pol or 2pol mode, and for vis_type of 'com'.
     vis_type : str, optional
         Type of visibility and gain tensor. ['com', 'dly'].
         If 'com', vis and gains are complex (default).
@@ -878,6 +876,15 @@ def vis_calibrate(vis, bls, gains, vis2ants, polmode, vis_type='com',
     undo : bool, optional
         If True, divide vis by gains, otherwise
         (default) multiply vis by gains.
+    inplace : bool, optional
+        If True edit input vis inplace, otherwise make a copy
+
+    Returns
+    -------
+    vout : tensor
+        Output visibilities
+    cov_out : tensor, optional
+        Output vis covariance
     """
     assert vis.shape[:2] == gains.shape[:2], "vis and gains must have same Npols"
 
@@ -897,22 +904,41 @@ def vis_calibrate(vis, bls, gains, vis2ants, polmode, vis_type='com',
         gains = invgains
 
     # iterate through visibility and apply gain terms
-    vout = torch.zeros_like(vis)
+    if inplace:
+        vout = vis
+    else:
+        vout = torch.zeros_like(vis)
+    if cov is not None:
+        if inplace:
+            cov_out = cov
+        else:
+            cov_out = torch.zeros_like(cov)
+    else:
+        cov_out = cov
+
     for i, bl in enumerate(bls):
         # pick out appropriate antennas
         g1 = gains[:, :, vis2ants[bl][0]]
         g2 = gains[:, :, vis2ants[bl][1]]
 
         if polmode in ['1pol', '2pol']:
+            # update visibilities
             if vis_type == 'com':
-                vout[:, :, i] = linalg.diag_matmul(linalg.diag_matmul(g1, g2.conj()), vis[:, :, i])
+                G = g1 * g2.conj()
+                vout[:, :, i] = linalg.diag_matmul(G, vis[:, :, i])
+
+                # update covariance
+                if cov is not None:
+                    cov_out[:, :, i] = linalg.diag_matmul(G * G.conj(), cov[:, :, i])
+
             elif vis_type == 'dly':
                 vout[:, :, i] = vis[:, :, i] + g1 - g2
+
         else:
             assert vis_type == 'com', "must have complex vis_type for 4pol mode"
             vout[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", g1, vis[:, :, i], g2.conj())
 
-    return vout
+    return vout, cov_out
 
 
 def compute_redcal_degen(params, ants, antpos, wgts=None):
