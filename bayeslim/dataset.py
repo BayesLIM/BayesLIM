@@ -16,6 +16,7 @@ class TensorData:
     A shallow object for holding an arbitrary tensor data
     """
     def __init__(self):
+        # init empty object
         self.setup_data()
 
     def setup_data(self, data=None, flags=None, cov=None,
@@ -129,13 +130,7 @@ class VisData(TensorData):
     (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self):
-        # init data, flags, cov
-        super().__init__()
-        # init VisData specific attrs
-        self.bls, self.times = None, None
-        self.freqs, self.pol = None, None
-        self.telescope = None
-        self.antpos, self.ants, self.antvec = None, None, None
+        # init empty object
         self.atol = 1e-10
 
     def setup_meta(self, telescope=None, antpos=None):
@@ -680,7 +675,7 @@ class VisData(TensorData):
                             data=data, flags=self.flags, cov=cov,
                             cov_axis=self.cov_axis, history=self.history)
 
-    def apply_cal(self, cd, undo=False, inplace=True):
+    def apply_cal(self, cd, undo=False, inplace=True, cal_2pol=False):
         """
         Apply CalData to this VisData object.
         Default behavior is to multiply by gains.
@@ -695,6 +690,9 @@ class VisData(TensorData):
         inplace : bool, optional
             If True edit self.data inplace
             otherwise copy and return a new VisData
+        cal_2pol : bool, optional
+            If True, calibrate 4pol vis with diagonal
+            of 4pol gains. Only applicable if in 4pol mode. 
 
         Returns
         -------
@@ -707,7 +705,7 @@ class VisData(TensorData):
             vd = self.copy(detach=True)
 
         v2a = {bl: (cd.ants.index(bl[0]), cd.ants.index(bl[1])) for bl in vd.bls}
-        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cd.data, v2a, polmode,
+        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cd.data, v2a, cal_2pol=cal_2pol,
                                                 cov=vd.cov, vis_type='com', undo=undo, inplace=inplace)
 
         return vd
@@ -749,6 +747,8 @@ class VisData(TensorData):
                 f.attrs['antvec'] = self.antvec
                 f.attrs['obj'] = 'VisData'
                 f.attrs['version'] = version.__version__
+        else:
+            print("{} exists, not overwriting...".format(fname))
 
     def read_hdf5(self, fname, read_data=True, bl=None, times=None, freqs=None, pol=None,
                   suppress_nonessential=False):
@@ -891,14 +891,17 @@ class VisData(TensorData):
         Run checks on data
         """
         from bayeslim import telescope_model
-        assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        assert isinstance(self.antpos, dict)
-        assert isinstance(self.data, torch.Tensor)
-        assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
-        if self.flags is not None:
+        if self.telescope:
+            assert isinstance(self.telescope, telescope_model.TelescopeModel)
+        if self.antpos:
+            assert isinstance(self.antpos, dict)
+        if self.data:
+            assert isinstance(self.data, torch.Tensor)
+            assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
+        if self.flags:
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
-        if self.cov is not None:
+        if self.cov:
             assert self.cov_axis is not None, "full data-sized covariance not implemented"
             if self.cov_axis == 'bl':
                 assert self.cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,
@@ -937,13 +940,6 @@ class CalData:
     Jee or Jnn as specified by pol.
     """
     def __init__(self):
-        # init data, flags, cov
-        super().__init__()
-        # init CalData specific attrs
-        self.times = None
-        self.freqs, self.pol = None, None
-        self.telescope = None
-        self.antpos, self.ants = None, None
         self.atol = 1e-10
 
     def setup_meta(self, telescope=None, antpos=None):
@@ -1523,9 +1519,12 @@ class CalData:
                     f.attrs['pol'] = self.pol
                 f.attrs['history'] = self.history
                 # write telescope and array objects
-                f.attrs['tloc'] = self.telescope.location
+                if self.telescope is not None:
+                    f.attrs['tloc'] = self.telescope.location
                 f.attrs['obj'] = 'CalData'
                 f.attrs['version'] = version.__version__
+        else:
+            print("{} exists, not overwriting...".format(fname))
 
     def read_hdf5(self, fname, read_data=True, ants=None, times=None, freqs=None, pol=None):
         """
@@ -1623,14 +1622,17 @@ class CalData:
         Run basic checks on data
         """
         from bayeslim import telescope_model
-        assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        assert isinstance(self.antpos, dict)
-        assert isinstance(self.data, torch.Tensor)
-        assert self.data.shape == (self.Npol, self.Npol, self.Nants, self.Ntimes, self.Nfreqs)
-        if self.flags is not None:
+        if self.telescope:
+            assert isinstance(self.telescope, telescope_model.TelescopeModel)
+        if self.antpos:
+            assert isinstance(self.antpos, dict)
+        if self.data:
+            assert isinstance(self.data, torch.Tensor)
+            assert self.data.shape == (self.Npol, self.Npol, self.Nants, self.Ntimes, self.Nfreqs)
+        if self.flags:
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
-        if self.cov is not None:
+        if self.cov:
             assert self.cov_axis is not None, "full data-sized covariance not implemented"
             if self.cov_axis == 'ant':
                 assert self.cov.shape == (self.Nants, self.Nants, self.Npol, self.Npol,
