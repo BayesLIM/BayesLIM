@@ -273,6 +273,7 @@ class PointSkyResponse:
         freq_mode == 'linear'
             See utils.gen_linear_A() for necessary kwargs
         """
+        self.log = log
         self.freqs = freqs
         self.freq_mode = freq_mode
         self.device = device
