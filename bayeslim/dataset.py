@@ -706,9 +706,9 @@ class VisData(TensorData):
         else:
             vd = self.copy(detach=True)
 
-        v2a = {bl: (cd.ants.index(bl[0]), cd.ants.index(bl[1]) for bl in vd.bls)}
-        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cd.data, v2a, cov=vd.cov,
-                                                polmode, vis_type='com', undo=undo, inplace=inplace)
+        v2a = {bl: (cd.ants.index(bl[0]), cd.ants.index(bl[1])) for bl in vd.bls}
+        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cd.data, v2a, polmode,
+                                                cov=vd.cov, vis_type='com', undo=undo, inplace=inplace)
 
         return vd
 

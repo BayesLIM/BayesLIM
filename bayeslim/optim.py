@@ -868,7 +868,6 @@ class Trainer:
         """
         self.prob = prob
         self._loss = []
-        self.closure_eval = 0
         self.track = track
 
         if prob.grad_type == 'accumulate':
