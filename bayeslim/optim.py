@@ -269,7 +269,7 @@ class LogLaplacePrior:
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.scale = torch.atleast_1d(torch.as_tensor(scale))
         self.index = index
-        self.norm = torch.log(2*self.scale)
+        self.norm = torch.sum(torch.log(2*self.scale))
         self.side = side
         self.density = density
 
@@ -367,7 +367,6 @@ class LogProb(utils.Module):
             raise NotImplementedError
         self.cov_parameter = cov_parameter
         self.device = device
-        self.named_params = [k[0] for k in self.named_parameters()]
         self.prior_dict = prior_dict
         self.compute = compute
         self.negate = negate
@@ -402,13 +401,13 @@ class LogProb(utils.Module):
         Parameters
         ----------
         model_params : list, optional
-            List of submodules params tensors (with model as root) to
-            collect and stack in main_params.
+            List of submodules params tensors with "prob.model"
+            as base to collect and stack in main_params.
             E.g. ['sky.params', 'cal.params']
             If None, main_params is set as None.
             You can also index each params by passing
             a 2-tuple as (str, index)
-            e.g. [('sky.params', (range(10), 0, 0), ...]
+            e.g. [('sky.params', (range(10), 0, 0)), ...]
         """
         self.main_params = None
         self._main_indices = None
@@ -416,8 +415,8 @@ class LogProb(utils.Module):
         self._main_devices = None
         self._main_index = None
         if model_params is not None:
+            # setup main_params metadata
             N = 0
-            params = []
             self._main_indices = {}
             self._main_shapes = {}
             self._main_devices = {}
@@ -427,26 +426,47 @@ class LogProb(utils.Module):
                     idx = None
                 else:
                     param, idx = param
-                # get parameter and metadata
                 if idx is None:
-                    p = self.model[param].detach().to('cpu').to(utils._float())
+                    p = self.model[param].detach()
                 else:
-                    p = self.model[param][idx].detach().to('cpu').to(utils._float())
+                    p = self.model[param][idx].detach()
                 shape = p.shape
                 numel = shape.numel()
                 device = p.device
 
                 # append metadata
-                params.append(p.ravel())
                 self._main_indices[param] = slice(N, N + numel) 
                 self._main_shapes[param] = shape
                 self._main_devices[param] = device
                 self._main_index[param] = idx
                 N += numel
 
-            self.main_params = torch.nn.Parameter(torch.cat(params))
-            # this last call removes all names in model_params as Parameters
-            # and makes the leaf views of main_params
+            # setup empty main_params
+            self.main_params = torch.nn.Parameter(torch.zeros(N, dtype=utils._float()))
+
+            # collect values from leaf tensors and insert to main_params
+            self.collect_main_params()
+
+            # this sends values back to leaf tensors making them leaf views
+            self.send_main_params()
+
+    def collect_main_params(self):
+        """
+        Take existing value of self.main_params and using
+        _main_indices, ..., collect values and assign as self.main_params
+        """
+        if self.main_params is not None:
+            params = torch.zeros_like(self.main_params)
+            for k in self._main_indices:
+                idx, indices = self._main_index[k], self._main_indices[k]
+                if idx is None:
+                    params[indices] = self.model[k].detach().to('cpu').to(utils._float()).ravel()
+                else:
+                    params[indices] = self.model[k][idx].detach().to('cpu').to(utils._float()).ravel()
+
+            self.main_params = torch.nn.Parameter(params)
+
+            # this sends main_params back to leaf tensors, making them leaf views
             self.send_main_params()
 
     def send_main_params(self):
@@ -464,6 +484,10 @@ class LogProb(utils.Module):
                 idx = self._main_index[param]
                 utils.set_model_attr(self.model, param, value, idx=idx,
                                      clobber_param=True, no_grad=False)
+
+    @property
+    def named_params(self):
+        return [k[0] for k in self.named_parameters()]
 
     @property
     def Nbatch(self):
@@ -774,11 +798,12 @@ class LogProb(utils.Module):
 
                     elif mod_type == 'isolate':
                         dim = mod.get('dim', None)
+                        abs_grad = torch.abs(grad[idx])
                         if dim is None:
-                            gmax = torch.max(grad[idx], None)
+                            gmax = torch.max(abs_grad)
                         else:
-                            gmax = torch.max(grad[idx], dim=dim, keepdims=True).values
-                        grad[idx] *= (grad[idx] / gmax)**value
+                            gmax = torch.max(abs_grad, dim=dim, keepdims=True).values
+                        grad[idx] *= (abs_grad / gmax)**value
 
                     elif mod_type == 'clip':
                         # keep N strongest gradients along dim (N = value)
@@ -857,18 +882,25 @@ class LogProb(utils.Module):
 class Trainer:
     """Object for training a model wrapped with
     the LogProb posterior class"""
-    def __init__(self, prob, track=False):
+    def __init__(self, prob, opt=None, track=False, track_params=None):
         """
         Parameters
         ----------
         prob : LogProb object
+        opt : torch.optim.Optimizer class object or instance
         track : bool, optional
-            If True, track value of all prob.parameters and append to
+            If True, track value of all parameters and append to
             a chain during optimization.
+        track_params : list, optional
+            If track, this is a list of params to track. Default
+            is prob.named_params(), but can also track non-parameter
+            tensors as well.
         """
         self.prob = prob
-        self._loss = []
+        self._epoch_loss = []
+        self._epoch_times = []
         self.track = track
+        self.set_opt(opt)
 
         if prob.grad_type == 'accumulate':
             self.Nbatch = 1
@@ -876,16 +908,37 @@ class Trainer:
             self.Nbatch = prob.Nbatch
 
         self.chain = {}
-        if prob.main_params is not None:
-            for k in prob._main_indices:
-                self.chain['model.' + k] = []
+        if self.track:
+            self.init_chain(track_params)
+
+    def init_chain(self, track_params=None):
+        """
+        Setup chain lists for tracking
+
+        Parameters
+        ----------
+        track_params : list, optional
+            List of attributes of prob to track.
+            e.g. ['model.beam.params', ...]. Default is to use
+            1. prob.main_params if available, otherwise
+            2. prob.model.named_parameters
+        """
+        self.chain = {}
+        if track_params is not None:
+            for k in track_params:
+                self.chain[k] = []
+
         else:
-            for k in prob.named_parameters():
-                self.chain[k[0]] = []
+            if self.prob.main_params is not None:
+                for k in self.prob._main_indices:
+                    self.chain['model.' + k] = []
+            else:
+                for k in self.prob.model.named_parameters():
+                    self.chain['model.' + k[0]] = []
 
     def set_opt(self, opt, *args, **kwargs):
         """
-        Set optimizer. If opt is a class instance,
+        Set optimizer. If opt is a class object,
         this will instantiate it as
 
         .. code-block:: python
@@ -924,9 +977,10 @@ class Trainer:
         info : dict
             information about the run
         """
-        start = time.time()
+        train_start = time.time()
 
         for epoch in range(Nepochs):
+            epoch_start = time.time()
             if Nreport is not None:
                 if (epoch > 0) and (epoch % Nreport == 0):
                     print("epoch {}, {:.1f} sec".format(epoch, time.time() - start))
@@ -937,19 +991,22 @@ class Trainer:
             # iterate over minibatches
             L = 0
             for i in range(self.Nbatch):
-                # append current params
+                # append current state
                 if self.track:
                     for k in self.chain:
                         self.chain[k].append(self.prob[k].detach().clone())
 
-                # evaluate forward model, backprop, make a step
+                # evaluate forward model from current state
+                # backprop, and make a step
                 L += self.opt.step(self.prob.closure)
 
             # append batch-averaged loss
-            self._loss.append(L / self.Nbatch) 
+            self._epoch_loss.append(L / self.Nbatch)
+            # append time info
+            total_time = 0. if len(self._epoch_times) == 0 else self._epoch_times[-1]
+            self._epoch_times.append(total_time + (time.time() - epoch_start))
 
-        time_elapsed = time.time() - start
-        info = dict(duration=time_elapsed)
+        info = dict(duration=time.time() - train_start)
 
         return info
 
@@ -974,17 +1031,39 @@ class Trainer:
         else:
             return {k: torch.stack(c) for k, c in self.chain.items()}
 
+    def revert_chain(self, Nepochs):
+        """
+        If tracking, step backwards in the chain
+        N times and populate params with chain state,
+        popping the last N steps in the chain
+
+        Parameters
+        ----------
+        Nepochs : int
+            Number of epochs to revert back to (>0)
+        """
+        if self.track:
+            if Nepochs > 0:
+                # cycle through chain and update params
+                for k in self.chain:
+                    with torch.no_grad():
+                        self.prob[k] = self.chain[k][-Nepochs]
+                        self.chain[k] = self.chain[k][:-Nepochs]
+
+                # pop other lists
+                self._epoch_loss = self._epoch_loss[:-Nepochs]
+                self._epoch_times = self._epoch_times[:-Nepochs]
+
+                # collect updates into main_params if used
+                self.prob.collect_main_params()
+
     @property
     def loss(self):
-        return torch.as_tensor(self._loss)
+        return torch.as_tensor(self._epoch_loss)
 
-    def shrinkage_step(self):
-        """
-        Perform a proximal gradient projected gradient
-        shrinkage step via soft-thresholding (ISTA)
-
-        """
-        raise NotImplementedError
+    @property
+    def times(self):
+        return torch.as_tensor(self._epoch_times)
 
 
 def apply_icov(data, icov, cov_axis):

@@ -11,7 +11,6 @@ import copy
 import warnings
 import os
 from astropy import constants
-import time as timer
 import h5py
 
 from . import special, version
