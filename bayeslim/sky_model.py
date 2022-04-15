@@ -14,7 +14,8 @@ class SkyBase(utils.Module):
     """
     Base class for various sky model representations
     """
-    def __init__(self, params, kind, freqs, R=None, name=None, parameter=True):
+    def __init__(self, params, kind, freqs, R=None, name=None,
+                 parameter=True, p0=None):
         """
         Base class for a torch sky model representation.
 
@@ -40,10 +41,16 @@ class SkyBase(utils.Module):
         parameter : bool
             If True, treat params as variables to be fitted,
             otherwise hold them fixed as their input value
+        p0 : tensor, optional
+            Fixed starting params tensor (default is zero),
+            which is summed with params before entering
+            response function. Redefines params as a deviation
+            from p0. Must have same shape as params.
         """
         super().__init__(name=name)
         self.params = params
         self.device = self.params.device
+        self.p0 = p0
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         self.kind = kind
@@ -79,6 +86,8 @@ class SkyBase(utils.Module):
             if hasattr(self, attr):
                 setattr(self, attr, getattr(self, attr).to(device))
         self.R.push(device)
+        if self.p0 is not None:
+            self.p0 = self.p0.to(device)
 
     def freq_interp(self, freqs, kind='linear'):
         """
@@ -140,7 +149,8 @@ class PointSky(SkyBase):
     Returns point source flux density and their sky
     locations in equatorial coordinates.
     """
-    def __init__(self, params, angs, freqs, R=None, name=None, parameter=True):
+    def __init__(self, params, angs, freqs, R=None, name=None,
+                 parameter=True, p0=None):
         """
         Fixed-location point source model with
         parameterized flux density.
@@ -172,6 +182,11 @@ class PointSky(SkyBase):
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
+        p0 : tensor, optional
+            Fixed starting params tensor (default is zero),
+            which is summed with params before entering
+            response function. Redefines params as a deviation
+            from p0. Must have same shape as params.
 
         Examples
         --------
@@ -197,7 +212,8 @@ class PointSky(SkyBase):
             P = bayeslim.sky.PointSky([amps, alpha],
                                       angs, Nfreqs, R=R)
         """
-        super().__init__(params, 'point', freqs, R=R, name=name, parameter=parameter)
+        super().__init__(params, 'point', freqs, R=R, name=name,
+                         parameter=parameter, p0=p0)
         self.angs = angs
 
     def forward(self, params=None, prior_cache=None, **kwargs):
@@ -226,6 +242,9 @@ class PointSky(SkyBase):
         # fed params or attr params
         if params is None:
             params = self.params
+
+        if self.p0 is not None:
+            params = params + self.p0
 
         # pass through response
         sky = self.R(params)
@@ -335,7 +354,8 @@ class PixelSky(SkyBase):
     of the forward model is in flux density [Jy]
     (i.e. we multiply by each cell's solid angle).
     """
-    def __init__(self, params, angs, freqs, px_area, R=None, name=None, parameter=True):
+    def __init__(self, params, angs, freqs, px_area, R=None, name=None,
+                 parameter=True, p0=None):
         """
         Pixelized model of the sky brightness distribution.
         This can be parameterized in any generic way via params,
@@ -374,8 +394,14 @@ class PixelSky(SkyBase):
         parameter : bool, optional
             If True, treat params as parameters to be fitted,
             otherwise treat as fixed to its input value.
+        p0 : tensor, optional
+            Fixed starting params tensor (default is zero),
+            which is summed with params before entering
+            response function. Redefines params as a deviation
+            from p0. Must have same shape as params.
         """
-        super().__init__(params, 'pixel', freqs, R=R, name=name, parameter=parameter)
+        super().__init__(params, 'pixel', freqs, R=R, name=name,
+                         parameter=parameter, p0=p0)
         self.angs = angs
         self.px_area = px_area
 
@@ -405,6 +431,9 @@ class PixelSky(SkyBase):
         # apply fed params or attr params
         if params is None:
             params = self.params
+
+        if self.p0 is not None:
+            params = params + self.p0
 
         # pass through response
         sky = self.R(params) * self.px_area

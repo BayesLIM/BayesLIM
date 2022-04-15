@@ -1035,7 +1035,12 @@ class Trainer:
         """
         If tracking, step backwards in the chain
         N times and populate params with chain state,
-        popping the last N steps in the chain
+        popping the last N steps in the chain.
+
+        Note: the current state of the model is not
+        the last entry in the chain, so moving back
+        one step in model history corresponds to taking
+        the last entry in the current chain.
 
         Parameters
         ----------
