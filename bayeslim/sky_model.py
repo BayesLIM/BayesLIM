@@ -758,8 +758,12 @@ class CompositeModel(utils.Module):
         or sum the sky maps and return a sky_component
         dictionary
         """
-        # forward the models
-        sky_components = [getattr(self, mod).forward(prior_cache=prior_cache) for mod in self.models]
+        # forward each sky model
+        sky_components = []
+        for mod in self.models:
+            skycomp = self[mod].forward(prior_cache=prior_cache)
+            sky_components.append(skycomp)
+
         if self.sum_output:
             # assert only one kind of sky models
             assert len(set([comp['kind'] for comp in sky_components])) == 1

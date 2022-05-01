@@ -812,6 +812,10 @@ class LogProb(utils.Module):
                                               descending=True)
                         grad[idx] *= (asort <= value)
 
+                    elif mod_type == 'mult':
+                        # multiply gradients by value
+                        grad[idx] *= value
+
     def push(self, device):
         """
         Transfer target data to device
