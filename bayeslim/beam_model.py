@@ -82,7 +82,7 @@ class PixelBeam(utils.Module):
             A PixelResponse class to instantiate with params, which
             maps the input params to the output beam.
             The instantiated object has a __call__ signature
-            that takes (zen [deg], az [deg], freqs [Hz])
+            that takes (params, zen [deg], az [deg], freqs [Hz])
             as arguments and returns the beam values of shape
             (Npol, Nvec, Nmodel, Nfreqs, Npix). Note that unlike
             sky_model, params are stored on both the Model and
@@ -456,7 +456,7 @@ class PixelResponse(utils.PixInterp):
     BayesLIM Memo 1.
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
-                 Nnn=4, theta=None, phi=None, freq_mode='channel', nside=None,
+                 theta=None, phi=None, freq_mode='channel', nside=None,
                  device=None, log=False, f0=None, Ndeg=None,
                  freq_kwargs={}, powerbeam=True, Rchi=None):
         """
@@ -465,16 +465,16 @@ class PixelResponse(utils.PixInterp):
         freqs : tensor
             frequency array of params [Hz]
         pixtype : str
-            Pixelization type. options = ['healpix', 'other']
+            Pixelization type. options = ['healpix', 'rect']
         comp_params : bool, optional
             If True, cast params to complex via utils.viewcomp
         interp_mode : str, optional
-            Spatial interpolation method. ['nearest']
-        Nnn : int, optional
-            Nearest neighbors for interpolation.
+            Spatial interpolation method for 'rect' pixtype.
+            ['nearest', 'linear', 'quadratic', 'linear,quadratic']
+            where mixed mode is for 'az,zen' respectively
         theta, phi : array_like, optional
             Co-latitude and azimuth arrays [deg] of
-            input params if pixtype is 'other'
+            input params if pixtype is 'rect'
         nside : int, optional
             nside of healpix map if pixtype is healpix
         freq_mode : str, optional
@@ -496,7 +496,7 @@ class PixelResponse(utils.PixInterp):
             should be shape (2, 2, Npix) where Npix is the spatial
             size of the pixelized beam cache, i.e. len(theta)
         """
-        super().__init__(pixtype, interp_mode=interp_mode, Nnn=Nnn, nside=nside,
+        super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta=theta, phi=phi)
         self.powerbeam = powerbeam
         self.freqs = freqs
@@ -513,7 +513,7 @@ class PixelResponse(utils.PixInterp):
         self._setup()
 
         # construct _args for str repr
-        self._args = dict(interp_mode=interp_mode, Nnn=Nnn, freq_mode=freq_mode)
+        self._args = dict(interp_mode=interp_mode, freq_mode=freq_mode)
 
     def _setup(self):
         if self.freq_mode == 'channel':
@@ -618,7 +618,7 @@ class GaussResponse:
     l & m (azimuth sines & cosines).
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
     """
-    def __init__(self):
+    def __init__(self, powerbeam=True):
         """
         .. math::
 
@@ -628,9 +628,13 @@ class GaussResponse:
         ----------
         freqs : tensor
             frequency array of params [Hz]
+        powerbeam : bool, optional
+            If True, treat this as a squared, "baseline beam"
+            otherwise treat this as a per-antenna beam (unsquared)
         """
         self.freq_mode = 'channel'
         self.freq_ax = 3
+        self.powerbeam = powerbeam
 
     def _setup(self):
         pass
@@ -643,6 +647,8 @@ class GaussResponse:
         l = torch.as_tensor(srad * np.sin(az_rad), device=params.device)
         m = torch.as_tensor(srad * np.cos(az_rad), device=params.device)
         beam = torch.exp(-0.5 * ((l / params[..., 0:1])**2 + (m / params[..., 1:2])**2))
+        if not self.powerbeam:
+            beam = torch.sqrt(beam)
         return beam
   
     def push(self, device):
@@ -739,7 +745,7 @@ class YlmResponse(PixelResponse):
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
-                 Nnn=4, theta=None, phi=None, nside=None,
+                 theta=None, phi=None, nside=None,
                  powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs={}, Ylm_kwargs={}, Rchi=None):
         """
@@ -763,8 +769,6 @@ class YlmResponse(PixelResponse):
             in docstring above.
         interp_mode : str, optional
             If mode is interpolate, this is the kind (see utils.PixInterp)
-        Nnn : int, optional
-            Number of nearest neighbors in interpolation (see utils.PixInterp)
         theta, phi : array_like, optional
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
@@ -795,7 +799,7 @@ class YlmResponse(PixelResponse):
         """
         ## TODO: enable pix_type other than healpix
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
-                                          interp_mode=interp_mode, Nnn=Nnn,
+                                          interp_mode=interp_mode,
                                           freq_mode=freq_mode,
                                           comp_params=comp_params, freq_kwargs=freq_kwargs,
                                           theta=theta, phi=phi, Rchi=Rchi)
@@ -815,7 +819,7 @@ class YlmResponse(PixelResponse):
         self.log = log
 
         # construct _args for str repr
-        self._args = dict(mode=mode, interp_mode=interp_mode, Nnn=Nnn, freq_mode=freq_mode)
+        self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
 
     def get_Ylm(self, zen, az):
         """
@@ -941,42 +945,6 @@ class YlmResponse(PixelResponse):
             beam = self.interp(self.beam_cache, zen, az)
 
         return beam
-
-
-def __call__(skyelf, params, zen, az, *args):
-    # cast to complex if needed
-    if self.comp_params:
-        params = utils.viewcomp(params)
-
-    # set beam cache if it doesn't exist
-    if self.beam_cache is None:
-        # pass to device
-        if utils.device(params.device) != utils.device(self.device):
-            params = params.to(self.device)
-
-        # pass through frequency response
-        if self.freq_mode == 'linear':
-            params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
-
-        # now cache it for future calls
-        self.beam_cache = params
-
-    # interpolate at sky values
-    b = self.interp(self.beam_cache, zen, az)
-
-    if self.powerbeam:
-        ## TODO: replace abs with non-neg prior on beam?
-        if torch.is_complex(b):
-            b = torch.real(b)
-        b = torch.abs(b)
-
-    if self.log:
-        b = torch.exp(b)
-
-    return b
-
-
-
 
     def push(self, device):
         """push attrs to device"""

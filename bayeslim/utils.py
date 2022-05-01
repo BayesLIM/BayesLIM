@@ -1510,52 +1510,39 @@ class PixInterp:
     Sky pixel spatial interpolation object
     """
     def __init__(self, pixtype, nside=None, interp_mode='nearest',
-                 theta=None, phi=None, Nnn=4, device=None,
-                 leaf_size=40):
+                 theta=None, phi=None, device=None):
         """
         Interpolation is a weighted average of nearest neighbors.
         If pixtype is 'healpix', this is bilinear interpolation.
-        If pixtype is 'other' use BallTree for nearest neighbor
-        queries and use inverse distance as weighted mean.
+        If pixtype is 'rect' use interp_mode to set interpolation
 
         Parameters
         ----------
         pixtype : str
-            Pixelization type. options are ['healpix', 'other']
+            Pixelization type. options are ['healpix', 'rect']
         nside : int, optional
             nside of healpix map if pixtype == 'healpix'
         interp_mode : str, optional
-            Spatial interpolation method, one of ['nearest'].
-            Currently only a weighted sum of Nnn nearest
-            neighbors is supported.
-            interpolation on a rectangular grid.
+            Spatial interpolation method.
+            'nearest' : nearest neighbor interpolation
+            'linear' : bilinear interpolation, needs rect grid
+            'quadratic' : biquadratic interpolation, needs rect grid 
+            'cubic' : bicubic interpolation, needs rect grid
+            'linear,quadratic' : linear along az, quadratic along zen
+            For pixtype of 'healpix', we always use healpy bilinear interp.
         theta, phi : array_like
-            Co-latitude and azimuth arrays [deg] of
-            input params if pixtype is 'other'
-        Nnn : int, optional
-            Number of nearest neighbors to use
-            for interp_mode of 'nearest'.
-            Default is 4.
-            If pixtype is healpix, Nnn must be 4.
+            Raveled zen and az arrays [deg] if pixtype is 'rect'.
+            These should ordered as
+            [phi_1, phi_2, phi_3, phi_N, phi_1, phi_2, ...]
+            [tht_1, tht_1, tht_1, tht_1, tht_2, tht_2, ...]
+            i.e. az, zen = np.meshgrid(az_grid, zen_grid)
         device : str, optional
             Device to place object on
-        leaf_size : int, optional
-            leaf size for BallTree
         """
-        assert pixtype in ['healpix', 'other']
-        if pixtype == 'other':
-            assert theta is not None
-            assert phi is not None
-            assert import_sklearn
-            X = np.array([np.pi / 2 - theta * D2R, phi * D2R]).T
-            self.tree = BallTree(X, leaf_size=leaf_size, metric='haversine')
-        else:
-            self.tree = None
         self.pixtype = pixtype
         self.nside = nside
         self.interp_cache = {}
         self.interp_mode = interp_mode
-        self.Nnn = Nnn
         self.theta, self.phi = theta, phi
         self.device = device
 
@@ -1580,28 +1567,43 @@ class PixInterp:
         # get hash
         h = ang_hash(zen), ang_hash(az)
         if h in self.interp_cache:
-            # get interpolation if present
+            # retrieve interpolation if cached
             interp = self.interp_cache[h]
         else:
-            # otherwise generate it
+            # otherwise generate weights and indices
             if self.pixtype == 'healpix':
-                # get indices and weights for healpix interpolation
-                assert self.Nnn == 4
+                # use healpy bilinear interp regardless of interp_mode
                 inds, wgts = healpy.get_interp_weights(self.nside,
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
 
-            elif self.pixtype == 'other':
-                # get nearest neighbors and their interpolation weights
-                zen, az = tensor2numpy(zen), tensor2numpy(az)
-                dist, inds = self.tree.query(np.array([(90 - zen) * D2R, az * D2R]).T,
-                                             k=self.Nnn, return_distance=True, sort_results=True)
-                dist, inds = dist.T, inds.T
-                # weight is inverse of distance from neighbor (not quite bilinear interp)
-                wgts = 1 / dist.clip(1e-10, np.inf)**2
+            # this is bipolynomial interpolation
+            elif self.pixtype == 'rect':
+                # get poly degree for az and zen
+                if ',' not in self.interp_mode:
+                    degree =  [self.interp_mode, self.interp_mode]
+                else:
+                    degree = [s.strip() for s in self.interp_mode.split(',')]
 
-                # normalize weights
-                wgts /= wgts.sum(axis=0, keepdims=True)
+                # map string to interpolation degree
+                s2d = {'nearest': 0, 'linear': 1, 'quadratic': 2, 'cubic': 3}
+                degree = [s2d[d] for d in degree]
+
+                # get grid
+                xgrid = np.unique(self.phi)
+                ygrid = np.unique(self.theta)
+                dx = np.median(np.diff(xgrid))
+                dy = np.median(np.diff(ygrid))
+                xnew, ynew = tensor2numpy(az), tensor2numpy(zen)
+
+                # get map indices
+                inds, xyrel = bipoly_grid_index(xgrid, ygrid, xnew, ynew,
+                                                degree[0]+1, degree[1]+1,
+                                                wrapx=True, ravel=True)
+
+                # get weights
+                Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
+                wgts = Anew @ Ainv
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
@@ -1710,6 +1712,158 @@ def freq_interp(params, param_freqs, freqs, kind, axis,
         interp_param = interp(freqs)
 
         return torch.tensor(interp_param, device=params.device, dtype=params.dtype)
+
+
+def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny, wrapx=False, ravel=True):
+    """
+    For uniform grid in x and y, pick out N nearest grid indices
+    in x and y given a sampling of new xy values.
+    
+    Parameters
+    ----------
+    xgrid : array
+        1D float array of grid x values
+    ygrid : array
+        1D float array of grid y values
+    xnew : array
+        New x samples to get nearest neighbors
+    ynew : array
+        New y samples to get nearest neighbors
+    Nx : int
+        Number of NN in x to index
+    Ny : int
+        Number of NN in y to index
+    wrapx : bool, optional
+        If True, wrap x axis such that samples near xgrid
+        boundaries wrap around their indexing
+    ravel : bool, optional
+        If True, flatten inds to index the raveled
+        grid (as oppossed to the 2D grid), assuming
+        the grid is ordered as
+            X, Y = np.meshgrid(xgrid, ygrid)
+            grid = X.ravel(), Y.ravel()
+        i.e. [(x1, y1), (x2, y1), ..., (x1, y2), (x2, y2), ...]
+        
+    Returns
+    -------
+    inds : array
+        Indexes the nearest neighbors of xnew and ynew at
+        xgrid and ygrid points. If not ravel,
+        this is a 2-tuple holding (Xnn, Ynn), where
+        Xnn is of shape (Nnew, Nx) and similar for Ynn.
+        If ravel, this is a (Nnew, Nx*Ny) array meant
+        to index the raveled grid.
+    (xrel, yrel) : tuple
+        xnew and ynew but cast into dimensionless units
+        relative to the start of inds and dx,dy spacing
+    """
+    # get dx, dy
+    dx, dy = np.median(np.diff(xgrid)), np.median(np.diff(ygrid))
+    
+    # wrap xgrid
+    N = len(xgrid)
+    if wrapx:
+        xgrid = np.concatenate([xgrid[-Nx:]-N*dx, xgrid, xgrid[:Nx]+N*dx])
+
+    # get xgrid and ygrid indices for each xynew
+    xnn = np.sort(np.argsort(np.abs(xgrid - xnew[:, None]), axis=-1)[:, :Nx], -1)
+    ynn = np.sort(np.argsort(np.abs(ygrid - ynew[:, None]), axis=-1)[:, :Ny], -1)
+
+    # get xnew ynew in coords relative to xnn[:, 0] and ynn[:, 0]
+    xrel = (xnew - xgrid[xnn[:, 0]]) / dx
+    yrel = (ynew - ygrid[ynn[:, 0]]) / dy
+    
+    # unwrap
+    if wrapx:
+        xnn -= Nx
+        xnn = xnn % N
+    
+    # ravel
+    if ravel:
+        inds = (xnn[:, None, :] + N * ynn[:, :, None]).reshape(len(ynew), -1)
+    else:
+        inds = (xnn, ynn)
+        
+    return inds, (xrel, yrel)
+
+
+def setup_bipoly_interp(degree, dx, dy, xnew, ynew):
+    """
+    Setup bi-polynomial interpolation weight matrix
+    on a uniform grid.
+    
+    For bi-linear interpolation we use 2x2 grid points.
+    Assume interpolation is given by evaluating a bi-linear poly
+        
+        f(x, y) = a_{00} + a_{10}x + a_{01}y + a_{11}xy
+        
+    then the 4 points on the 2x2 grid can be expressed as
+        
+        | 1 x_1 y_1 x_1y_1 | | a_{00} |   | f(x_1,y_1) |
+        | 1 x_2 y_1 x_2y_1 | | a_{10} | = | f(x_2,y_1) |
+        | 1 x_1 y_2 x_1y_2 | | a_{01} |   | f(x_1,y_2) |
+        | 1 x_2 y_2 x_2y_2 | | a_{11} |   | f(x_2,y_2) |
+        
+    or
+    
+        Ax = y
+        
+    The weights "x_hat" can be found via least squares inversion,
+    
+        x_hat = (A^T A)^-1 A^T y
+        
+    Note that this function returns the (A^T A)^-1 A^T portion of x_hat,
+    which must be dotted into f(x,y) vector with the ordering given above.
+    
+    Interpolation of any new point within the 2x2 grid can be computed as
+    
+        f_xy = A_xy x_hat
+        
+    Note that this generalizes to bi-quadratic and bi-cubic, as
+    well as mixed polynomials (e.g. bi-linear-quadratic).
+
+    Parameters
+    ----------
+    degree : int or list of int
+        Degree of polynomial interpolation
+        (e.g. 0 for nearest, 1 for bilinear, 2 for biquadratic).
+        Can also be a len-2 list specifying polynomial degree along (x, y)
+        respectively.
+    dx : float
+        Spacing along the x direction
+    dy : float
+        Spacing along the y direction
+    xnew : tensor
+        New x positions relative to dx grid
+    ynew : tensor
+        New y positions relative to dy grid
+
+    Returns
+    -------
+    AtAinvAt : tensor
+        (A^T A)^-1 A^T portion of the x_hat vector
+    Anew : tensor
+        A matrix at xnew and ynew points
+    """
+    from emupy.linear import setup_polynomial
+    if not isinstance(degree, (list, tuple)):
+        degree = [degree, degree]
+    assert len(degree) == 2
+    # setup grid given degree
+    Npoints = [degree[0]+1, degree[1]+1]
+    x, y = np.meshgrid(np.arange(Npoints[0]) * dx,  np.arange(Npoints[1]) * dy)
+    X = np.array([x.ravel(), y.ravel()]).T
+
+    # get design matrix
+    A, _ = setup_polynomial(X, degree, feature_degree=True, basis='direct')
+    # get inverse
+    AtAinvAt = np.linalg.pinv(A.T @ A) @ A.T
+    
+    # get new design matrix
+    X = np.array([xnew * dx, ynew * dy]).T
+    Anew, _ = setup_polynomial(X, degree, feature_degree=True, basis='direct')
+    
+    return AtAinvAt, Anew
 
 
 ###########################
