@@ -344,8 +344,8 @@ def _gen_sph2pix_multiproc(job):
 
 
 def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
-                Nproc=None, Ntask=10, device=None,
-                high_prec=True, bc_type=2, renorm=False, **norm_kwargs):
+                Nproc=None, Ntask=10, device=None, high_prec=True,
+                bc_type=2, m_phasor=False, renorm=False, **norm_kwargs):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -406,6 +406,14 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         1 (Dirichlet) sets func. to zero at boundary and
         2 (Neumann) sets its derivative to zero. Default = 2.
         Only needed for stripe method.
+    m_phasor : bool, optional
+        If False, do nothing (default). If True, multiply
+        all modes by exp(1j * phi) and update
+        output alm_mult[m==0] to accomodate. This effectively
+        boosts all m modes by 1. This is used when
+        modeling polarized antenna Jones terms, which
+        have a split symmetry that cannot be modeled
+        without this additional sinusoidal component.
     renorm : bool, optional
         Re-normalize the spherical harmonics such that their
         inner product is 1 over their domain. This is done using
@@ -440,10 +448,13 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         for i in range(Njobs):
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, _m), (theta, phi, _l, _m), dict(method=method, theta_max=theta_max,
-                                                              high_prec=high_prec,
-                                                              renorm=renorm, renorm_idx=renorm_idx,
-                                                              pxarea=pxarea, bc_type=bc_type)])
+            args = (theta, phi, _l, _m)
+            kwgs = dict(method=method, theta_max=theta_max,
+                        igh_prec=high_prec, m_phasor=m_phasor,
+                        renorm=renorm, renorm_idx=renorm_idx,
+                        pxarea=pxarea, bc_type=bc_type)
+            kwgs.update(norm_kwargs)
+            jobs.append([(_l, _m), args, kwgs])
 
         # run jobs
         try:
@@ -461,8 +472,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
                 Y[index] = Ydict[k].to(device)
-            alm_mult.extent(am)
-        alm_mult = torch.cat(alm_mult).to(Y.dtype)
+            alm_mult.extend(am)
+        alm_mult = torch.cat(alm_mult, dtype=_float())
 
         return Y, alm_mult
 
@@ -498,6 +509,10 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
     # combine into spherical harmonic
     Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
+    # apply additional m phasor
+    if m_phasor:
+        Y *= np.exp(1j * phi)
+
     if renorm:
         norm_kwargs['theta'] = theta
         Y = normalize_Ylm(Y, **norm_kwargs)[0]
@@ -505,7 +520,10 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
     # get alm mult
     alm_mult = torch.ones(len(Y), dtype=_float())
     if not np.any(m < 0):
-        alm_mult[m.ravel()>0] *= 2
+        alm_mult[m.ravel() > 0] *= 2
+    if m_phasor:
+        # update m == 0 modes
+        alm_mult[np.isclose(m.ravel(), 0)] *= 2
 
     return Y, alm_mult
 
