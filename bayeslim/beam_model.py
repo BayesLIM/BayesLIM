@@ -456,7 +456,7 @@ class PixelResponse(utils.PixInterp):
     BayesLIM Memo 1.
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
-                 theta=None, phi=None, freq_mode='channel', nside=None,
+                 theta_grid=None, phi_grid=None, freq_mode='channel', nside=None,
                  device=None, log=False, f0=None, Ndeg=None,
                  freq_kwargs={}, powerbeam=True, Rchi=None):
         """
@@ -472,9 +472,9 @@ class PixelResponse(utils.PixInterp):
             Spatial interpolation method for 'rect' pixtype.
             ['nearest', 'linear', 'quadratic', 'linear,quadratic']
             where mixed mode is for 'az,zen' respectively
-        theta, phi : array_like, optional
-            Co-latitude and azimuth arrays [deg] of
-            input params if pixtype is 'rect'
+        theta_grid, phi_grid : array_like, optional
+            For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
+            in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
         nside : int, optional
             nside of healpix map if pixtype is healpix
         freq_mode : str, optional
@@ -497,7 +497,7 @@ class PixelResponse(utils.PixInterp):
             size of the pixelized beam cache, i.e. len(theta)
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
-                         device=device, theta=theta, phi=phi)
+                         device=device, theta_grid=theta_grid, phi_grid=phi_grid)
         self.powerbeam = powerbeam
         self.freqs = freqs
         self.comp_params = comp_params
@@ -745,8 +745,8 @@ class YlmResponse(PixelResponse):
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
-                 theta=None, phi=None, nside=None,
-                 powerbeam=True, log=False, freq_mode='channel',
+                 theta=None, phi=None, theta_grid=None, phi_grid=None,
+                 nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs={}, Ylm_kwargs={}, Rchi=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -772,7 +772,11 @@ class YlmResponse(PixelResponse):
         theta, phi : array_like, optional
             This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
             transformation, which is then set on the object and interpolated for future
-            calls. Only needed if mode is 'interpolate'
+            calls. Only needed if mode is 'interpolate'. For interp_mode == 'rect', this
+            does not necessarily have to be limited only to theta_grid & phi_grid.
+        theta_grid, phi_grid : array_like, optional
+            For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
+            in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
         nside : int, optional
             nside of healpix map if pixtype is healpix
         powerbeam : bool, optional
@@ -800,14 +804,12 @@ class YlmResponse(PixelResponse):
         ## TODO: enable pix_type other than healpix
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
                                           interp_mode=interp_mode,
-                                          freq_mode=freq_mode,
-                                          comp_params=comp_params, freq_kwargs=freq_kwargs,
-                                          theta=theta, phi=phi, Rchi=Rchi)
+                                          freq_mode=freq_mode, comp_params=comp_params,
+                                          freq_kwargs=freq_kwargs, Rchi=Rchi,
+                                          theta_grid=theta_grid, phi_grid=phi_grid)
+        self.theta, self.phi = theta, phi
         self.l, self.m = l, m
         dtype = utils._cfloat() if comp_params else utils._float()
-        self.mult = torch.ones(len(m), dtype=dtype, device=device)
-        if np.all(m >= 0):
-            self.mult[m > 0] = 2.0
         self.powerbeam = powerbeam
         self.Ylm_cache = {}
         self.ang_cache = {}
@@ -836,23 +838,30 @@ class YlmResponse(PixelResponse):
         Y : tensor
             Spherical harmonic tensor of shape
             (Nangle, Ncoeff)
+        alm_mult : tensor
+            Multiplication tensor to alm,
+            if not stored return None
         """
         # get hash
         h = utils.ang_hash(zen)
         if h in self.Ylm_cache:
             Ylm = self.Ylm_cache[h]
+            if isinstance(Ylm, (list, tuple)):
+                Ylm, alm_mult = Ylm
+            else:
+                alm_mult = None
         else:
             # generate it, may take a while
             # generate exact Y_lm
-            Ylm = utils.gen_sph2pix(zen * D2R, az * D2R, l=self.l, m=self.m, device=self.device,
-                                    real_field=self.powerbeam, **self.Ylm_kwargs)
+            Ylm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m,
+                                              device=self.device, **self.Ylm_kwargs)
             # store it
-            self.Ylm_cache[h] = Ylm
-            self.ang_cache[h] = zen, az
+            self.Ylm_cache[h] = (Ylm, alm_mult)
+            self.ang_cache[h] = (zen, az)
 
-        return Ylm
+        return Ylm, alm_mult
 
-    def set_cache(self, Ylm, angs):
+    def set_cache(self, Ylm, angs, alm_mult=None):
         """
         Insert a Ylm tensor into Ylm_cache, hashed on the
         zenith array. We use the forward transform convention
@@ -868,11 +877,14 @@ class YlmResponse(PixelResponse):
         angs : tuple
             sky angles of Ylm pixels of shape (2, Npix)
             holding (zenith, azimuth) in [deg]
+        alm_mult : tensor, optional
+            multiply this (Nmodes,) tensor into alm tensor
+            before forward pass
         """
         assert len(self.l) == len(Ylm)
         zen, az = angs
         h = utils.ang_hash(zen)
-        self.Ylm_cache[h] = Ylm
+        self.Ylm_cache[h] = (Ylm, alm_mult)
         self.ang_cache[h] = (zen, az)
 
     def forward(self, params, zen, az, freqs):
@@ -907,10 +919,14 @@ class YlmResponse(PixelResponse):
             p = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
         # generate Y matrix
-        Ylm = self.get_Ylm(zen, az)
+        Ylm, alm_mult = self.get_Ylm(zen, az)
+
+        # multiply alm_mult
+        if alm_mult is not None:
+            p = p * alm_mult
 
         # next do slower dot product over Ncoeff
-        beam = (p * self.mult) @ Ylm
+        beam = p @ Ylm
 
         if torch.is_complex(beam):
             beam = torch.real(beam)
@@ -950,9 +966,11 @@ class YlmResponse(PixelResponse):
         """push attrs to device"""
         self.device = device
         super().push(device)
-        self.mult = self.mult.to(device)
         for k, Ylm in self.Ylm_cache.items():
-            self.Ylm_cache[k] = Ylm.to(device)
+            if isinstance(Ylm, (tuple, list)):
+                self.Ylm_cache[k] = (Ylm[0].to(device), Ylm[1].to(device))
+            else:
+                self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
             self.beam_cache = utils.push(self.beam_cache, device)
 

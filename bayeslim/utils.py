@@ -145,7 +145,7 @@ def _compute_lm_multiproc(job):
 
 def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
-               add_sectoral=True, bc_type=2,
+               add_sectoral=True, bc_type=2, real_field=True,
                Nrefine_iter=2, refine_dl=1e-7,
                Nproc=None, Ntask=5):
     """
@@ -187,7 +187,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     dl : float, optional
         Sampling density in l from m to lmax
     mmin : int, optional
-        Minimum m to compute, default is 0.
+        Minimum |m| to compute, default is 0.
     high_prec : bool, optional
         If True, use precise mpmath for hypergeometric
         calls, else use faster but less accurate scipy.
@@ -203,6 +203,8 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         for m > 0, either 1 or 2. 1 (Dirichlet) sets
         func. to zero at boundary and 2 (Neumann) sets
         its derivative to zero. Default = 2.
+    real_field : bool, optional
+        If True treat map as real valued so skip negative m modes.
     Nrefine_iter : int, optional
         Number of refinement interations (default = 2).
         Use finite difference to refine computation of
@@ -216,8 +218,10 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
 
     Returns
     -------
-    l, m
-        Array of l and m values
+    larr : ndarray
+        Array of l values
+    marr : ndarray
+        Array of m values
     """
     # solve for m modes
     spacing = 2 * np.pi / phi_max
@@ -334,13 +338,13 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
 
 def _gen_sph2pix_multiproc(job):
     (l, m), args, kwargs = job
-    Y = gen_sph2pix(*args, **kwargs)
+    Y, alm_mult = gen_sph2pix(*args, **kwargs)
     Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
-    return Ydict
+    return Ydict, alm_mult
 
 
-def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
-                lmax=None, real_field=True, Nproc=None, Ntask=10, device=None,
+def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
+                Nproc=None, Ntask=10, device=None,
                 high_prec=True, bc_type=2, renorm=False, **norm_kwargs):
     """
     Generate spherical harmonic forward model matrix.
@@ -371,6 +375,10 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         Co-latitude (i.e. zenith angle) [rad]
     phi : array_like
         Longitude (i.e. azimuth) [rad]
+    l : array_like
+        Integer or float array of spherical harmonic l modes
+    m : array_like
+        Integer array of spherical harmonic m modes
     method : str, optional
         Spherical harmonic mode ['sphere', 'stripe', 'cap']
         For 'sphere', l modes are integer
@@ -378,13 +386,6 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
     theta_max : float, optional
         For method == 'stripe' or 'cap', this is the maximum theta
         boundary [radians] of the mask.
-    l : array_like, optional
-        Integer or float array of spherical harmonic l modes
-    m : array_like, optional
-        Integer array of spherical harmonic m modes
-    lmax : int, optional
-        If l, m are None, this generates integer l and m
-        arrays
     real_field : bool, optional
         If True, treat sky as real-valued
         so truncate negative m values (used for lmax).
@@ -415,19 +416,18 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
 
     Returns
     -------
-    Ylm : array_like
+    Ylm : tensor
         An (Ncoeff, Npix) tensor encoding a spherical
         harmonic transform from a_lm -> map
+    alm_mult : tensor
+        A (Ncoeff) len tensor holding multiplicative factor
+        for Ylm when taking forward transform. Needed when
+        map is real-valued and we've truncated negative m modes.
 
     Notes
     -----
     The output dtype can be set using torch.set_default_dtype
     """
-    # setup l modes
-    if lmax is not None:
-        assert method == 'sphere'
-        l, m = gen_lm(lmax, real_field=real_field)
-
     # run multiproc mode
     if Nproc is not None:
         # setup multiprocessing
@@ -440,10 +440,10 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         for i in range(Njobs):
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
-            jobs.append([(_l, _m), (theta, phi), dict(method=method, theta_max=theta_max,
-                                                      l=_l, m=_m, high_prec=high_prec,
-                                                      renorm=renorm, renorm_idx=renorm_idx,
-                                                      pxarea=pxarea, bc_type=bc_type)])
+            jobs.append([(_l, _m), (theta, phi, _l, _m), dict(method=method, theta_max=theta_max,
+                                                              high_prec=high_prec,
+                                                              renorm=renorm, renorm_idx=renorm_idx,
+                                                              pxarea=pxarea, bc_type=bc_type)])
 
         # run jobs
         try:
@@ -455,13 +455,16 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
 
         # combine
         Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
-        for Ydict in output:
+        alm_mult = []
+        for (Ydict, am) in output:
             for k in Ydict:
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
                 Y[index] = Ydict[k].to(device)
+            alm_mult.extent(am)
+        alm_mult = torch.cat(alm_mult).to(Y.dtype)
 
-        return Y
+        return Y, alm_mult
 
     # run single proc mode
     if isinstance(l, (int, float)):
@@ -499,7 +502,12 @@ def gen_sph2pix(theta, phi, method='sphere', theta_max=None, l=None, m=None,
         norm_kwargs['theta'] = theta
         Y = normalize_Ylm(Y, **norm_kwargs)[0]
 
-    return Y
+    # get alm mult
+    alm_mult = torch.ones(len(Y), dtype=_float())
+    if not np.any(m < 0):
+        alm_mult[m.ravel()>0] *= 2
+
+    return Y, alm_mult
 
 
 def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
@@ -1510,7 +1518,7 @@ class PixInterp:
     Sky pixel spatial interpolation object
     """
     def __init__(self, pixtype, nside=None, interp_mode='nearest',
-                 theta=None, phi=None, device=None):
+                 theta_grid=None, phi_grid=None, device=None):
         """
         Interpolation is a weighted average of nearest neighbors.
         If pixtype is 'healpix', this is bilinear interpolation.
@@ -1530,12 +1538,11 @@ class PixInterp:
             'cubic' : bicubic interpolation, needs rect grid
             'linear,quadratic' : linear along az, quadratic along zen
             For pixtype of 'healpix', we always use healpy bilinear interp.
-        theta, phi : array_like
-            Raveled zen and az arrays [deg] if pixtype is 'rect'.
-            These should ordered as
-            [phi_1, phi_2, phi_3, phi_N, phi_1, phi_2, ...]
-            [tht_1, tht_1, tht_1, tht_1, tht_2, tht_2, ...]
-            i.e. az, zen = np.meshgrid(az_grid, zen_grid)
+        theta_grid, phi_grid : array_like
+            1D zen and azimuth arrays [deg] if pixtype is 'rect'
+            defining the grid to be interpolated against. These
+            should mark the pixel centers (i.e. theta_grid should
+            generally not start at 0).
         device : str, optional
             Device to place object on
         """
@@ -1543,7 +1550,8 @@ class PixInterp:
         self.nside = nside
         self.interp_cache = {}
         self.interp_mode = interp_mode
-        self.theta, self.phi = theta, phi
+        self.theta_grid = theta_grid
+        self.phi_grid = phi_grid
         self.device = device
 
     def _clear_cache(self):
@@ -1590,8 +1598,8 @@ class PixInterp:
                 degree = [s2d[d] for d in degree]
 
                 # get grid
-                xgrid = np.unique(self.phi)
-                ygrid = np.unique(self.theta)
+                xgrid = self.phi_grid
+                ygrid = self.theta_grid
                 dx = np.median(np.diff(xgrid))
                 dy = np.median(np.diff(ygrid))
                 xnew, ynew = tensor2numpy(az), tensor2numpy(zen)
@@ -1600,10 +1608,12 @@ class PixInterp:
                 inds, xyrel = bipoly_grid_index(xgrid, ygrid, xnew, ynew,
                                                 degree[0]+1, degree[1]+1,
                                                 wrapx=True, ravel=True)
+                inds = inds.T
 
                 # get weights
                 Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
                 wgts = Anew @ Ainv
+                wgts = wgts.T
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
@@ -1627,15 +1637,11 @@ class PixInterp:
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
 
-        if self.interp_mode == 'nearest':
-            # get nearest neighbors
-            nearest = m[..., inds.T]
+        # get nearest neighbors
+        nearest = m[..., inds.T]
 
-            # multiply by weights and sum
-            out = torch.sum(nearest * wgts.T, axis=-1)
-
-        else:
-            raise ValueError("didn't recognize interp_mode {}".format(self.interp_mode))
+        # multiply by weights and sum
+        out = torch.sum(nearest * wgts.T, axis=-1)
 
         ## LEGACY
 #        if self.interp_mode == 'nearest':
