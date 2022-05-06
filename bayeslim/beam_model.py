@@ -5,10 +5,10 @@ import torch
 from torch.nn import Parameter
 import numpy as np
 import warnings
-from scipy import interpolate, special as scispecial
+from scipy import interpolate
 import copy
 
-from . import utils, linalg
+from . import utils, linalg, special
 
 
 D2R = utils.D2R
@@ -658,7 +658,6 @@ class GaussResponse:
 class AiryResponse:
     """
     An Airy Disk representation for PixelBeam.
-    -- Note this is not differentiable!
 
     .. code-block:: python
 
@@ -989,7 +988,6 @@ class AlmBeam(utils.Module):
 def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
     """
     Generate a (asymmetric) airy disk function.
-    Note: this is not differentiable!
 
     .. math::
 
@@ -1037,9 +1035,8 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
 
     # get xvals
     xvals = diameter * mod.sin(zen) * np.pi * freqs.reshape(-1, 1) * freq_ratio / 2.99792458e8
-    # add a small value to handle x=0: introduces error on level of 1e-10
-    xvals += 1e-10
-    beam = 2.0 * scispecial.j1(xvals) / xvals
+    xvals = xvals.clip(1e-10)
+    beam = 2.0 * special.j1(xvals) / xvals
     if square:
         beam = beam**2
 

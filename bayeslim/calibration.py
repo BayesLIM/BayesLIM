@@ -1035,7 +1035,7 @@ def compute_redcal_degen(params, ants, antpos, wgts=None):
     A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
     W = torch.eye(Nants) * wgts.squeeze()
     AtWAinv = torch.pinverse(A.T @ W @ A)
-    phs_slope = (phs @ W.T @ A @ AtWAinv.T).moveaxis(-1, 2)
+    phs_slope = (phs @ W @ A @ AtWAinv.T).moveaxis(-1, 2)
 
     return abs_amp, phs_slope
 

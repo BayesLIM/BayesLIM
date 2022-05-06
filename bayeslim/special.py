@@ -6,6 +6,9 @@ from scipy.special import jv, jvp, yv, yvp, factorialk, gamma, gammaln
 from scipy.integrate import quad
 import copy
 import warnings
+import torch
+
+from bayeslim.data import DATA_PATH
 
 
 def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
@@ -478,6 +481,32 @@ def yl(l, z, deriv=False, keepdims=False):
                 dydz = dydz[0]
 
         return dydz
+
+
+def j1(x):
+    """
+    Bessel function of the first kind of order 1
+
+    Note: currently this is an approximation to
+    scipy.special.j1 given that no torch.j1 exists.
+    This approximation is valid for x <= 50
+    at 1e-5.
+
+    Parameters
+    ----------
+    x : tensor
+        x values to evaluate j1
+
+    Returns
+    -------
+    tensor
+    """
+    # load npz
+    with np.load(DATA_PATH+"/j1.npz") as f:
+        j1 = torch.as_tensor(f['j1'])
+    # get nearest indices: this only works for x <= 50
+    return j1[np.round(x * 1e4).to(int)]
+
 
 def _Pmm_legacy(m, z):
     """
