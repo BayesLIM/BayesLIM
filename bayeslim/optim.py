@@ -13,11 +13,50 @@ from . import utils, paramdict
 from .dataset import VisData, MapData, TensorData
 
 
-class LogUniformPrior:
+class BaseLogPrior:
+    """
+    A base LogPrior object with universal
+    functionality for all priors
+    """
+    def __init__(self, index=None, func=None, fkwargs=None):
+        """
+        Parameters
+        ----------
+        index : tuple, optional
+            Use this to index the forward-pass
+            params before computing prior
+        func : callable, optional
+            Use this to manipulate the forward-pass
+            params before computing the prior.
+            This occurs after indexing.
+        fkwargs : dict, optional
+            keyword arguments for func if needed
+        """
+        self.index = index
+        self.func = func
+        self.fkwargs = fkwargs if fkwargs is not None else {}
+
+    def _index_func(self, params):
+        if self.index is not None:
+            params = params[self.index]
+        if self.func is not None:
+            params = self.func(params, **self.fkwargs)
+
+        return params
+
+    def forward(self, params):
+        raise NotImplementedError
+
+    def __call__(self, params):
+        return self.forward(params)
+
+
+class LogUniformPrior(BaseLogPrior):
     """
     log uniform prior
     """
-    def __init__(self, lower_bound, upper_bound, index=None):
+    def __init__(self, lower_bound, upper_bound,
+                 index=None, func=None, fkwargs=None):
         """
         Parameters
         ----------
@@ -28,11 +67,15 @@ class LogUniformPrior:
         index : slice or tuple of slice objects
             indexing of params tensor before computing prior.
             default is no indexing.
+        func : callable, optional
+            pass params through this func after indexing
+        fkwargs : dict, optional
+            optional kwargs for func
         """
+        super().__init__(index, func, fkwargs)
         self.lower_bound = torch.as_tensor(lower_bound)
         self.upper_bound = torch.as_tensor(upper_bound)
         self.norm = torch.sum(torch.log(1/(self.upper_bound - self.lower_bound)))
-        self.index = index
 
     def forward(self, params):
         """
@@ -44,8 +87,7 @@ class LogUniformPrior:
             Parameter tensor to evaluate prior on.
         """
         # index input params tensor if necessary
-        if self.index is not None:
-            params = params[self.index]
+        params = self._index_func(params)
 
         # out of bounds if sign of residual is equal
         lower_sign = torch.sign(self.lower_bound - params)
@@ -64,11 +106,8 @@ class LogUniformPrior:
             lp = torch.sum(params)
             return lp / lp * self.norm
 
-    def __call__(self, params):
-        return self.forward(params)
 
-
-class LogTaperedUniformPrior:
+class LogTaperedUniformPrior(BaseLogPrior):
     """
     Log of an edge-tapered uniform prior, constructed by
     multiplying two mirrored tanh functions and taking log.
@@ -80,7 +119,7 @@ class LogTaperedUniformPrior:
 
     """
     def __init__(self, lower_bound=None, upper_bound=None, kind='sigmoid',
-                 alpha=10000., index=None):
+                 alpha=10000., index=None, func=None, fkwargs=None):
         """
         Parameters
         ---------
@@ -105,7 +144,12 @@ class LogTaperedUniformPrior:
         index : slice or tuple of slice objects
             indexing of params tensor before computing prior.
             default is no indexing.
+        func : callable, optional
+            pass params through this func after indexing
+        fkwargs : dict, optional
+            optional kwargs for func
         """
+        super().__init__(index, func, fkwargs)
         assert lower_bound is not None or upper_bound is not None
         self.lower_bound, self.upper_bound = lower_bound, upper_bound
         if self.lower_bound is not None:
@@ -113,7 +157,6 @@ class LogTaperedUniformPrior:
         if self.upper_bound is not None:
             self.upper_bound = torch.as_tensor(self.upper_bound)
         self.alpha = torch.as_tensor(alpha)
-        self.index = index
         if self.upper_bound is not None and self.lower_bound is not None:
             self.dbound = self.upper_bound - self.lower_bound
         else:
@@ -130,8 +173,7 @@ class LogTaperedUniformPrior:
         params : tensor
         """
         # index input params tensor if necessary
-        if self.index is not None:
-            params = params[self.index]
+        params = self._index_func(params)
 
         if self.kind == 'sigmoid':
             func = torch.sigmoid
@@ -146,16 +188,13 @@ class LogTaperedUniformPrior:
 
         return torch.sum(torch.log(prob))
 
-    def __call__(self, params):
-        return self.forward(params)
 
-
-class LogGaussPrior:
+class LogGaussPrior(BaseLogPrior):
     """
     log Gaussian prior. L2 norm regularization
     """
-    def __init__(self, mean, cov, sparse_cov=True, index=None,
-                 side='both', density=True):
+    def __init__(self, mean, cov, sparse_cov=True, side='both',
+                 density=True, index=None, func=None, fkwargs=None):
         """
         mean and cov must match shape of params, unless
         sparse_cov == False, in which case cov is 2D matrix
@@ -171,9 +210,6 @@ class LogGaussPrior:
             If True, cov is the diagonal of the covariance matrix
             with shape matching (indexed) data. Otherwise, cov
             is a 2D matrix dotted into (indexed) params.ravel()
-        index : slice or tuple of slice objects
-            indexing of params tensor before computing prior.
-            default is no indexing.
         side : str, optional
             Half or double-sided Gaussian
             'lower' : for y > mean, set residual to zero
@@ -183,11 +219,18 @@ class LogGaussPrior:
         density : bool, optional
             If True, normalize by PDF area (i.e. prob density)
             otherwise normalize by peak
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        func : callable, optional
+            pass params through this func after indexing
+        fkwargs : dict, optional
+            optional kwargs for func
         """
+        super().__init__(index, func, fkwargs)
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.cov = torch.atleast_1d(torch.as_tensor(cov))
         self.sparse_cov = sparse_cov
-        self.index = index
         self.side = side
         self.density = density
         if self.sparse_cov:
@@ -209,8 +252,7 @@ class LogGaussPrior:
         params : tensor
             Parameter tensor
         """
-        if self.index is not None:
-            params = params[self.index]
+        params = self._index_func(params)
         res = params - self.mean
         if self.side == 'upper':
             res[res < 0] = 0
@@ -228,15 +270,13 @@ class LogGaussPrior:
 
         return out
 
-    def __call__(self, params):
-        return self.forward(params)
 
-
-class LogLaplacePrior:
+class LogLaplacePrior(BaseLogPrior):
     """
     Log Laplacian Prior. L1 norm regularization
     """
-    def __init__(self, mean, scale, index=None, side='both', density=True):
+    def __init__(self, mean, scale, side='both', density=True,
+                 index=None, func=None, fkwargs=None):
         """
         mean and scale must match shape of params, or be scalars
 
@@ -253,9 +293,6 @@ class LogLaplacePrior:
             mean tensor, broadcasting with (indexed) params shape
         scale : tensor
             scale tensor, broadcasting with params
-        index : slice or tuple of slice objects
-            indexing of params tensor before computing prior.
-            default is no indexing.
         side : str, optional
             Half or double-sided exponential
             'lower' : for y > mean, set residual to zero
@@ -265,10 +302,17 @@ class LogLaplacePrior:
         density : bool, optional
             If True, normalize by PDF area (i.e. prob density)
             otherwise normalize by peak
+        index : slice or tuple of slice objects
+            indexing of params tensor before computing prior.
+            default is no indexing.
+        func : callable, optional
+            pass params through this func after indexing
+        fkwargs : dict, optional
+            optional kwargs for func
         """
+        super().__init__(index, func, fkwargs)
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.scale = torch.atleast_1d(torch.as_tensor(scale))
-        self.index = index
         self.norm = torch.sum(torch.log(2*self.scale))
         self.side = side
         self.density = density
@@ -282,8 +326,7 @@ class LogLaplacePrior:
         params : tensor
             Parameter tensor
         """
-        if self.index is not None:
-            params = params[self.index]
+        params = self._index_func(params)
         res = params - self.mean
 
         if self.side == 'upper':
@@ -296,9 +339,6 @@ class LogLaplacePrior:
             out -= self.norm
 
         return out
-
-    def __call__(self, params):
-        return self.forward(params)
 
 
 class LogProb(utils.Module):

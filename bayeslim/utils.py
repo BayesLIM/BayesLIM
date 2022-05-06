@@ -1984,13 +1984,13 @@ class Module(torch.nn.Module):
 
         Parameter
         ---------
-        priors_inp_params : optim.Log*Prior object or list
-            Takes params as callable and returns
-            scalar log prior. Can feed list of priors as well.
-        priors_out_params : optim.Log*Prior object or list
+        priors_inp_params : optim.LogPrior object or list
+            Takes params as input and returns a scalar
+            log prior. Can feed list of priors as well.
+        priors_out_params : optim.LogPrior object or list
             Takes the tensor output after pushing
             params through its response function
-            as callable and returns scalar log prior.
+            as input and returns a scalar log prior.
             Can feed list of priors as well.
         """
         if (priors_inp_params is not None and 
@@ -2058,6 +2058,7 @@ class Module(torch.nn.Module):
                         prior_value = prior_value + prior(out_params).to('cpu')
 
             prior_cache[self.name] = prior_value
+
 
 class Sequential(Module):
     """
