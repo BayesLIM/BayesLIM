@@ -97,7 +97,8 @@ def ceinsum(equation, *operands):
 def cinv(z):
     """
     Take the inverse of z
-    across the first two axes
+    across the last two axes
+    (excluding the last 2-real axis)
 
     Parameters
     ----------
@@ -109,7 +110,7 @@ def cinv(z):
     tensor
         inverse of z in 2-real form
     """
-    return viewreal(torch.inverse(viewcomp(z).T).T)
+    return viewreal(torch.inverse(viewcomp(z)))
 
 
 def diag_matmul(a, b):
