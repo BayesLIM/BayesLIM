@@ -458,7 +458,7 @@ class PixelResponse(utils.PixInterp):
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  theta_grid=None, phi_grid=None, freq_mode='channel', nside=None,
                  device=None, log=False, f0=None, Ndeg=None,
-                 freq_kwargs={}, powerbeam=True, Rchi=None):
+                 freq_kwargs=None, powerbeam=True, Rchi=None):
         """
         Parameters
         ----------
@@ -506,7 +506,7 @@ class PixelResponse(utils.PixInterp):
         self.log = log
         self.freq_mode = freq_mode
         self.freq_ax = 3
-        self.freq_kwargs = freq_kwargs
+        self.freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self.Rchi = Rchi
         self.clear_beam()
 
@@ -674,7 +674,7 @@ class AiryResponse:
 
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
     """
-    def __init__(self, freq_ratio=1.0, powerbeam=True):
+    def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=True, Ntau=100):
         """
         .. math::
 
@@ -688,11 +688,18 @@ class AiryResponse:
         powerbeam : bool, optional
             If True, treat this as a squared, "baseline beam"
             otherwise treat this as a per-antenna beam (unsquared)
+        brute_force : bool, optional
+            If True (default) makes this differentiable.
+            See airy_disk() for details.
+        Ntau : int, optional
+            Integral pixelization, see airy_disk() for details
         """
         self.freq_ratio = freq_ratio
         self.freq_mode = 'other'
         self.freq_ax = None
         self.powerbeam = powerbeam
+        self.brute_force = brute_force
+        self.Ntau = Ntau
 
     def _setup(self):
         pass
@@ -712,7 +719,8 @@ class AiryResponse:
         Dew = params[..., 0:1]
         Dns = params[..., 1:2] if params.shape[-1] > 1 else None
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
-                         square=self.powerbeam)
+                         square=self.powerbeam, brute_force=self.brute_force,
+                         Ntau=self.Ntau)
         return beam
   
     def push(self, device):
@@ -722,8 +730,16 @@ class AiryResponse:
 class YlmResponse(PixelResponse):
     """
     A spherical harmonic representation for PixelBeam,
-    mapping a_lm to pixel space. Adopts a linear
+    mapping params to pixel space. Adopts a linear
     mapping across frequency in units of MHz.
+    For further compression, can adopt a polynomial mapping
+    across degree l for fixed order m (lm_poly_setup).
+
+    params should hold the a_lm coefficients of shape
+    (Npol, Nvec, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
+    of lm modes. Ndeg is the number of linear mapping terms
+    wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
+    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
 
     .. code-block:: python
 
@@ -731,22 +747,16 @@ class YlmResponse(PixelResponse):
         beam = R(params, zen, az, freqs)
 
     Warning: if mode = 'interpolate' and parameter = True,
-    you need to clear_beam() after every backwards call,
-    otherwise the graph of the cached beam is freed
-    and you get a RunTimeError.
-
-    params holds a_lm coefficients of shape
-    (Npol, Nvec, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
-    of lm modes. Ndeg is the number of linear mapping terms
-    wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
-
-    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
+    you need to clear_beam() after every back-propagation,
+    otherwise the graph of the cached beam is stale
+    and you get a RunTimeError. Note this is performed
+    automatically when using the rime_model.RIME object.
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs={}, Ylm_kwargs={}, Rchi=None):
+                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -815,12 +825,138 @@ class YlmResponse(PixelResponse):
         self.mode = mode
         self.beam_cache = None
         self.freq_ax = 3
-        self.Ylm_kwargs = Ylm_kwargs
+        self.Ylm_kwargs = Ylm_kwargs if Ylm_kwargs is not None else {}
         self.device = device
         self.log = log
 
+        # default is no mapping across l
+        self.lm_poly_setup()
+
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
+
+    def lm_poly_setup(self, lm_poly_kwargs=None):
+        """
+        Setup polynomial compression along degree l if desired using
+        utils.gen_poly_A().
+        This means the last dimension of the input params tensor
+        are the weights to self.lm_poly_A matrices ordered
+        according to increasing unique m value.
+        Default (None) is not compression.
+
+        Parameters
+        ----------
+        lm_poly_kwargs : dict, optional
+            Kwargs for utils.gen_poly_A(), compressing along l
+            for each fixed integer m. Default is no compression.
+            Can also be a kwarg dictionary for each unique m integer.
+            If Ndeg is fed as None for a particular m mode dictionary,
+            then don't perform any compression for this m mode.
+        """
+        self._lm_poly_kwargs = lm_poly_kwargs if lm_poly_kwargs is not None else {}
+        self._lm_poly = True if lm_poly_kwargs not in [None, {}] else False
+
+        if self._lm_poly:
+            # assert m is only integers
+            munique = np.unique(self.m)
+            assert np.isclose(munique, munique.astype(int)).all()
+
+            # generate poly mappings for each integer m
+            self.lm_poly_A = {}
+            i = 0
+            for m in munique:
+                # get indices in self.m
+                lm_inds = np.where(self.m == m)[0]
+
+                # get kwarg dictionary for this m
+                if m in lm_poly_kwargs:
+                    kwargs = lm_poly_kwargs[m].copy()
+                else:
+                    kwargs = lm_poly_kwargs.copy()
+
+                # get Ndeg: if fed as None then no compression for this m
+                assert 'Ndeg' in kwargs
+                Ndeg = kwargs.pop('Ndeg')
+                compress = True
+                if Ndeg is None:
+                    compress = False
+                    Ndeg = len(lm_inds)
+
+                # get indices in eventual params tensor
+                p_inds = i + np.arange(Ndeg)
+                i += Ndeg
+
+                if compress:
+                    # generate A matrix
+                    A = utils.gen_poly_A(self.l[lm_inds], Ndeg, **kwargs)
+                    dtype = utils._float() if not self.comp_params else utils._cfloat()
+                    A = A.to(dtype)
+                else:
+                    A = None
+
+                self.lm_poly_A[m] = (lm_inds, p_inds, A)
+
+            self.lm_poly_Ndeg = i
+
+    def lm_poly_fit(self, params, fit_kwargs=None):
+        """
+        Take a normal a_lm params tensor of shape
+        (..., Nalm) and use least squares to fit
+        poly modes across l for each fixed m mode
+        given the A matrices in self.lm_poly_A,
+        see self.lm_poly_setup().
+        kwargs are fed to linalg.least_squares().
+        kwargs can also hold a kwarg dict for each
+        key of self.lm_poly_A.
+        Returns a tensor of shape (..., Npoly).
+        """
+        assert self._lm_poly
+        out = torch.zeros(params.shape[:-1] + (self.lm_poly_Ndeg,),
+                          dtype=params.dtype, device=params.device)
+
+        # iterate over m mode A matrices
+        for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
+            # get kwargs
+            fit_kwargs = fit_kwargs if fit_kwargs is not None else {}
+            if key in fit_kwargs:
+                kwargs = fit_kwargs[key]
+            else:
+                kwargs = fit_kwargs
+
+            # run fit
+            if A is not None:
+                xhat, _ = linalg.least_squares(A, params[..., lm_inds], dim=-1, **kwargs)
+            else:
+                xhat = params[..., lm_inds]
+
+            # insert into out
+            out[..., p_inds] = xhat
+
+        return out
+
+    def lm_poly_forward(self, params):
+        """
+        Forward pass a params tensor of shape
+        (..., Npoly) to be (..., Nalm)
+        using self.lm_poly_A. Assumes
+        the last dimension of params is ordered
+        according to increasing unique m value.
+        """
+        if not self._lm_poly:
+            return params
+
+        # generate empty output tensor
+        out = torch.zeros(params.shape[:-1] + (len(self.l),),
+                          dtype=params.dtype, device=params.device)
+        
+        # iterate over each m mode A matrix
+        for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
+            if A is not None:
+                out[..., lm_inds] = params[..., p_inds] @ A.T
+            else:
+                out[..., lm_inds] = params[..., p_inds]
+
+        return out
 
     def get_Ylm(self, zen, az):
         """
@@ -911,13 +1047,17 @@ class YlmResponse(PixelResponse):
         if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
 
+        # first handle frequency axis
         if self.freq_mode == 'channel':
             p = params
         elif self.freq_mode == 'linear':
             # first do fast dot product along frequency axis
             p = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
 
-        # generate Y matrix
+        # transform into a_lm space if using poly lm compression
+        p = self.lm_poly_forward(p)
+
+        # next handle lm axis
         Ylm, alm_mult = self.get_Ylm(zen, az)
 
         # multiply alm_mult
@@ -972,6 +1112,9 @@ class YlmResponse(PixelResponse):
                 self.Ylm_cache[k] = Ylm.to(device)
         if self.beam_cache is not None:
             self.beam_cache = utils.push(self.beam_cache, device)
+        if self._lm_poly:
+            for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
+                self.lm_poly_A[k] = (lm_inds, p_inds, A.to(device))
 
 
 class AlmBeam(utils.Module):
@@ -985,7 +1128,8 @@ class AlmBeam(utils.Module):
         raise NotImplementedError
 
 
-def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
+def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0,
+              square=True, Ntau=100, brute_force=True):
     """
     Generate a (asymmetric) airy disk function.
 
@@ -1011,6 +1155,11 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
     square : bool, optional
         If True, square the output, otherwise don't
         square it.
+    Ntau : int, optional
+        Bessel integral pixelization density
+    brute_force : bool, optional
+        If True (default) numerically integrate Bessel integral
+        making this differentiable, otherwise use scipy routine.
 
     Returns
     -------
@@ -1036,7 +1185,9 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0, square=True):
     # get xvals
     xvals = diameter * mod.sin(zen) * np.pi * freqs.reshape(-1, 1) * freq_ratio / 2.99792458e8
     xvals = xvals.clip(1e-10)
-    beam = 2.0 * special.j1(xvals) / xvals
+
+    # evaluate beam
+    beam = 2.0 * special.j1(xvals, Ntau=Ntau, brute_force=brute_force) / xvals
     if square:
         beam = beam**2
 

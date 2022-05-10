@@ -1156,7 +1156,7 @@ def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
     if linear_mode == 'poly':
         A = gen_poly_A(x, Ndeg, basis=basis, whiten=whiten, x0=x0, dx=dx)
     elif linear_mode == 'custom':
-        A = A
+        A = torch.as_tensor(A)
 
     return A.to(dtype).to(device)
 
