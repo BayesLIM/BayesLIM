@@ -483,29 +483,50 @@ def yl(l, z, deriv=False, keepdims=False):
         return dydz
 
 
-def j1(x):
+def _bessel_integrand(x, tau, n=1):
+    return torch.cos(n * tau - x * torch.sin(tau))
+
+
+def j1(x, Ntau=100, brute_force=True):
     """
-    Bessel function of the first kind of order 1
-
-    Note: currently this is an approximation to
-    scipy.special.j1 given that no torch.j1 exists.
-    This approximation is valid for x <= 50
-    at 1e-5.
-
+    Bessel function of the first kind,
+    derived from trapezoidal integration
+    of the Bessel integral
+    https://en.wikipedia.org/wiki/Bessel_function
+    (if brute_force), or can be done using
+    scipy (which is not differentiable!)
+    
     Parameters
     ----------
     x : tensor
-        x values to evaluate j1
-
+        x values to evaluate
+    Ntau : int, optional
+        Bessel integral pixelization density
+    brute_force : bool, optional
+        If True, numerically integrate
+        Bessel integral brute force.
+        Makes this differentiable.
+        Otherwise use a scipy routine.
+        
     Returns
     -------
     tensor
     """
-    # load npz
-    with np.load(DATA_PATH+"/j1.npz") as f:
-        j1 = torch.as_tensor(f['j1'])
-    # get nearest indices: this only works for x <= 50
-    return j1[np.round(x * 1e4).to(int)]
+    if brute_force:
+        # evaluate bessel integrand at fixed grid
+        t = torch.linspace(0, np.pi, Ntau)
+        diff = (t[1] - t[0])
+        t = t.reshape((-1, ) + tuple(1 for i in range(x.ndim)))
+        integrand = _bessel_integrand(x, t, n=1)
+        
+        # integrate using trapezoidal rule
+        wgts = torch.ones_like(integrand)
+        wgts[1:-1] = 2.0
+
+        return torch.sum(wgts * integrand, dim=0) * diff / 2.0 / np.pi
+    else:
+        from scipy import special
+        return special.j1(x)
 
 
 def _Pmm_legacy(m, z):
