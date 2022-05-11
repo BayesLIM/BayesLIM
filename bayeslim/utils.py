@@ -345,7 +345,8 @@ def _gen_sph2pix_multiproc(job):
 
 def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
                 Nproc=None, Ntask=10, device=None, high_prec=True,
-                bc_type=2, m_phasor=False, renorm=False, **norm_kwargs):
+                bc_type=2, real=False, m_phasor=False,
+                renorm=False, **norm_kwargs):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -406,6 +407,9 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         1 (Dirichlet) sets func. to zero at boundary and
         2 (Neumann) sets its derivative to zero. Default = 2.
         Only needed for stripe method.
+    real : bool, optional
+        If True return real-valued Ylm (and update alm_mult accordingly)
+        otherwise return complex Ylm (default).
     m_phasor : bool, optional
         If False, do nothing (default). If True, multiply
         all modes by exp(1j * phi) and update
@@ -513,15 +517,19 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
     if m_phasor:
         Y *= np.exp(1j * phi)
 
+    # transform to real if needed
+    if real:
+        Y = Y.real
+
     if renorm:
         norm_kwargs['theta'] = theta
         Y = normalize_Ylm(Y, **norm_kwargs)[0]
 
     # get alm mult
     alm_mult = torch.ones(len(Y), dtype=_float())
-    if not np.any(m < 0):
+    if not np.any(m < 0) and not real:
         alm_mult[m.ravel() > 0] *= 2
-    if m_phasor:
+    if m_phasor and not real:
         # update m == 0 modes
         alm_mult[np.isclose(m.ravel(), 0)] *= 2
 
