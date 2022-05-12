@@ -657,7 +657,7 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
     return H
 
 
-def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
+def write_Ylm(fname, Ylm, angs, l, m, alm_mult=None, theta_min=None, theta_max=None,
               phi_max=None, history='', overwrite=False):
     """
     Write a Ylm basis to HDF5 file
@@ -674,6 +674,9 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
         and phi and azimuth [deg].
     l, m : array
         Ylm degree l and order m of len Ncoeff
+    alm_mult : array, optional
+        alm coefficient multiplicative factor when
+        taking forward transform of shape (Ncoeff,)
     theta_min : float, optional
         Minimum colatitude angle of Ylms [deg]
     theta_max : float, optional
@@ -691,6 +694,8 @@ def write_Ylm(fname, Ylm, angs, l, m, theta_min=None, theta_max=None,
             f.create_dataset('angs', data=np.array(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
+            if alm_mult is not None:
+                f.create_dataset('alm_mult', data=alm_mult)
             if theta_min is not None:
                 f.attrs['theta_min'] = theta_min
             if theta_max is not None:
@@ -741,17 +746,23 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         If True, discard monopole (i.e. l == m == 0)
     read_data : bool, optional
         If True, read and return Ylm
-        else return None, angs, l, m 
+        else return None for Ylm
 
     Returns
     -------
-    Ylm, angs, l, m, info
+    Ylm, alm_mult, angs, l, m, info
     """
     import h5py
     with h5py.File(fname, 'r') as f:
         # load angles and all modes
         angs = f['angs'][:]
         l, m = f['l'][:], f['m'][:]
+        if 'alm_mult' in f:
+            alm_mult = f['alm_mult'][:]
+        else:
+            alm_mult = np.ones_like(l)
+            if not np.any(m < 0):
+                alm_mult[m > 0] *= 2
         info = {}
         for p in ['history', 'theta_max', 'theta_min', 'phi_max']:
             info[p] = f.attrs[p] if p in f.attrs else None
@@ -779,6 +790,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             keep = slice(keep[0], keep[-1]+1, keep[1] - keep[0])
 
         l, m = l[keep], m[keep]
+        alm_mult = alm_mult[keep]
         if read_data:
             Ylm = f['Ylm'][keep, :]
         else:
@@ -823,7 +835,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if cast is not None:
             Ylm = Ylm.to(cast)
 
-    return Ylm, angs, l, m, info
+    return Ylm, alm_mult, angs, l, m, info
 
 
 def stripe_tukey_mask(theta, theta_min, theta_max,
