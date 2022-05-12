@@ -475,8 +475,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
                 Y[index] = Ydict[k].to(device)
-            alm_mult.extend(am)
-        alm_mult = torch.cat(alm_mult, dtype=_float())
+            alm_mult.extend(am.numpy())
+        alm_mult = torch.as_tensor(alm_mult, dtype=_float())
 
         return Y, alm_mult
 
