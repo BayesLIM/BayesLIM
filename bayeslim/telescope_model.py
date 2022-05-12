@@ -130,7 +130,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
     A model for antenna layout and the baseline fringe
 
     Two kinds of caching are allowed
-    1. caching the unit pointing s vector
+    1. caching the unit pointing s vector (default)
         This recomputes the fringes exactly
     2. caching the fringe on the sky
         This interpolates an existing fringe
@@ -192,14 +192,14 @@ class ArrayModel(utils.PixInterp, utils.Module):
         # set location metadata
         self.ants = sorted(antpos.keys())
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device=device)
-        self.freqs = torch.as_tensor(freqs, dtype=_float(), device=device)
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
-        self.cache = {}
+        self._clear_cache()
         self.parameter = parameter
         self.redtol = redtol
         self.device = device
+        self.set_freqs(freqs)
         if parameter:
             # make ant vecs a parameter if desired
             self.antpos = torch.nn.Parameter(self.antpos)
@@ -261,13 +261,16 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         return ang, match
 
-    def reset_freqs(self, freqs):
-        """reset frequency array"""
+    def set_freqs(self, freqs):
+        """set frequency array"""
         self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
         self._clear_cache()
 
     def _clear_cache(self):
-        """Clear interpolation and fringe cache"""
+        """
+        Overloads PixInterp._clear_cache
+        to clear both PixInterp and fringe_cache
+        """
         # this is PixInterp cache
         self.interp_cache = {}
         # this is fringe cache
@@ -387,7 +390,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         super().push(device)
         self.freqs = self.freqs.to(device)
         self.device = device
-        # push cache
+        # push fringe cache
         for k in self.cache:
             self.cache[k] = self.cache[k].to(device)
 

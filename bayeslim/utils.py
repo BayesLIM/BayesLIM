@@ -454,9 +454,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
             _m = m[i*Ntask:(i+1)*Ntask]
             args = (theta, phi, _l, _m)
             kwgs = dict(method=method, theta_max=theta_max,
-                        igh_prec=high_prec, m_phasor=m_phasor,
-                        renorm=renorm, renorm_idx=renorm_idx,
-                        pxarea=pxarea, bc_type=bc_type)
+                        high_prec=high_prec, m_phasor=m_phasor,
+                        renorm=renorm, bc_type=bc_type, real=real)
             kwgs.update(norm_kwargs)
             jobs.append([(_l, _m), args, kwgs])
 
