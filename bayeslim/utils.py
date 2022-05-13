@@ -338,9 +338,9 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
 
 def _gen_sph2pix_multiproc(job):
     (l, m), args, kwargs = job
-    Y, alm_mult = gen_sph2pix(*args, **kwargs)
+    Y, norm, alm_mult = gen_sph2pix(*args, **kwargs)
     Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
-    return Ydict, alm_mult
+    return Ydict, norm, alm_mult
 
 
 def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
