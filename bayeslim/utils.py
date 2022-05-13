@@ -431,6 +431,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
     Ylm : tensor
         An (Ncoeff, Npix) tensor encoding a spherical
         harmonic transform from a_lm -> map
+    norm : tensor
+        Normalization (Ncoeff,) applied to each Ylm mode
     alm_mult : tensor
         A (Ncoeff) len tensor holding multiplicative factor
         for Ylm when taking forward transform. Needed when
@@ -522,7 +524,9 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
 
     if renorm:
         norm_kwargs['theta'] = theta
-        Y = normalize_Ylm(Y, **norm_kwargs)[0]
+        Y, norm = normalize_Ylm(Y, **norm_kwargs)
+    else:
+        norm = torch.ones(len(Y))
 
     # get alm mult
     alm_mult = torch.ones(len(Y), dtype=_float())
@@ -532,7 +536,7 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         # update m == 0 modes
         alm_mult[np.isclose(m.ravel(), 0)] *= 2
 
-    return Y, alm_mult
+    return Y, norm, alm_mult
 
 
 def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
@@ -657,8 +661,9 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
     return H
 
 
-def write_Ylm(fname, Ylm, angs, l, m, alm_mult=None, theta_min=None, theta_max=None,
-              phi_max=None, history='', overwrite=False):
+def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
+              theta_min=None, theta_max=None, phi_max=None,
+              history='', overwrite=False):
     """
     Write a Ylm basis to HDF5 file
 
@@ -674,6 +679,8 @@ def write_Ylm(fname, Ylm, angs, l, m, alm_mult=None, theta_min=None, theta_max=N
         and phi and azimuth [deg].
     l, m : array
         Ylm degree l and order m of len Ncoeff
+    norm : array, optional
+        Normalization (Ncoeff,) applied to each Ylm mode
     alm_mult : array, optional
         alm coefficient multiplicative factor when
         taking forward transform of shape (Ncoeff,)
@@ -694,6 +701,8 @@ def write_Ylm(fname, Ylm, angs, l, m, alm_mult=None, theta_min=None, theta_max=N
             f.create_dataset('angs', data=np.array(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
+            if norm is not None:
+                f.create_dataset('norm', data=norm)
             if alm_mult is not None:
                 f.create_dataset('alm_mult', data=alm_mult)
             if theta_min is not None:
@@ -750,19 +759,21 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
 
     Returns
     -------
-    Ylm, alm_mult, angs, l, m, info
+    Ylm, angs, l, m, info
     """
     import h5py
     with h5py.File(fname, 'r') as f:
         # load angles and all modes
         angs = f['angs'][:]
         l, m = f['l'][:], f['m'][:]
+        if 'norm' in f:
+            norm = f['norm'][:]
+        else:
+            norm = None
         if 'alm_mult' in f:
             alm_mult = f['alm_mult'][:]
         else:
-            alm_mult = np.ones_like(l)
-            if not np.any(m < 0):
-                alm_mult[m > 0] *= 2
+            alm_mult = None
         info = {}
         for p in ['history', 'theta_max', 'theta_min', 'phi_max']:
             info[p] = f.attrs[p] if p in f.attrs else None
@@ -790,11 +801,17 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             keep = slice(keep[0], keep[-1]+1, keep[1] - keep[0])
 
         l, m = l[keep], m[keep]
-        alm_mult = alm_mult[keep]
+        if alm_mult is not None:
+            alm_mult = alm_mult[keep]
+        if norm is not None:
+            norm = norm[keep]
         if read_data:
             Ylm = f['Ylm'][keep, :]
         else:
             Ylm = None
+
+        info['alm_mult'] = alm_mult
+        info['norm'] = norm
 
     # truncate sky
     if colat_min is not None:
@@ -835,7 +852,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if cast is not None:
             Ylm = Ylm.to(cast)
 
-    return Ylm, alm_mult, angs, l, m, info
+    return Ylm, angs, l, m, info
 
 
 def stripe_tukey_mask(theta, theta_min, theta_max,
