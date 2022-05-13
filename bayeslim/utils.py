@@ -146,7 +146,7 @@ def _compute_lm_multiproc(job):
 def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
                add_sectoral=True, bc_type=2, real_field=True,
-               Nrefine_iter=2, refine_dl=1e-7,
+               Nrefine_iter=3, refine_dl=1e-7,
                Nproc=None, Ntask=5):
     """
     Compute associated Legendre function degrees l on
@@ -432,7 +432,7 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         An (Ncoeff, Npix) tensor encoding a spherical
         harmonic transform from a_lm -> map
     norm : tensor
-        Normalization (Ncoeff,) applied to each Ylm mode
+        Normalization (Ncoeff,) divisor for each Ylm mode
     alm_mult : tensor
         A (Ncoeff) len tensor holding multiplicative factor
         for Ylm when taking forward transform. Needed when
@@ -471,16 +471,18 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
 
         # combine
         Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
-        alm_mult = []
-        for (Ydict, am) in output:
+        norm, alm_mult = [], []
+        for (Ydict, nm, am) in output:
             for k in Ydict:
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
                 Y[index] = Ydict[k].to(device)
             alm_mult.extend(am.numpy())
+            norm.extend(nm.numpy())
         alm_mult = torch.as_tensor(alm_mult, dtype=_float())
+        norm = torch.as_tensor(norm, dtype=_float())
 
-        return Y, alm_mult
+        return Y, norm, alm_mult
 
     # run single proc mode
     if isinstance(l, (int, float)):
@@ -680,7 +682,7 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
     l, m : array
         Ylm degree l and order m of len Ncoeff
     norm : array, optional
-        Normalization (Ncoeff,) applied to each Ylm mode
+        Normalization (Ncoeff,) divisor for each Ylm mode
     alm_mult : array, optional
         alm coefficient multiplicative factor when
         taking forward transform of shape (Ncoeff,)
