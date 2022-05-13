@@ -7,7 +7,7 @@ init_file = os.path.join('/'.join(os.path.abspath(__file__).split('/')[:-1]), 'b
 with open(init_file, 'r') as f:
     lines = f.readlines()
     for l in lines:
-        if "__version__" in l:
+        if "__version__ =" in l:
             version = ast.literal_eval(l.split('=')[1].strip())
 
 def package_files(package_dir, subdirectory):
