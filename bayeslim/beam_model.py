@@ -465,7 +465,11 @@ class PixelResponse(utils.PixInterp):
         freqs : tensor
             frequency array of params [Hz]
         pixtype : str
-            Pixelization type. options = ['healpix', 'rect']
+            Pixelization type. options = ['healpix', 'rect'].
+            For healpix, pixel ordering is RING. For rect,
+            pixel ordering should be
+            x, y = meshgrid(phi_grid, theta_grid)
+            x, y = x.ravel(), y.ravel()
         comp_params : bool, optional
             If True, cast params to complex via utils.viewcomp
         interp_mode : str, optional

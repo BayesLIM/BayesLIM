@@ -785,7 +785,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if lmin is not None:
             keep = keep & (l >= lmin)
         if lmax is not None:
-            keep = keep & (l <= lmax)
+            keep = keep & (l <= lmax + 1e-5)
         if discard is not None:
             cut_l, cut_m = discard
             for i in range(len(cut_l)):
