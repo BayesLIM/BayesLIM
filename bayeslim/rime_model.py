@@ -4,10 +4,17 @@ Radio Interferometric Measurement Equation (RIME) module
 import torch
 import numpy as np
 from collections.abc import Iterable
+import datetime
 
 from . import telescope_model, calibration, beam_model, sky_model, utils, io
 from .utils import _float, _cfloat
 from .dataset import VisData
+
+try:
+    from memory_profiler import memory_usage
+    import_memprof = True
+except ModuleNotFoundError:
+    import_memprof = False
 
 
 class RIME(utils.Module):
@@ -281,6 +288,7 @@ class RIME(utils.Module):
             self.beam.R.clear_beam()
 
         # iterate over sky components
+        start = datetime.now().timestamp()
         for i, sky_comp in enumerate(sky_components):
 
             kind = sky_comp['kind']
@@ -293,8 +301,11 @@ class RIME(utils.Module):
             for j, time in enumerate(self.sim_times):
 
                 # print info
-                message = "{} / {} times for {} / {} sky model".format(j+1, len(self.sim_times),
-                                                                       i+1, len(sky_components))
+                message = "{}/{} times for {}/{} sky model | {} elapsed"
+                if import_memprof:
+                    message = "{} | {:.3e} MB".format(message, memory_usage()[0])
+                message = message.format(j+1, len(self.sim_times), i+1, len(sky_components),
+                                         elapsed_time(start))
                 log(message, verbose=self.verbose, style=1)
 
                 # get beam tensor
@@ -371,3 +382,33 @@ def log(message, verbose=False, style=1):
             print("{}\n{}".format(message, '-'*30))
         elif style == 3:
             print("\n{}\n{}\n{}".format('-'*30, message, '-'*30))
+
+
+def elapsed_time(start):
+    """
+    Get elapsed time in seconds or minutes
+
+    Parameters
+    ----------
+    start : float
+        Start time in seconds, i.e.
+        datetime.now().timestamp()
+
+    Returns
+    -------
+    str
+    """
+    # get elapsed time in seconds
+    t = datetime.now().timestamp() - start
+    unit = 'sec'
+
+    # if it is larger than 60000, convert to hours
+    if t > 60000:
+        t /= 3600
+        unit = 'hrs'
+    # if it is larger than 1000, convert to minutes
+    elif t > 1000:
+        t /= 60
+        unit = 'min'
+
+    return "{:.3f} {}".format(t, unit)
