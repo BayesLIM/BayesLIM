@@ -4,7 +4,7 @@ Radio Interferometric Measurement Equation (RIME) module
 import torch
 import numpy as np
 from collections.abc import Iterable
-import datetime
+from datetime import datetime
 
 from . import telescope_model, calibration, beam_model, sky_model, utils, io
 from .utils import _float, _cfloat
