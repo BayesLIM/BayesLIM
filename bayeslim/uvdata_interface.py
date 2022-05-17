@@ -53,7 +53,10 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     overwrite : bool, optional
         Overwrite output if it exists
     partial_write : bool, optional
-        Overwrite part of the file, if doing a partial read/write
+        Overwrite part of the file, if doing a partial read/write.
+        Note that if you pass a pre-loaded UVData object
+        that has already been down-selected, you should
+        pass those params here.
     verbose : bool, optional
         If True, print RIME simulation progress info
 
@@ -188,13 +191,19 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
 
     # write to file
     if outfname:
-        if overwrite or not os.path.exists(outfname):
+        if overwrite or not os.path.exists(outfname) or partial_write:
             if partial_write:
-                uvd.write_uvh5_part(outfname, uvd.data_array,
-                                    uvd.flag_array, uvd.nsample_array,
-                                    **partial_read)
+                # write out partial data
+                full_uv = UVData()
+                full_uv.read(outfname, read_data=False)
+                full_uv.write_uvh5_part(outfname, uvd.data_array,
+                                        uvd.flag_array, uvd.nsample_array,
+                                        **partial_read)
             else:
+                # write full dataset
                 uvd.write_uvh5(outfname, clobber=True)
+        else:
+            print("file exists, skipping...")
 
     return uvd
 
