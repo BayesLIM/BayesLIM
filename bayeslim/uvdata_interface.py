@@ -144,7 +144,8 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
     loc = uvd.telescope_location_lat_lon_alt_degrees
     tele = telescope_model.TelescopeModel((loc[1], loc[0], loc[2]),
                                           device=sky.device)
-    arr = telescope_model.ArrayModel(antpos, freqs, device=sky.device, **array_kwargs)
+    arr = telescope_model.ArrayModel(antpos, freqs, device=sky.device,
+                                     cache_s=False, cache_f=False, **array_kwargs)
     if ant2beam is None:
         ant2beam = {ant: 0 for ant in arr.ants}
 

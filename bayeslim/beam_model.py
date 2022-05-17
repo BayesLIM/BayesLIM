@@ -385,23 +385,26 @@ class PixelBeam(utils.Module):
             Kind of interpolation if freq_mode is channel
             see scipy.interp1d for options
         """
-        if self.R.freq_mode == 'channel':
-            # interpolate params across frequency
-            freq_ax = 3 if not hasattr(self.R, 'freq_ax') else self.R.freq_ax
-            interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
-                                          utils.tensor2numpy(self.params),
-                                          axis=freq_ax, kind=kind, fill_value='extrapolate')
-            params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
-                                     dtype=self.params.dtype)
-            if self.params.requires_grad:
-                self.params = torch.nn.Parameter(params)
-            else:
-                self.params = params
-            self.R.params = self.params
-            self.freqs = freqs
+        # only interpolate if new freqs don't match current freqs to 1 Hz
+        if len(freqs) != len(self.freqs) or not np.isclose(self.freqs, freqs, atol=1.0).all():
+            freqs = torch.as_tensor(freqs)
+            if self.R.freq_mode == 'channel':
+                # interpolate params across frequency
+                freq_ax = 3 if not hasattr(self.R, 'freq_ax') else self.R.freq_ax
+                interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
+                                              utils.tensor2numpy(self.params),
+                                              axis=freq_ax, kind=kind, fill_value='extrapolate')
+                params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
+                                         dtype=self.params.dtype)
+                if self.params.requires_grad:
+                    self.params = torch.nn.Parameter(params)
+                else:
+                    self.params = params
+                self.R.params = self.params
+                self.freqs = freqs
 
-        self.R.freqs = freqs
-        self.R._setup()
+            self.R.freqs = freqs
+            self.R._setup()
 
 
 class PixelResponse(utils.PixInterp):

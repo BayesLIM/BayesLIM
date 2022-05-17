@@ -103,22 +103,24 @@ class SkyBase(utils.Module):
             Kind of interpolation if freq_mode is channel
             see scipy.interp1d for options
         """
-        freqs = torch.as_tensor(freqs)
-        if self.R.freq_mode == 'channel':
-            # interpolate params across frequency
-            interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
-                                          utils.tensor2numpy(self.params),
-                                          axis=2, kind=kind, fill_value='extrapolate')
-            params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
-                                     dtype=self.params.dtype)
-            if self.params.requires_grad:
-                self.params = torch.nn.Parameter(params)
-            else:
-                self.params = params
+        # only interpolate if new freqs don't match current freqs to 1 Hz
+        if len(freqs) != len(self.freqs) or not np.isclose(self.freqs, freqs, atol=1.0).all():
+            freqs = torch.as_tensor(freqs)
+            if self.R.freq_mode == 'channel':
+                # interpolate params across frequency
+                interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
+                                              utils.tensor2numpy(self.params),
+                                              axis=2, kind=kind, fill_value='extrapolate')
+                params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
+                                         dtype=self.params.dtype)
+                if self.params.requires_grad:
+                    self.params = torch.nn.Parameter(params)
+                else:
+                    self.params = params
 
-        self.freqs = freqs.to(self.device)
-        self.R.freqs = freqs.to(self.device)
-        self.R._setup()
+            self.freqs = freqs.to(self.device)
+            self.R.freqs = freqs.to(self.device)
+            self.R._setup()
 
 
 class DefaultResponse:
