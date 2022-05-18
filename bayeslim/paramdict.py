@@ -32,6 +32,20 @@ class ParamDict:
     def items(self):
         return list(self.params.items())
 
+    def push(self, device):
+        """
+        Push params to device. Can feed
+        device as a dictionary which will push
+        params to different devices
+        """
+        if isinstance(device, dict):
+            for k in device:
+                self.params[k] = self.params[k].to(device[k])
+        else:
+            for k in self.params:
+                self.params[k] = self.params[k].to(device)
+        self._setup()
+
     def __mul__(self, other):
         if isinstance(other, ParamDict):
             return ParamDict({k: self.params[k] * other.params[k] for k in self.keys()})
@@ -129,11 +143,11 @@ class ParamDict:
         return (p for p in self.params)
 
     def clone(self):
-        """clone object"""
+        """detach and clone object"""
         return ParamDict({k: self.params[k].detach().clone() for k in self.keys()})
 
     def copy(self):
-        """copy object"""
+        """copy object. preserves requires_grad"""
         out = ParamDict({})
         for k in self.keys():
             p = self.params[k]
@@ -144,8 +158,15 @@ class ParamDict:
         return out
 
     def detach(self):
-        """detach object"""
+        """detach object (don't clone)"""
         return ParamDict({k: self.params[k].detach() for k in self.keys()})
+
+    def ones(self):
+        """Return a cloned object filled with ones"""
+        pdict = self.clone()
+        for k in pdict:
+            pdict[k][:] = 1.0
+        return pdict
 
     def update(self, other):
         for key in other:

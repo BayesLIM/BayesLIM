@@ -526,10 +526,6 @@ class LogProb(utils.Module):
                                      clobber_param=True, no_grad=False)
 
     @property
-    def named_params(self):
-        return [k[0] for k in self.named_parameters()]
-
-    @property
     def Nbatch(self):
         """get total number of batches in model"""
         if hasattr(self.model, 'Nbatch'):

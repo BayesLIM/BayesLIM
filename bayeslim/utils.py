@@ -1949,6 +1949,10 @@ class Module(torch.nn.Module):
     def name(self):
         return self._name if self._name is not None else self.__class__.__name__
 
+    @property
+    def named_params(self):
+        return [k[0] for k in self.named_parameters()]
+
     def forward(self, inp=None, prior_cache=None, **kwargs):
         """
         The forward operator. Should have a kwarg for
@@ -2103,17 +2107,15 @@ class Sequential(Module):
     A minimal mirror of torch.nn.Sequential with added features.
     Inherits from bayeslim.utils.Module
 
-    Instantiation takes a parameter dictionary as
-    input and updates model before evaluation. e.g.
-
     .. code-block:: python
 
         S = Sequential(OrderedDict(model1=model1, model2=model2))
 
     where evaluation order is S(params) -> model2( model1( params ) )
 
-    Note that the keys of the parameter dictionary
-    must conform to nn.Module.named_parameters() syntax.
+    The forward call takes a parameter dictionary that updates
+    the model before evaluation, which must conform to 
+    torch.nn.Module.named_parameters() styel
     """
     def __init__(self, models):
         """
