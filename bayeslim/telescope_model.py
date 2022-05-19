@@ -61,7 +61,7 @@ class TelescopeModel:
         if isinstance(dec, torch.Tensor):
             dec = dec.numpy()
 
-        return hash(time, ra[0], dec[0], ra[-1], dec[-1])
+        return hash((time, ra[0], dec[0], ra[-1], dec[-1]))
 
     def _clear_cache(self, key=None):
         """Clear conversion cache, or just a single
