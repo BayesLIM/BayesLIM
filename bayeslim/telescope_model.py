@@ -38,28 +38,30 @@ class TelescopeModel:
         self.conv_cache = {}
         self.device = device
 
-    def hash(self, *args):
+    def hash(self, time, ra, dec):
         """
-        Create a hash from a unique set of arguments,
-        for example, observation time and ra/dec arrays.
+        Create a hash from time, ra, and dec arrays
 
         Parameters
         ----------
-        args : tuple
-            unique arguments to hash
-
-        e.g. (time, angs)
         time : float
-            observation julian date (e.g. 2458101.245501)
-        angs : tuple
-            First (ra, dec) of array.
+            Observation time in Julian Date
+        ra : tensor or ndarray
+            right ascension in degrees [J2000]
+        dec : tensor or ndarray
+            declination in degrees [J2000]
 
         Returns
         -------
         hash : int
             A unique integer hash
         """
-        return hash(args)
+        if isinstance(ra, torch.Tensor):
+            ra = ra.numpy()
+        if isinstance(dec, torch.Tensor):
+            dec = dec.numpy()
+
+        return hash(time, ra[0], dec[0], ra[-1], dec[-1])
 
     def _clear_cache(self, key=None):
         """Clear conversion cache, or just a single
@@ -101,7 +103,7 @@ class TelescopeModel:
             oriented along East-North-Up frame
         """
         # create hash
-        h = self.hash(time, ra[0], dec[0], ra[-1], dec[-1])
+        h = self.hash(time, ra, dec)
 
         # pull from cache
         if h in self.conv_cache:

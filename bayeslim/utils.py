@@ -2359,9 +2359,9 @@ def ang_hash(zen):
     -------
     hash object
     """
-    return hash((float(tensor2numpy(zen[0])),
-                 float(tensor2numpy(zen[-1])),
-                 len(zen)))
+    if isinstance(zen, torch.Tensor):
+        zen = zen.numpy()
+    return hash((zen[0], zen[-1], len(zen)))
 
 
 def push(tensor, device, parameter=False):
