@@ -10,12 +10,6 @@ from . import telescope_model, calibration, beam_model, sky_model, utils, io
 from .utils import _float, _cfloat
 from .dataset import VisData
 
-try:
-    from memory_profiler import memory_usage
-    import_memprof = True
-except ModuleNotFoundError:
-    import_memprof = False
-
 
 class RIME(utils.Module):
     """
@@ -302,8 +296,6 @@ class RIME(utils.Module):
 
                 # print info
                 message = "{}/{} times for {}/{} sky model | {} elapsed"
-                if import_memprof:
-                    message = "{} | {:.3e} MB".format(message, memory_usage()[0])
                 message = message.format(j+1, len(self.sim_times), i+1, len(sky_components),
                                          elapsed_time(start))
                 log(message, verbose=self.verbose, style=1)
