@@ -891,17 +891,17 @@ class VisData(TensorData):
         Run checks on data
         """
         from bayeslim import telescope_model
-        if self.telescope:
+        if self.telescope is not None:
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        if self.antpos:
+        if self.antpos is not None:
             assert isinstance(self.antpos, dict)
-        if self.data:
+        if self.data is not None:
             assert isinstance(self.data, torch.Tensor)
             assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
-        if self.flags:
+        if self.flags is not None:
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
-        if self.cov:
+        if self.cov is not None:
             assert self.cov_axis is not None, "full data-sized covariance not implemented"
             if self.cov_axis == 'bl':
                 assert self.cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,

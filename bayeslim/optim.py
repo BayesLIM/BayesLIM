@@ -789,6 +789,7 @@ class LogProb(utils.Module):
             where N = value. "dim" is optional kwarg.
             This can be thought of as a form of binary
             isolation.
+        "mult" : multiply gradient by value
 
         Parameters
         ----------
