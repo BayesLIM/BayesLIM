@@ -52,7 +52,7 @@ class PixelBeam(utils.Module):
     def __init__(self, params, freqs, ant2beam=None, response=None,
                  response_args=(), response_kwargs={},
                  parameter=True, pol=None, powerbeam=True,
-                 fov=180, name=None, p0=None):
+                 fov=180, name=None, p0=None, offset=None):
         """
         A generic beam model evaluated on the pixelized sky
 
@@ -119,6 +119,9 @@ class PixelBeam(utils.Module):
             params before passing through the response function.
             This recasts params as a delta perturbation from p0.
             Must have same shape as params.
+        offset : tuple, optional
+            A small-angle pointing offset in (theta_x, theta_y)
+            where theta_x is a rotation about x-hat vector [rad]
         """
         super().__init__(name=name)
         self.params = params
@@ -149,6 +152,10 @@ class PixelBeam(utils.Module):
         if ant2beam is None:
             assert params.shape[2] == 1, "only 1 model for default ant2beam"
             self.ant2beam = utils.SimpleIndex()
+
+        # set pointing offset
+        offset = (0, 0) if offset is None else offset
+        self.set_pointing_offset(*offset)
 
         # construct _args for str repr
         self._args = dict(powerbeam=powerbeam, fov=fov, Npol=self.Npol, Nmodel=self.Nmodel)
@@ -197,12 +204,27 @@ class PixelBeam(utils.Module):
             cut = slice(None)
         zen, az = zen[cut], az[cut]
 
-        # get beam
+        # add prior model for params
         if self.p0 is None:
             p = self.params
         else:
             p = self.params + self.p0
-        beam = self.R(p, zen, az, self.freqs)
+
+        # introduce pointing offset if needed
+        theta_x = self.theta_x if hasattr(self, 'theta_x') else 0
+        theta_y = self.theta_y if hasattr(self, 'theta_y') else 0
+        if theta_x > 0 or theta_y > 0:
+            new_zen, new_az = pointing_offset(utils.tensor2numpy(zen)*np.pi/180,
+                                              utils.tensor2numpy(az)*np.pi/180,
+                                              theta_x, theta_y)
+            if isinstance(zen, torch.Tensor):
+                new_zen = torch.as_tensor(new_zen) * 180 / np.pi
+                new_az = torch.as_tensor(new_az) * 180 / np.pi
+        else:
+            new_zen, new_az = zen, az
+
+        # evaluate the beam!
+        beam = self.R(p, new_zen, new_az, self.freqs)
 
         # evaluate prior
         self.eval_prior(prior_cache)
@@ -405,6 +427,29 @@ class PixelBeam(utils.Module):
 
             self.R.freqs = freqs
             self.R._setup()
+
+    def set_pointing_offset(self, theta_x=0, theta_y=0):
+        """
+        Set a small-angle pointing offset in the beam
+        (non-differentiable). Note that the Euler rotations
+        commute under small angle approximation.
+        This offset is introduced when calling self.gen_beam(...)
+
+        Note: if you are using PixInterp subclass for the
+        PixelResponse class, you will want to model
+        the beam out to a zenith angle that is buffered
+        beyond fov/2 by theta_x & theta_y, such that the interpolation
+        routines don't suffer from extrapolation at the fov boundaries.
+
+        Parameters
+        ----------
+        theta_x : float, optional
+            Angle to rotate beam about x-hat vector [rad]
+        theta_y : float, optional
+            Angle to rotate beam about y-hat vector [rad]
+        """
+        self.theta_x = theta_x
+        self.theta_y = theta_y
 
 
 class PixelResponse(utils.PixInterp):
@@ -1230,6 +1275,40 @@ def R_eq_to_xyz(alpha, delta):
                      ])
 
 
+def rotation(beta, axis):
+    """
+    Rotation matrix in xyz by angle beta
+    about hat(y) (rotate in the x-z plane)
+    or hat(x) (rotate in the y-z plane)
+
+    Parameters
+    ----------
+    beta : float
+        Angle [radians]
+    axis : str
+        Axis about which to rotate
+
+    Returns
+    -------
+    R : ndarray
+        3x3 rotation matrix
+    """
+    if axis.lower() == 'x':
+        R = np.array([[1.0, 0, 0],
+                     [0, np.cos(beta), -np.sin(beta)],
+                     [0, np.sin(beta), np.cos(beta)]])
+
+    elif axis.lower() == 'y':
+        R = np.array([[np.cos(beta), 0, np.sin(beta)],
+                      [0, 1.0, 0],
+                      [-np.sin(beta), 0, np.cos(beta)]])
+
+    else:
+        raise ValueError
+
+    return R
+
+
 def R_beta(beta):
     """
     Rotation matrix from xyz to XYZ by angle beta
@@ -1245,10 +1324,7 @@ def R_beta(beta):
     R_beta : ndarray
         3x3 rotation matrix
     """
-    # define the transformation from xyz to XYZ
-    return np.array([[np.cos(beta), 0, np.sin(beta)],
-                     [0, 1, 0],
-                     [-np.sin(beta), 0, np.cos(beta)]])
+    return rotation(beta, 'y')
 
 
 def R_XYZ_to_top(phi, theta):
@@ -1314,3 +1390,54 @@ def R_chi(alpha, delta, beta):
     R_chi = np.einsum('ijk,jl,lmk->imk', R_top, R_b, R_eq)
 
     return R_chi
+
+
+def pointing_offset(theta, phi, theta_x=0, theta_y=0):
+    """
+    Introduce a small-angle pointing offset
+    onto zenith and azimuth arrays
+
+    Parameters
+    ----------
+    theta : ndarray
+        Zenith angle [radians]
+    phi : ndarray
+        Azimuth angle [radians]
+    theta_x : float, optional
+        Small rotation about the x-hat vector [rad]
+    theta_y : float, optional
+        Small rotation about the y-hat vector [rad]
+
+    Returns
+    -------
+    new_theta, new_phi
+    """
+    # get XYZ coordinates on unit-sphere
+    x = np.sin(theta) * np.cos(phi)
+    y = np.sin(theta) * np.sin(phi)
+    z = np.cos(theta)
+    r = np.array([x, y, z])
+
+    # perform rotations
+    if theta_x > 0:
+        r = rotation(theta_x, 'x') @ r
+    if theta_y > 0:
+        r = rotation(theta_y, 'y') @ r
+
+    # convert back to spherical coordinates
+    new_theta = np.arccos(r[2])
+    xzero = np.isclose(r[0], 0)
+    yzero = np.isclose(r[1], 0)
+    xneg = r[0] < 0
+    ypos = r[1] > 0
+    new_phi = np.zeros_like(new_theta)
+    new_phi[~xzero] = np.arctan(r[1][~xzero] / r[0][~xzero])
+    new_phi[xneg & ypos] += np.pi
+    new_phi[xneg & ~ypos] -= np.pi
+    new_phi[(xzero & yzero)] = 0.0
+    new_phi[(xzero & ypos)] = np.pi/2
+    new_phi[(xzero & ~ypos)] = -np.pi/2
+    new_phi = new_phi % (2 * np.pi)
+
+    return new_theta, new_phi
+

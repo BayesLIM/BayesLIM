@@ -566,6 +566,8 @@ class PixelSkyResponse:
             if 'Ylm' in self.spatial_kwargs:
                 # assign Ylm to self if present, then del from dict for memory footprint
                 self.Ylm = self.spatial_kwargs['Ylm']
+                self.l, self.m = self.spatial_kwargs['l'], self.spatial_kwargs['m']
+                self.theta, self.phi = self.spatial_kwargs['theta'], self.spatial_kwargs['phi']
                 del self.spatial_kwargs['Ylm']
             elif not hasattr(self, 'Ylm'):
                 # if Ylm is not already defined and not in dict, create it
