@@ -212,7 +212,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         if parameter is False:
             # build redundant info
-            (self.reds, self.redvec, self.bl2red, self.bls, self.redlens, self.redangs,
+            (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
              self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
 
     def get_antpos(self, ant):
@@ -396,6 +396,88 @@ class ArrayModel(utils.PixInterp, utils.Module):
         for k in self.cache:
             self.cache[k] = self.cache[k].to(device)
 
+    def get_bls(self, uniq_bls=False, keep_autos=True,
+                min_len=None, max_len=None,
+                min_EW=None, max_EW=None, min_NS=None, max_NS=None,
+                min_deg=None, max_deg=None):
+        """
+        Query all baselines associated with this array. Optionally
+        select on baseline vector
+
+        Parameters
+        ----------
+        uniq_bls : bool, optional
+            If True, return only the first baseline
+            in each redundant group. Otherwise return
+            all physical baselines (default)
+        keep_autos : bool, optional
+            If True (default) return auto-correlations.
+            Otherwise remove them.
+        min_len : float, optional
+            Sets minimum baseline length [m]
+        max_len : float, Optional
+            Sets maximum baseline length [m]
+        min_EW : float, optional
+            Sets min East-West length [m]
+        max_EW : float, optional
+            Sets max East-West length [m]
+        min_NS : float, optional
+            Sets min North-South length [m]
+        max_NS : float, optional
+            Sets max North-South length [m]
+        min_deg : float, optional
+            Sets min baseline angle (north of east) [deg]
+        max_deg : float, optional
+            Sets max baseline angle (north of east) [deg]
+
+        Returns
+        -------
+        list
+        """
+        # get lists
+        reds = copy.deepcopy(self.reds)
+        redlens = copy.deepcopy(self.redlens)
+        redangs = copy.deepcopy(self.redangs)
+        redvecs = copy.deepcopy(self.redvecs)
+
+        # pop autos
+        if not keep_autos:
+            match = np.isclose(redlens, 0, atol=self.redtol)
+            assert match.any()
+            i = np.where(match)[0][0]
+            reds.pop(i)
+            redlens.pop(i)
+            redangs.pop(i)
+            redvecs.pop(i)
+
+        # baseline cuts
+        keep = np.ones(len(reds), dtype=bool)
+        if min_len is not None:
+            keep = keep & (np.array(redlens) >= min_len)
+        if max_len is not None:
+            keep = keep & (np.array(redlens) <= max_len)
+        if min_EW is not None:
+            keep = keep & (np.array(redvecs)[:, 0] >= min_EW)
+        if max_EW is not None:
+            keep = keep & (np.array(redvecs)[:, 0] <= max_EW)
+        if min_NS is not None:
+            keep = keep & (np.array(redvecs)[:, 1] >= min_NS)
+        if max_NS is not None:
+            keep = keep & (np.array(redvecs)[:, 1] <= max_NS)
+        if min_deg is not None:
+            keep = keep & (np.array(redangs) >= min_deg)
+        if max_deg is not None:
+            keep = keep & (np.array(redangs) <= max_deg)
+
+        keep = np.where(keep)[0]
+        reds = [reds[i] for i in keep]
+
+        # keep only uniq baselines
+        if uniq_bls:
+            reds = [red[:1] for red in reds]
+
+        return utils.flatten(reds)
+
 
 def eq2top(location, time, ra, dec):
     """
@@ -545,7 +627,7 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
     -------
     reds : list
         Nested set of redundant baseline lists
-    redvec : list
+    redvecs : list
         Baseline vector for each redundant group
     bl2red : dict
         Maps baseline tuple to redundant group index

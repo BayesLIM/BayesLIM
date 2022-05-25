@@ -330,10 +330,14 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
         Observation times (julian date)
     freqs : tensor or str, optional
         Frequency bins [Hz]
-    sim_bls ; list or str, optional
-        Baseline (ant-pair tuples) to simulate
+    sim_bls ; list or str or dict, optional
+        Baseline (ant-pair tuples) to simulate.
+        This can be a list of tuples, a filepath to a pkl file,
+        or a dict of kwargs to pass to array.get_bls()
     data_bls : list or str, optional
-        Baselines of the visibility, including redundancies
+        Baseline (ant-pair tuples) to simulate.
+        This can be a list of tuples, a filepath to a pkl file,
+        or a dict of kwargs to pass to array.get_bls()
     device : str, optional
         Device of object
     pdict : ParamDict or str, optional
@@ -346,7 +350,15 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
     if isinstance(modfile, str):
         return read_pkl(modfile, device=device)
 
-    # setup basics
+    # build array
+    if isinstance(array, telescope_model.ArrayModel):
+        pass
+    else:
+        if isinstance(array, str):
+            array = dict(modfile=array)
+        array = build_array(**array)
+
+    # setup metadata
     if isinstance(times, str):
         times = read_pkl(times)
     elif isinstance(times, list):
@@ -359,6 +371,9 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
 
     if isinstance(sim_bls, str):
         sim_bls = read_pkl(sim_bls)
+    elif isinstance(sim_bls, dict):
+        sim_bls = array.get_bls(**sim_bls)
+
     if sim_bls is not None:
         if np.asarray(sim_bls).ndim > 2:
             # this is a list of sublists
@@ -369,6 +384,9 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
 
     if isinstance(data_bls, str):
         data_bls = read_pkl(data_bls)
+    elif isinstance(sim_bls, dict):
+        sim_bls = array.get_bls(**sim_bls)
+
     if data_bls is not None:
         data_bls = [(int(bl[0]), int(bl[1])) for bl in data_bls]
 
@@ -387,14 +405,6 @@ def build_rime(modfile=None, sky=None, beam=None, array=None,
         if isinstance(beam, str):
             beam = dict(modfile=beam)
         beam = build_beam(**beam)
-
-    # build array
-    if isinstance(array, telescope_model.ArrayModel):
-        pass
-    else:
-        if isinstance(array, str):
-            array = dict(modfile=array)
-        array = build_array(**array)
 
     # build telescope
     if isinstance(telescope, telescope_model.TelescopeModel):

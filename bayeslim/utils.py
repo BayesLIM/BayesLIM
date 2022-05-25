@@ -719,9 +719,9 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
              colat_min=None, colat_max=None, az_min=None, az_max=None,
              device=None, discard_sectoral=False, discard_mono=False,
-             read_data=True):
+             read_data=True, to_real=False):
     """
-    Load an hdf5 file with Ylm and ang arrays
+    Load an hdf5 file with Ylm tensors and metadata
 
     Parameters
     ----------
@@ -758,6 +758,9 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     read_data : bool, optional
         If True, read and return Ylm
         else return None for Ylm
+    to_real : bool, optional
+        If Ylm is complex, cast it to real and
+        update alm_mult metadata
 
     Returns
     -------
@@ -812,8 +815,8 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         else:
             Ylm = None
 
-        info['alm_mult'] = alm_mult
-        info['norm'] = norm
+        info['alm_mult'] = torch.as_tensor(alm_mult)
+        info['norm'] = torch.as_tensor(norm)
 
     # truncate sky
     if colat_min is not None:
@@ -848,6 +851,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         angs = colat, az
         if read_data:
             Ylm = Ylm[:, keep]
+
+    if to_real and torch.is_complex(Ylm):
+        Ylm = Ylm.real
+        info['alm_mult'][:] = 1.0
 
     if read_data:
         Ylm = torch.tensor(Ylm, device=device)
