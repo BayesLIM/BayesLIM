@@ -490,6 +490,7 @@ class PixelSkyResponse:
             theta, phi : array, holds co-latitude and azimuth
                 angles [deg] of pixel model, used for generating
                 Ylm in alm mode
+            alm_mult : array, (Ncoeff,)
             Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
                 matrix. If None, will compute it given l, m
         freq_kwargs : dict, optional
@@ -514,23 +515,20 @@ class PixelSkyResponse:
         self.freq_mode = freq_mode
         self.device = device
         self.transform_order = transform_order
-        self.spatial_kwargs = spatial_kwargs
-        self.freq_kwargs = freq_kwargs
         if cosmo is None:
             cosmo = cosmology.Cosmology()
         self.cosmo = cosmo
         self.log = log
 
-        self._setup()
+        self._setup(spatial_kwargs=spatial_kwargs, freq_kwargs=freq_kwargs)
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, spatial_mode=self.spatial_mode)
 
-    def _setup(self):
+    def _setup(self, spatial_kwargs={}, freq_kwargs={}):
         # freq setup
-        self.A, self.gln = None, None
         if self.freq_mode == 'linear':
-            freq_kwargs = copy.deepcopy(self.freq_kwargs)
+            freq_kwargs = copy.deepcopy(freq_kwargs)
             assert 'linear_mode' in freq_kwargs, "must specify linear_mode"
             linear_mode = freq_kwargs.pop('linear_mode')
             dtype = utils._cfloat() if self.comp_params else utils._float()
@@ -544,44 +542,39 @@ class PixelSkyResponse:
             self.z = self.cosmo.f2z(utils.tensor2numpy(self.freqs))
             self.r = self.cosmo.comoving_distance(self.z).value
             self.dr = self.r.max() - self.r.min()
-            if 'gln' in self.freq_kwargs and 'kbins' in self.freq_kwargs:
-                self.gln = self.freq_kwargs['gln']
-                self.kbins = self.freq_kwargs['kbins']
+            if 'gln' in freq_kwargs and 'kbins' in freq_kwargs:
+                self.gln = freq_kwargs['gln']
+                self.kbins = freq_kwargs['kbins']
             else:
-                gln, kbins = utils.gen_bessel2freq(self.spatial_kwargs['l'],
+                gln, kbins = utils.gen_bessel2freq(spatial_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
-                                                  kmax=self.freq_kwargs.get('kmax'),
-                                                  decimate=self.freq_kwargs.get('decimate', True),
-                                                  dk_factor=self.freq_kwargs.get('dk_factor', 1e-1),
+                                                  kmax=freq_kwargs.get('kmax'),
+                                                  decimate=freq_kwargs.get('decimate', True),
+                                                  dk_factor=freq_kwargs.get('dk_factor', 1e-1),
                                                   device=self.device,
-                                                  method=self.freq_kwargs.get('radial_method', 'shell'),
-                                                  Nproc=self.freq_kwargs.get('Nproc', None),
-                                                  Ntask=self.freq_kwargs.get('Ntask', 10),
-                                                  renorm=self.freq_kwargs.get('renorm', False))
+                                                  method=freq_kwargs.get('radial_method', 'shell'),
+                                                  Nproc=freq_kwargs.get('Nproc', None),
+                                                  Ntask=freq_kwargs.get('Ntask', 10),
+                                                  renorm=freq_kwargs.get('renorm', False))
                 self.gln = gln
                 self.kbins = kbins
 
         # spatial setup
         if self.spatial_mode == 'alm':
-            if 'Ylm' in self.spatial_kwargs:
+            if 'Ylm' in spatial_kwargs:
                 # assign Ylm to self if present, then del from dict for memory footprint
-                self.Ylm = self.spatial_kwargs['Ylm']
-                self.l, self.m = self.spatial_kwargs['l'], self.spatial_kwargs['m']
-                self.theta, self.phi = self.spatial_kwargs['theta'], self.spatial_kwargs['phi']
-                del self.spatial_kwargs['Ylm']
+                self.Ylm = spatial_kwargs['Ylm']
+                self.alm_mult = spatial_kwargs['alm_mult']
             elif not hasattr(self, 'Ylm'):
                 # if Ylm is not already defined and not in dict, create it
                 # warning: this can be *VERY* slow for large ang_pix and l,m arrays
-                self.Ylm = utils.gen_sph2pix(self.spatial_kwargs['theta'] * D2R,
-                                             self.spatial_kwargs['phi'] * D2R,
-                                             self.spatial_kwargs['l'],
-                                             self.spatial_kwargs['m'],
-                                             device=self.device, real_field=True)
-            self.alm_mult = torch.ones(len(self.spatial_kwargs['m']), dtype=utils._cfloat(), device=self.device)
-            if np.all(self.spatial_kwargs['m'] >= 0):
-                # this accounts for double counting when using only positive m modes
-                # i.e. when projecting to a real-valued field
-                self.alm_mult[self.spatial_kwargs['m'] > 0] = 2.0
+                self.Ylm, _, self.alm_mult = utils.gen_sph2pix(spatial_kwargs['theta'] * D2R,
+                                             spatial_kwargs['phi'] * D2R,
+                                             spatial_kwargs['l'],
+                                             spatial_kwargs['m'],
+                                             device=self.device)
+            self.l, self.m = spatial_kwargs['l'], spatial_kwargs['m']
+            self.theta, self.phi = spatial_kwargs['theta'], spatial_kwargs['phi']
 
     def spatial_transform(self, params):
         """
