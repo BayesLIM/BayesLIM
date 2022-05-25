@@ -90,7 +90,7 @@ def read_pkl(fname, pdict=None, device=None):
         with open(fname, 'rb') as f:
             model = pickle.load(f)
     else:
-        mode = fname
+        model = fname
 
     # load and apply pdict
     if pdict is not None:
