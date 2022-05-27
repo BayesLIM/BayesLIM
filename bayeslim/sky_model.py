@@ -283,7 +283,10 @@ class PointSkyResponse:
             linear - linear (e.g. polynomial) basis
             powerlaw - amplitude and powerlaw basis
         log : bool, optional
-            Treat parameter as log(amplitude)
+            Treat params as log(amplitude).
+            For channel and linear freq modes, this means
+            we take exp(R(params)).
+            For powerlaw mode we only take exp(params[...,0,:])
         device : str, optional
             Device of point source params
         freq_kwargs : dict, optional
@@ -330,9 +333,12 @@ class PointSkyResponse:
             params = (self.A @ params.moveaxis(-2, 0)).moveaxis(0, -2)
 
         elif self.freq_mode == 'powerlaw':
-            params = params[..., 0:1, :] * (self.freqs[None, None, :, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
+            amp = params[..., 0:1, :]
+            if self.log:
+                amp = torch.exp(amp)
+            params = amp * (self.freqs[None, None, :, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
 
-        if self.log:
+        if self.log and self.freq_mode in ['channel', 'linear']:
             params = torch.exp(params)
 
         return params
