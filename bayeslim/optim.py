@@ -490,10 +490,17 @@ class LogProb(utils.Module):
             # this sends values back to leaf tensors making them leaf views
             self.send_main_params()
 
-    def collect_main_params(self):
+    def collect_main_params(self, inplace=True):
         """
         Take existing value of self.main_params and using
         _main_indices, ..., collect values and assign as self.main_params
+
+        Parameters
+        ----------
+        inplace : bool, optional
+            If True (default) collect sub-params
+            and update self.main_params inplace. Otherwise
+            collect sub-params and return tensor.
         """
         if self.main_params is not None:
             params = torch.zeros_like(self.main_params)
@@ -504,26 +511,48 @@ class LogProb(utils.Module):
                 else:
                     params[indices] = self.model[k][idx].detach().to('cpu').to(utils._float()).ravel()
 
+            if not inplace:
+                return params
+
             self.main_params = torch.nn.Parameter(params)
 
             # this sends main_params back to leaf tensors, making them leaf views
             self.send_main_params()
 
-    def send_main_params(self):
+    def send_main_params(self, inplace=True, main_params=None):
         """
         Take existing value of self.main_params and using
         _main_indices, _main_shapes, _main_types,_main_index,
-        and send its values to the relevant submodule params.
+        send its values to the relevant submodule params.
+
+        Parameters
+        ----------
+        inplace : bool, optional
+            If True (default) send main_params to sub-params
+            on the module. Otherwise return the re-shaped tensors
+            in a dictionary.
+        main_params : tensor, optional
+            Use this main_params tensor instead of self.main_params
+            when sending to sub-params.
         """
-        if self.main_params is not None:
+        main_params = main_params if main_params is not None else self.main_params
+        if main_params is not None:
+            if not inplace:
+                out = {}
             for param in self._main_indices:
                 # get shaped parameter on device
-                value = self.main_params[self._main_indices[param]]
+                value = main_params[self._main_indices[param]]
                 value = value.reshape(self._main_shapes[param])
                 value = value.to(self._main_devices[param])
                 idx = self._main_index[param]
-                utils.set_model_attr(self.model, param, value, idx=idx,
-                                     clobber_param=True, no_grad=False)
+                if not inplace:
+                    out[param] = self.model[param].detach().clone()
+                    out[param][idx] = value
+                else:
+                    utils.set_model_attr(self.model, param, value, idx=idx,
+                                         clobber_param=True, no_grad=False)
+            if not inplace:
+                return out
 
     @property
     def Nbatch(self):
