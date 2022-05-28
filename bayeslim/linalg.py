@@ -397,7 +397,8 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         Dimension in y to multiply into A. Default is 0th axis.
     Ninv : tensor, optional
          Inverse of noise matrix used for weighting
-         of shape (N, N), or just its diagonal of shape (N,).
+         of shape (N, N), or just its diagonal of shape (N,),
+         where N = Nsamples.
          Default is identity matrix.
     norm : str, optional
         Normalization type, [None, 'inv', 'diag']
@@ -414,43 +415,47 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
 
     Returns
     -------
-    x : tensor
+    xhat : tensor
         estimated parameters
     D : tensor
         derived normalization matrix, depending
         on choice of pinv and eps
     """
-    # Note that we actually solve the transpose of x
-    # and then re-transpose. 
-    # i.e. x = y.T @ Ninv @ A @ (A.T @ Ninv A)^{-1}
-    # this is for broadcasting when y is multi-dim
+    assert y.ndim <= 8
+    # sum over 'i' for y tensor
+    A_ein = 'ij'
+    y_ein = ['a','b','c','d','e','f','g','h'][:y.ndim]
+    y_ein[dim] = 'i'
+    y_ein = ''.join(y_ein)
 
-    # move y axis
-    y = y.moveaxis(dim, -1)
-
-    # get un-normalized estimate of x
+    # weight the data vector by inverse covariance
     if Ninv is not None:
         if Ninv.ndim == 2:
             # Ninv is a matrix
-            y = y @ Ninv
+            y = torch.einsum("ki,{}->{}".format(y_ein, y_ein.replace('i', 'k'),
+                             Ninv, y))
         else:
             # Ninv is diagonal
-            y = y * Ninv
+            shape = [1 for i in range(y.ndim)]
+            shape[dim] = len(Ninv)
+            y = Ninv.reshape(shape) * y
 
-    x = y @ A.conj()
+    # get A.T y: un-normalized hat(x)
+    xhat = torch.einsum("{},{}->{}".format(A_ein, y_ein, y_ein.replace('i', 'j')),
+                        A.conj(), y)
 
-    # get normalization matrix
+    # compute normalization matrix: (A.T Ninv A)^-1, multiply it into xhat
     if norm == 'inv':
-        # invert to get D
+        # full invert to get D
         if Ninv is None:
-            Dinv = A.T.conj() @ A
+            Dinv = torch.einsum("ij,ik->jk", A.conj(), A)
         else:
             if Ninv.ndim == 2:
-                # Ninv is matrix
-                Dinv = A.T.conj() @ Ninv @ A
+                # Ninv is a matrix
+                Dinv = torch.einsum("ij,il,lk->jk", A.conj(), Ninv, A)
             else:
                 # Ninv is diagonal
-                Dinv = (A.T.conj() * Ninv) @ A
+                Dinv = torch.einsum("ij,i,ik->jk", A.conj(), Ninv, A)
         # add regularization if desired
         if eps > 0:
             Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
@@ -461,8 +466,8 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
             D = torch.pinverse(Dinv, rcond=rcond)
         else:
             D = torch.inverse(Dinv)
-        x = x @ D.to(x.dtype)
-
+        xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
+                            D.to(xhat.dtype), xhat)
     elif norm == 'diag':
         # just invert diagonal to get D
         if Ninv is None:
@@ -470,20 +475,80 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         else:
             if Ninv.ndim == 2:
                 # Ninv is a matrix
-                Dinv = torch.diag(A.T.conj() @ Ninv @ A)
+                Dinv = torch.einsum("ij,il,lk->jk", A.conj(), Ninv, A)
+                Dinv = torch.diag(Dinv)
             else:
                 # Ninv is diagonal
-                Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
+                Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0)
         if torch.is_complex(Dinv):
             Dinv = Dinv.real
         D = 1 / Dinv
-        x = x * D.to(x.dtype)
-
+        shape = [1 for i in range(xhat.ndim)]
+        shape[dim] = len(D)
+        xhat = D.reshape(shape) * xhat
     else:
-        D = np.eye(A.shape[1])
+        # no normalization
+        D = torch.ones(A.shape[1])
 
-    # return axis to dim
-    x = x.moveaxis(-1, dim)
+    ### LEGACY
+    # Note that we actually solve the transpose of x
+    # and then re-transpose. 
+    # i.e. x = y.T @ Ninv @ A @ (A.T @ Ninv A)^{-1}
+    # this is for broadcasting when y is multi-dim
+    # move y axis
+    #y = y.moveaxis(dim, -1)
+    # get un-normalized estimate of x
+    #if Ninv is not None:
+    #    if Ninv.ndim == 2:
+    #        # Ninv is a matrix
+    #        y = y @ Ninv
+    #    else:
+    #        # Ninv is diagonal
+    #        y = y * Ninv
+    #x = y @ A.conj()
+    # get normalization matrix
+    #if norm == 'inv':
+    #    # invert to get D
+    #    if Ninv is None:
+    #        Dinv = A.T.conj() @ A
+    #    else:
+    #        if Ninv.ndim == 2:
+    #            # Ninv is matrix
+    #            Dinv = A.T.conj() @ Ninv @ A
+    #        else:
+    #            # Ninv is diagonal
+    #            Dinv = (A.T.conj() * Ninv) @ A
+    #    # add regularization if desired
+    #    if eps > 0:
+    #        Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
+    #    if torch.is_complex(Dinv):
+    #        Dinv = Dinv.real
+    #    # invert
+    #    if pinv:
+    #        D = torch.pinverse(Dinv, rcond=rcond)
+    #    else:
+    #        D = torch.inverse(Dinv)
+    #    x = x @ D.to(x.dtype)
+    #elif norm == 'diag':
+    #    # just invert diagonal to get D
+    #    if Ninv is None:
+    #        Dinv = (torch.abs(A)**2).sum(dim=0)
+    #    else:
+    #        if Ninv.ndim == 2:
+    #            # Ninv is a matrix
+    #            Dinv = torch.diag(A.T.conj() @ Ninv @ A)
+    #        else:
+    #            # Ninv is diagonal
+    #            Dinv = (Ninv * torch.abs(A.T)**2).T.sum(dim=0)
+    #    if torch.is_complex(Dinv):
+    #        Dinv = Dinv.real
+    #    D = 1 / Dinv
+    #    x = x * D.to(x.dtype)
+    #else:
+    #    D = np.eye(A.shape[1])
+    ## return axis to dim
+    #x = x.moveaxis(-1, dim)
+    ### LEGACY
 
-    return x, D
+    return xhat, D
 

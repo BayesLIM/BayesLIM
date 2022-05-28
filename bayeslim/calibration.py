@@ -3,6 +3,7 @@ Module for torch calibration models and relevant functions
 """
 import torch
 import numpy as np
+import copy
 
 from . import utils, linalg, dataset
 
@@ -23,13 +24,14 @@ class BaseResponse:
         param_type : str, optional
             dtype of input params. If 'com' push linear A matrices
             to complex type, and viewcomp params when input.
+            options = ['com', 'real', 'amp', 'phs']
         device : str, optional
             Device to place class attributes if needed
         freq_kwargs : dict, optional
-            Keyword arguments for _setup_freqs(). Note, must pass
+            Keyword arguments for setup_freqs(). Note, must pass
             freqs [Hz] for dly param_type
         time_kwargs : dict, optional
-            Keyword arguments for _setup_times().
+            Keyword arguments for setup_times().
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -37,57 +39,65 @@ class BaseResponse:
         self.device = device
         self.freq_kwargs = freq_kwargs
         self.time_kwargs = time_kwargs
-        self._setup_freqs(**freq_kwargs)
-        self._setup_times(**time_kwargs)
+        self.setup_freqs(**freq_kwargs)
+        self.setup_times(**time_kwargs)
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
                           param_type=self.param_type)
 
-    def _setup_times(self, times=None, linear_mode=None, A=None, t0=None,
-                     Ndeg=None, basis='direct', whiten=False):
+    def setup_times(self, **kwargs):
         """
-        Setup time basis
+        Setup time parameterization. See required and optional
+        params given time_mode
 
-        For time_mode == 'linear', see utils.gen_linear_A
-        for info on kwargs.
+        channel :
+            None
+        linear :
+            linear_mode : str
+            For more kwargs see utils.LinearModel()
+            dim is hard-coded according to expected params shape
         """
-        self.times = times
-
         if self.time_mode == 'channel':
             pass  # nothing to do
 
         elif self.time_mode == 'linear':
             # get linear A mapping wrt time
-            self.time_A = utils.gen_linear_A(linear_mode, A=A, x=times, x0=t0,
-                                             Ndeg=Ndeg, basis=basis, whiten=whiten)
-            if self.param_type == 'com':
-                self.time_A = self.time_A.to(utils._cfloat())
-            self.time_A = self.time_A.to(self.device)
+            kwgs = copy.deepcopy(kwargs)
+            linear_mode = kwgs.pop('linear_mode')
+            if 'times' in kwgs:
+                kwgs['x'] = kwgs.pop('times')
+            kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
+            self.time_LM = utils.LinearModel(linear_mode, dim=-2,
+                                             device=self.device, **kwgs)
 
         else:
             raise ValueError("{} not recognized".format(self.time_mode))
 
-    def _setup_freqs(self, freqs=None, linear_mode=None, A=None, f0=None,
-                     Ndeg=None, basis='direct', whiten=False):
+    def setup_freqs(self, **kwargs):
         """
-        Setup freq basis
+        Setup frequency parameterization. See required and optional
+        params given freq_mode
 
-        For freq_mode == 'linear', see utils.gen_linear_A
-        for info on kwargs
+        channel :
+            None
+        linear :
+            linear_mode : str
+            For more kwargs see utils.LinearModel()
+            dim is hard-coded according to expected params shape
         """
-        self.freqs = freqs
-
         if self.freq_mode == 'channel':
             pass  # nothing to do
 
         elif self.freq_mode == 'linear':
             # get linear A mapping wrt freq
-            self.freq_A = utils.gen_linear_A(linear_mode, A=A, x=freqs, x0=f0,
-                                             Ndeg=Ndeg, basis=basis, whiten=whiten)
-            if self.param_type == 'com':
-                self.freq_A = self.freq_A.to(utils._cfloat())
-            self.freq_A = self.freq_A.to(self.device)
+            kwgs = copy.deepcopy(kwargs)
+            linear_mode = kwgs.pop('linear_mode')
+            kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
+            if 'freqs' in kwgs:
+                kwgs['x'] = kwgs.pop('freqs')
+            self.freq_LM = utils.LinearModel(linear_mode, dim=-1,
+                                             device=self.device, **kwgs)
 
         else:
             raise ValueError("{} not recognized".format(self.freq_mode))
@@ -108,12 +118,12 @@ class BaseResponse:
         if self.freq_mode == 'channel':
             pass
         elif self.freq_mode == 'linear':
-            params = params @ self.freq_A.T
+            params = self.freq_LM(params)
 
         if self.time_mode == 'channel':
             pass
         elif self.time_mode == 'linear':
-            params = (params.moveaxis(-2, -1) @ self.time_A.T).moveaxis(-1, -2)
+            params = self.time_LM(params)
 
         params = self.params2complex(params)
 
@@ -158,9 +168,9 @@ class BaseResponse:
         """
         self.device = device
         if self.freq_mode == 'linear':
-            self.freq_A = self.freq_A.to(device)
+            self.freq_LM.push(device)
         if self.time_mode == 'linear':
-            self.time_A = self.time_A.to(device)
+            self.time_LM.push(device)
 
 
 class JonesModel(utils.Module):
@@ -460,10 +470,10 @@ class JonesResponse(BaseResponse):
         device : str, optional
             Device to place class attributes if needed
         freq_kwargs : dict, optional
-            Keyword arguments for _setup_freqs(). Note, must pass
+            Keyword arguments for setup_freqs(). Note, must pass
             freqs [Hz] for dly param_type
         time_kwargs : dict, optional
-            Keyword arguments for _setup_times().
+            Keyword arguments for setup_times().
 
         Notes
         -----

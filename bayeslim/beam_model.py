@@ -505,8 +505,7 @@ class PixelResponse(utils.PixInterp):
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  theta_grid=None, phi_grid=None, freq_mode='channel', nside=None,
-                 device=None, log=False, f0=None, Ndeg=None,
-                 freq_kwargs=None, powerbeam=True, Rchi=None):
+                 device=None, log=False, freq_kwargs=None, powerbeam=True, Rchi=None):
         """
         Parameters
         ----------
@@ -539,7 +538,8 @@ class PixelResponse(utils.PixInterp):
             If True, assume params is logged and take
             exp before returning.
         freq_kwargs : dict, optional
-            Optional kwargs to pass to utils.gen_linear_A
+            Kwargs for frequency parameterization.
+            'linear' : pass kwargs to utils.LinearModel
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
         Rchi : tensor, optional
@@ -558,29 +558,26 @@ class PixelResponse(utils.PixInterp):
         self.log = log
         self.freq_mode = freq_mode
         self.freq_ax = 3
-        self.freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self.Rchi = Rchi
         self.clear_beam()
 
-        self._setup()
+        freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
+        self._setup(**freq_kwargs)
 
         # construct _args for str repr
         self._args = dict(interp_mode=interp_mode, freq_mode=freq_mode)
 
-    def _setup(self):
+    def _setup(self, **kwargs):
         if self.freq_mode == 'channel':
             pass
         elif self.freq_mode == 'linear':
             # get A matrix wrt freq
-            freq_kwargs = copy.deepcopy(self.freq_kwargs)
-            freq_kwargs['x'] = self.freqs
-            if 'x0' not in freq_kwargs:
-                freq_kwargs['x0'] = freq_kwargs.get("f0", None)
-            assert 'linear_mode' in self.freq_kwargs, "must specify linear_mode"
-            linear_mode = freq_kwargs.pop('linear_mode')
-            dtype = utils._cfloat() if self.comp_params else utils._float()
-            self.A = utils.gen_linear_A(linear_mode, device=self.device, dtype=dtype,
-                                        **freq_kwargs)
+            kwgs = copy.deepcopy(kwargs)
+            kwgs['x'] = self.freqs
+            linear_mode = kwgs.pop('linear_mode')
+            kwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
+            self.freq_LM = utils.LinearModel(linear_mode, dim=-2, device=self.device,
+                                             **kwgs)
 
     def push(self, device):
         """push attrs to device"""
@@ -589,7 +586,7 @@ class PixelResponse(utils.PixInterp):
         # other attrs
         self.freqs = self.freqs.to(device)
         if self.freq_mode == 'linear':
-            self.A = self.A.to(device)
+            self.freq_LM.push(device)
 
     def __call__(self, params, zen, az, *args):
         # cast to complex if needed
@@ -604,7 +601,7 @@ class PixelResponse(utils.PixInterp):
 
             # pass through frequency response
             if self.freq_mode == 'linear':
-                params = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+                params = self.freq_LM(params)
 
             # now cache it for future calls
             self.beam_cache = params
@@ -1104,7 +1101,7 @@ class YlmResponse(PixelResponse):
             p = params
         elif self.freq_mode == 'linear':
             # first do fast dot product along frequency axis
-            p = (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            p = self.freq_LM(params)
 
         # transform into a_lm space if using poly lm compression
         p = self.lm_poly_forward(p)

@@ -266,7 +266,7 @@ class PointSkyResponse:
     options include
         - channel : vary all frequency channels
         - linear : linear mapping across frequency
-        - powerlaw : amplitude and freq exponent, centered at f0.
+        - powerlaw : amplitude and exponent, centered at f0.
     """
     def __init__(self, freqs, freq_mode='linear', log=False, device=None, **freq_kwargs):
         """
@@ -296,30 +296,30 @@ class PointSkyResponse:
         -----
         freq_mode == 'linear'
             See utils.gen_linear_A() for necessary kwargs
+        freq_mode == 'powerlaw':
+            f0 : anchor frequency [Hz]
         """
         self.log = log
         self.freqs = freqs
         self.freq_mode = freq_mode
         self.device = device
-        self.freq_kwargs = freq_kwargs
-        self._setup()
+        self._setup(**freq_kwargs)
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode)
 
-    def _setup(self):
+    def _setup(self, **kwargs):
         # setup
         if self.freq_mode == 'linear':
-            assert 'linear_mode' in self.freq_kwargs
-            fkwargs = copy.deepcopy(self.freq_kwargs)
-            linear_mode = fkwargs.pop('linear_mode')
-            if 'x' not in fkwargs: fkwargs['x'] = self.freqs
-            if 'f0' in fkwargs: fkwargs['x0'] = fkwargs.pop('f0')
-            self.A = utils.gen_linear_A(linear_mode, device=self.device,
-                                        **fkwargs)
+            assert 'linear_mode' in kwargs
+            kwgs = copy.deepcopy(kwargs)
+            linear_mode = kwgs.pop('linear_mode')
+            kwgs['x'] = self.freqs
+            self.freq_LM = utils.LinearModel(linear_mode, dim=-2,
+                                             device=self.device, **kwgs)
 
         elif self.freq_mode == 'powerlaw':
-            assert 'f0' in self.freq_kwargs
+            self.f0 = kwargs['f0']
 
     def __call__(self, params):
         # pass to device
@@ -330,13 +330,13 @@ class PointSkyResponse:
             pass
 
         elif self.freq_mode == 'linear':
-            params = (self.A @ params.moveaxis(-2, 0)).moveaxis(0, -2)
+            params = self.freq_LM(params)
 
         elif self.freq_mode == 'powerlaw':
             amp = params[..., 0:1, :]
             if self.log:
                 amp = torch.exp(amp)
-            params = amp * (self.freqs[None, None, :, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
+            params = amp * (self.freqs[:, None] / self.f0)**params[..., 1:2, :]
 
         if self.log and self.freq_mode in ['channel', 'linear']:
             params = torch.exp(params)
@@ -347,7 +347,7 @@ class PointSkyResponse:
         self.device = device
         self.freqs = self.freqs.to(device)
         if self.freq_mode == 'linear':
-            self.A = self.A.to(device)
+            self.freq_LM.push(device)
 
 
 class PixelSky(SkyBase):
@@ -526,21 +526,27 @@ class PixelSkyResponse:
         self.cosmo = cosmo
         self.log = log
 
-        self._setup(spatial_kwargs=spatial_kwargs, freq_kwargs=freq_kwargs)
+        self._spatial_setup(spatial_kwargs=spatial_kwargs)
+        self._freq_setup(freq_kwargs=freq_kwargs)
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, spatial_mode=self.spatial_mode)
 
-    def _setup(self, spatial_kwargs={}, freq_kwargs={}):
+    def _freq_setup(self, freq_kwargs={}):
         # freq setup
-        if self.freq_mode == 'linear':
-            freq_kwargs = copy.deepcopy(freq_kwargs)
-            assert 'linear_mode' in freq_kwargs, "must specify linear_mode"
-            linear_mode = freq_kwargs.pop('linear_mode')
-            dtype = utils._cfloat() if self.comp_params else utils._float()
-            if 'x' not in freq_kwargs: freq_kwargs['x'] = self.freqs
-            self.A = utils.gen_linear_A(linear_mode, dtype=dtype, device=self.device,
-                                        **freq_kwargs)
+        if self.freq_mode == 'channel':
+            pass
+
+        elif self.freq_mode == 'powerlaw':
+            self.f0 = freq_kwargs['f0']
+
+        elif self.freq_mode == 'linear':
+            fkwgs = copy.deepcopy(freq_kwargs)
+            assert 'linear_mode' in fkwgs, "must specify linear_mode"
+            linear_mode = fkwgs.pop('linear_mode')
+            fkwgs['x'] = self.freqs
+            fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
+            self.freq_LM = utils.LinearModel(linear_mode, dim=-2, device=self.device, **fkwgs)
 
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
@@ -551,8 +557,9 @@ class PixelSkyResponse:
             if 'gln' in freq_kwargs and 'kbins' in freq_kwargs:
                 self.gln = freq_kwargs['gln']
                 self.kbins = freq_kwargs['kbins']
+
             else:
-                gln, kbins = utils.gen_bessel2freq(spatial_kwargs['l'],
+                gln, kbins = utils.gen_bessel2freq(freq_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
                                                   kmax=freq_kwargs.get('kmax'),
                                                   decimate=freq_kwargs.get('decimate', True),
@@ -565,10 +572,11 @@ class PixelSkyResponse:
                 self.gln = gln
                 self.kbins = kbins
 
+    def _spatial_setup(self, spatial_kwargs={}):        
         # spatial setup
         if self.spatial_mode == 'alm':
             if 'Ylm' in spatial_kwargs:
-                # assign Ylm to self if present, then del from dict for memory footprint
+                # assign Ylm to self if present
                 self.Ylm = spatial_kwargs['Ylm']
                 self.alm_mult = spatial_kwargs['alm_mult']
             elif not hasattr(self, 'Ylm'):
@@ -628,16 +636,19 @@ class PixelSkyResponse:
             Sky model of shape (Nstokes, 1, Nfreqs, Ncoeff)
         """
         # detect if params needs to be casted into complex
-        if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+        if self.comp_params:
             if not torch.is_complex(params):
                 params = utils.viewcomp(params)
 
         if self.freq_mode == 'channel':
             return params
+
         elif self.freq_mode == 'linear':
-            return (params.transpose(-1, -2) @ self.A.T).transpose(-1, -2)
+            return self.freq_LM(params)
+
         elif self.freq_mode == 'powerlaw':
-            return params[..., 0:1, :] * (self.freqs[:, None] / self.freq_kwargs['f0'])**params[..., 1:2, :]
+            return params[..., 0:1, :] * (self.freqs[:, None] / self.f0)**params[..., 1:2, :]
+
         elif self.freq_mode == 'bessel':
             assert self.transform_order == 1, "only support freq-spatial transform order for bessel mode"
             out = torch.zeros(params.shape[:-2] + (self.Nfreqs,) + params.shape[-1:],
@@ -881,6 +892,7 @@ def read_catalogue(catfile, freqs=None, device=None,
 
     if 'polarizaton' in d:
         # still under development
+        raise NotImplementedError
         Nsources = params.shape[-1]
         sparams = torch.tensor(np.array(d['Qfrac'], d['Ufrac'], d['Vfrac']).reshape(3, 1, Nsources))
         stokes = FullStokesModel(frac_pol=True)

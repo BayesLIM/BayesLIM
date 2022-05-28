@@ -1194,8 +1194,8 @@ def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
 
     Returns
     -------
-    tensor
-        Linear mapping of shape (Nsamples, Nfeatures)
+    A : tensor
+        Design matrix of shape (Nsamples, Nfeatures)
     """
     dtype = dtype if dtype is not None else _float()
     if linear_mode == 'poly':
@@ -1237,22 +1237,152 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
 
     Returns
     -------
-    torch tensor
+    A : tensor
         Polynomial design matrix (Nx, Ndeg)
     """
-    # LEGACY
-    #A = torch.as_tensor(torch.vstack([dfreqs**i for i in range(Ndeg)]),
-    #                    dtype=_float(), device=device).T
-    if whiten:
-        if x0 is None:
-            x0 = x.mean()
-        x = x - x0
-        if dx is None:
-            dx = x.max()
-        x = x / dx
+    # whiten the input if desired
+    if x0 is None:
+        x0 = x.mean() if whiten else 0.0
+    x = x - x0
+    if dx is None:
+        dx = x.max() if whiten else 1.0
+    x = x / dx
+
+    # setup the polynomial
     from emupy.linear import setup_polynomial
     A = setup_polynomial(x[:, None], Ndeg - 1, basis=basis)[0]
-    return torch.as_tensor(A, dtype=_float(), device=device)
+    A = torch.as_tensor(A, dtype=_float(), device=device)
+
+    return A
+
+
+class LinearModel:
+    """
+    A linear model of
+
+        y = Ax
+    """
+    def __init__(self, linear_mode, dim=0, **kwargs):
+        """
+        Parameters
+        ----------
+        linear_model : str
+            The kind of model to generate: ['custom', 'poly'].
+            See utils.gen_linear_A.
+        dim : int, optional
+            The dimension of the input params tensor to sum over.
+        kwargs : dict
+            keyword arguments for utils.gen_linear_A()
+        """
+        self.linear_mode = linear_mode
+        self.dim = dim
+
+        if self.linear_mode != 'custom':
+            if kwargs.get('whiten', False):
+                x = kwargs.get('x')
+                kwargs['x0'] = kwargs.get('x0', x.mean())
+                kwargs['dx'] = kwargs.get('dx', (x-kwargs['x0']).max())
+
+        self.kwargs = kwargs
+        self.A = gen_linear_A(linear_mode, **kwargs)
+        self.device = self.A.device
+
+    def forward(self, params, A=None):
+        """
+        Forward pass parameter tensor through design matrix
+
+        Parameters
+        ----------
+        params : tensor
+        A : tensor, optional
+            Use this (Nsamples, Nfeatures) design
+            matrix instead of self.A
+
+        Returns
+        -------
+        tensor
+        """
+        A = A if A is not None else self.A
+        ndim = params.ndim
+        if self.dim == 0:
+            # trivial matmul
+            return A @ params
+        elif self.dim == ndim:
+            # trivial transpose
+            return params @ A.T
+        else:
+            # would involve a transpose,
+            # dot, then re-transpose,
+            # so let's just use einsum
+            t1 = 'ab'
+            assert ndim <= 8
+            t2 = ['i', 'j', 'k', 'l', 'm', 'n', 'o', 'p'][:ndim]
+            t2[self.dim] = 'b'
+            t2 = ''.join(t2)
+            out = t2.replace('b', 'a')
+            return torch.einsum("{},{}->{}".format(t1, t2, out), A, params)
+
+    def __call__(self, params, A=None):
+        return self.forward(params, A=A)
+
+    def least_squares(self, y, **kwargs):
+        """
+        Estimate a params tensor from the data vector
+
+        Parameters
+        ----------
+        y : tensor
+            Data vector to use in estimating a
+            new params tensor
+        kwargs : dict
+            keyword arguments for linalg.least_squares()
+
+        Returns
+        -------
+        tensor
+        """
+        from bayeslim.linalg import least_squares
+        return least_squares(self.A, y, **kwargs)
+
+    def generate_A(self, x, **interp1d_kwargs):
+        """
+        Generate a new A matrix at new x values.
+        If linear_mode is 'custom', then we interpolate
+        the existing A, otherwise we generate
+        a new A using the existing setup parameters.
+
+        Parameters
+        ----------
+        x : tensor
+            New x values to generate A
+        kwargs : dict
+            Kwargs for scipy interp1d(), used
+            if linear_mode is custom.
+
+        Returns
+        -------
+        tensor
+        """
+        if self.linear_mode == 'custom':
+            # perform interpolation of existing A
+            from scipy.interpolate import interp1d
+            A = interp1d(self.kwargs['x'], self.A.cpu().numpy(),
+                         axis=0, **interp1d_kwargs)(x)
+            A = torch.as_tensor(A).to(self.device)
+        else:
+            kwargs = copy.deepcopy(self.kwargs)
+            kwargs['x'] = x
+            A = gen_linear_A(self.linear_mode, **kwargs)
+            A = A.to(self.device)
+
+        return A
+
+    def push(self, device):
+        """
+        Push items to new device
+        """
+        self.A = self.A.to(device)
+        self.device = device
 
 
 def voigt_beam(nside, sigma, gamma):

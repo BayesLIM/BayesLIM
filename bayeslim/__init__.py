@@ -21,6 +21,6 @@ from . import fft
 
 from .paramdict import ParamDict
 from .dataset import VisData, Dataset
-from .utils import _float, _cfloat
+from .utils import _float, _cfloat, viewreal, viewcomp
 
 from .version import __version__
