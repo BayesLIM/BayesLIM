@@ -1242,7 +1242,7 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
     """
     # whiten the input if desired
     if whiten:
-        x, x0, dx = whiten(x, x0, dx)
+        x, x0, dx = whiten_xarr(x, x0, dx)
 
     # setup the polynomial
     from emupy.linear import setup_polynomial
@@ -1252,7 +1252,7 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
     return A
 
 
-def whiten(x, x0=None, dx=None):
+def whiten_xarr(x, x0=None, dx=None):
     """
     Whiten a monotonically increasing
     vector x to have a range of [-1, 1]
@@ -1314,7 +1314,7 @@ class LinearModel:
         if self.linear_mode != 'custom':
             if kwargs.get('whiten', False):
                 x = kwargs.get('x')
-                _, x0, dx = whiten(x)
+                _, x0, dx = whiten_xarr(x)
                 if 'x0' not in kwargs:
                     kwargs['x0'] = x0
                 if 'dx' not in kwargs:
