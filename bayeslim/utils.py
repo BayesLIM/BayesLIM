@@ -1279,11 +1279,11 @@ def whiten_xarr(x, x0=None, dx=None):
     dx : float
         scale used to whiten x
     """
-    if x0 is not None:
+    if x0 is None:
         x0 = x.mean()
     x = x - x0
 
-    if dx is not None:
+    if dx is None:
         dx = x.max() + x[1] - x[0]
     x = x / dx
 
