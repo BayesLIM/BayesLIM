@@ -1241,12 +1241,8 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
         Polynomial design matrix (Nx, Ndeg)
     """
     # whiten the input if desired
-    if x0 is None:
-        x0 = x.mean() if whiten else 0.0
-    x = x - x0
-    if dx is None:
-        dx = x.max() if whiten else 1.0
-    x = x / dx
+    if whiten:
+        x, x0, dx = whiten(x, x0, dx)
 
     # setup the polynomial
     from emupy.linear import setup_polynomial
@@ -1254,6 +1250,44 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
     A = torch.as_tensor(A, dtype=_float(), device=device)
 
     return A
+
+
+def whiten(x, x0=None, dx=None):
+    """
+    Whiten a monotonically increasing
+    vector x to have a range of [-1, 1]
+    for optimal polynomial orthogonality.
+    For uniformly increasing x, the whitened
+    range is [-1+dx/2, 1-dx/2].
+
+    Parameters
+    ----------
+    x : tensor
+        Monotonically increasing, but no
+        necessarily uniform.
+    x0 : float, optional
+        mean to use in centering x
+    dx : float, optional
+        scale to use in whitening x
+
+    Returns
+    -------
+    xw : tensor
+        Whitened x tensor
+    x0 : float
+        mean used to center x
+    dx : float
+        scale used to whiten x
+    """
+    if x0 is not None:
+        x0 = x.mean()
+    x = x - x0
+
+    if dx is not None:
+        dx = x.max() + x[1] - x[0]
+    x = x / dx
+
+    return x, x0, dx
 
 
 class LinearModel:
@@ -1280,8 +1314,11 @@ class LinearModel:
         if self.linear_mode != 'custom':
             if kwargs.get('whiten', False):
                 x = kwargs.get('x')
-                kwargs['x0'] = kwargs.get('x0', x.mean())
-                kwargs['dx'] = kwargs.get('dx', (x-kwargs['x0']).max())
+                _, x0, dx = whiten(x)
+                if 'x0' not in kwargs:
+                    kwargs['x0'] = x0
+                if 'dx' not in kwargs:
+                    kwargs['dx'] = dx
 
         self.kwargs = kwargs
         self.A = gen_linear_A(linear_mode, **kwargs)
