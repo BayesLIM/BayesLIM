@@ -224,7 +224,7 @@ def _log_legendre_norm(l, m):
     return 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
 
 
-def hypF(a, b, c, z, high_prec=True, keepdims=False):
+def hypF(a, b, c, z, high_prec=True, keepdims=False, zeroprec=100):
     """
     Gauss hypergeometric function.
     Catches the case where c is <= 0
@@ -246,6 +246,9 @@ def hypF(a, b, c, z, high_prec=True, keepdims=False):
     keepdims : bool, optional
         If True, keep full shape, otherwise squeeze
         along len-1 axes
+    zeroprec : int, optional
+        When using high_prec, if the hyp2f1 result
+        is less than 2^-zeroprec mpmath calls it zero.
     
     Notes
     -----
@@ -256,8 +259,10 @@ def hypF(a, b, c, z, high_prec=True, keepdims=False):
     """
     if high_prec:
         from mpmath import hyp2f1
+        kg = {'zeroprec': zeroprec}
     else:
         from scipy.special import hyp2f1
+        kg = {}
 
     if not isinstance(a, np.ndarray):
         a = np.atleast_2d(a)
@@ -288,7 +293,7 @@ def hypF(a, b, c, z, high_prec=True, keepdims=False):
         # divide by (n+1)! and divide by gamma(|c|+1)
         norm -= gammaln(n+2) + gammaln(n+1)
         # compute hypergeometric
-        f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a)), 4, 1)(A+n+1, B+n+1, n+2, z), dtype=float)
+        f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a, **kg)), 4, 1)(A+n+1, B+n+1, n+2, z), dtype=float)
         # get the sign of f21 in real space
         f21_sign = np.sign(f21)
         # full term: wait to exp() until as late as possible, multiply by signs
@@ -298,7 +303,7 @@ def hypF(a, b, c, z, high_prec=True, keepdims=False):
         A = np.atleast_2d(a[~s])
         B = np.atleast_2d(b[~s])
         C = np.atleast_2d(c[~s])
-        f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a)), 4, 1)(A, B, C, z), dtype=float)
+        f21 = np.array(np.frompyfunc(lambda *a: float(hyp2f1(*a, **kg)), 4, 1)(A, B, C, z), dtype=float)
         F[~s] = f21 / gamma(C) / gamma(C+1)
 
     if not keepdims and len(F) == 1:
