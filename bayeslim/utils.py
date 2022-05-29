@@ -1284,7 +1284,7 @@ def whiten_xarr(x, x0=None, dx=None):
     x = x - x0
 
     if dx is None:
-        dx = x.max() + x[1] - x[0]
+        dx = x.max() + (x[1] - x[0]) / 2
     x = x / dx
 
     return x, x0, dx
