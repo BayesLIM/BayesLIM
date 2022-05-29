@@ -224,7 +224,10 @@ def _log_legendre_norm(l, m):
     return 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
 
 
-def hypF(a, b, c, z, high_prec=True, keepdims=False, zeroprec=100):
+HYPF_KWGS = {'zeroprec': 100}
+
+
+def hypF(a, b, c, z, high_prec=True, keepdims=False):
     """
     Gauss hypergeometric function.
     Catches the case where c is <= 0
@@ -256,10 +259,13 @@ def hypF(a, b, c, z, high_prec=True, keepdims=False, zeroprec=100):
     is inserted artificially for numerical purposes,
     and must be re-normalized for standard use
     with spherical harmonics.
+    Also note the HYPF_KWGS dictionary
+    which controls mpmath.hyp2f1(*args, **kwgs)
+    when using high_prec=True.
     """
     if high_prec:
         from mpmath import hyp2f1
-        kg = {'zeroprec': zeroprec}
+        kg = HYPF_KWGS
     else:
         from scipy.special import hyp2f1
         kg = {}
