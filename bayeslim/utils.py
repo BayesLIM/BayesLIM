@@ -2695,7 +2695,7 @@ def _make_hex(N, D=15):
     for i in range(2*N - 1):
         for j in range(N + k):
             x.append(j + start)
-            y.append(i)
+            y.append(i * np.sin(np.pi/3))
             ants.append(ant)
             ant += 1
         if i < N-1:
