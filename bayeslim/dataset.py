@@ -198,7 +198,6 @@ class VisData(TensorData):
         history : str, optional
             data history string
         """
-        self.bls = bls
         self.Nbls = len(bls)
         self.ant1 = np.array([bl[0] for bl in bls])
         self.ant2 = np.array([bl[1] for bl in bls])
@@ -214,6 +213,10 @@ class VisData(TensorData):
         self.flags = flags
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
+
+    @property
+    def bls(self):
+        return [(ant1, ant2) for ant1, ant2 in zip(self.ant1, self.ant2)]
 
     def copy(self, detach=True):
         """
@@ -333,7 +336,8 @@ class VisData(TensorData):
         else:
             raise ValueError("cannot index cross-pols")
 
-    def get_inds(self, bl=None, times=None, freqs=None, pol=None):
+    def get_inds(self, bl=None, times=None, freqs=None, pol=None,
+                 bl_inds=None, time_inds=None, freq_inds=None):
         """
         Given data selections, return data indexing list
 
@@ -348,6 +352,21 @@ class VisData(TensorData):
             Frequencies to index
         pol : str, optional
             Polarization to index
+        bl_inds : int or list of int, optional
+            Instead of feeding bl, can feed a
+            list of bl indices if these are
+            already known given their location
+            in self.ant1, self.ant2.
+        time_inds : int or list of int, optional
+            Instead of feeding times, can feed
+            a list of time indices if these
+            are already known given location
+            in self.times.
+        freq_inds : int or list of int, optional
+            Instead of feeding freqs, can feed
+            a list of freq indices if these
+            are already known given location
+            in self.freqs.
 
         Returns
         -------
@@ -355,6 +374,7 @@ class VisData(TensorData):
             A 5-len list holding slices along axes.
         """
         if bl is not None:
+            assert bl_inds is None
             # special case for antpairpols
             bl, _pol = self._bl2uniq_blpol(bl)
             bl_inds = self._bl2ind(bl)
@@ -362,16 +382,24 @@ class VisData(TensorData):
                 if _pol is not None:
                     assert _pol == pol
             pol = _pol
+        elif bl_inds is not None:
+            pass
         else:
             bl_inds = slice(None)
 
         if times is not None:
+            assert time_inds is None
             time_inds = self._time2ind(times)
+        elif time_inds is not None:
+            pass
         else:
             time_inds = slice(None)
 
         if freqs is not None:
+            assert freq_inds is None
             freq_inds = self._freq2ind(freqs)
+        elif freq_inds is not None:
+            pass
         else:
             freq_inds = slice(None)
 
@@ -388,6 +416,7 @@ class VisData(TensorData):
         return inds
 
     def get_data(self, bl=None, times=None, freqs=None, pol=None,
+                 bl_inds=None, time_inds=None, freq_inds=None,
                  squeeze=True, data=None):
         """
         Slice into data tensor and return values.
@@ -403,6 +432,8 @@ class VisData(TensorData):
             Frequencies to index
         pol : str, optional
             Polarization to index
+        bl_, time_, freq_inds : optional
+            See self.get_inds() for details.
         squeeze : bool, optional
             If True, squeeze array before return
         data : tensor, optional
@@ -413,7 +444,9 @@ class VisData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
+                             bl_inds=bl_inds, time_inds=time_inds,
+                             freq_inds=freq_inds)
         data = data[inds]
 
         # squeeze if desired
@@ -423,6 +456,7 @@ class VisData(TensorData):
         return data
 
     def get_flags(self, bl=None, times=None, freqs=None, pol=None,
+                  bl_inds=None, time_inds=None, freq_inds=None,
                   squeeze=True, flags=None):
         """
         Slice into flag tensor and return values.
@@ -438,6 +472,8 @@ class VisData(TensorData):
             Frequencies to index
         pol : str, optional
             Polarization to index
+        bl_, time_, freq_inds : optional
+            See self.get_inds() for details
         squeeze : bool, optional
             If True, squeeze array before return
         flags : tensor, optional
@@ -448,7 +484,9 @@ class VisData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
+                             bl_inds=bl_inds, time_inds=time_inds,
+                             freq_inds=freq_inds)
         flags = flags[inds]
 
         # squeeze if desired
@@ -458,6 +496,7 @@ class VisData(TensorData):
         return flags
 
     def get_cov(self, bl=None, times=None, freqs=None, pol=None,
+                bl_inds=None, time_inds=None, freq_inds=None,
                 squeeze=True, cov=None):
         """
         Slice into cov tensor and return values.
@@ -474,6 +513,8 @@ class VisData(TensorData):
             Frequencies to index
         pol : str, optional
             Polarization to index
+        bl_, time_, freq_inds : optional
+            See self.get_inds() for details
         squeeze : bool, optional
             If True, squeeze array before return
         cov : tensor, optional
@@ -484,7 +525,9 @@ class VisData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol)
+        inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
+                             bl_inds=bl_inds, time_inds=time_inds,
+                             freq_inds=freq_inds)
 
         if self.cov_axis is None:
             # cov is same shape as data
@@ -622,10 +665,11 @@ class VisData(TensorData):
 
         arr[inds] = val
 
-    def select(self, bl=None, times=None, freqs=None, pol=None):
+    def select(self, bl=None, times=None, freqs=None, pol=None,
+               bl_inds=None, time_inds=None, freq_inds=None):
         """
         Downselect on data tensor. Can only specify one axis at a time.
-        Operates in place.
+        Operates inplace.
 
         Parameters
         ----------
@@ -637,32 +681,53 @@ class VisData(TensorData):
             List of frequencies [Hz] to downselect
         pol : str, optional
             Polarization to downselect
-        atol : float, optional
-            absolute tolerance for matching times or freqs
+        bl_inds : int or list of int, optional
+            Instead of feeding bl, can feed a
+            list of bl indices if these are
+            already known given their location
+            in self.ant1, self.ant2.
+        time_inds : int or list of int, optional
+            Instead of feeding times, can feed
+            a list of time indices if these
+            are already known given location
+            in self.times.
+        freq_inds : int or list of int, optional
+            Instead of feeding freqs, can feed
+            a list of freq indices if these
+            are already known given location
+            in self.freqs.
         """
-        assert sum([bl is not None, times is not None, freqs is not None,
+        assert sum([(bl is not None) | (bl_inds is not None),
+                    (times is not None) | (time_inds is not None),
+                    (freqs is not None) | (freq_inds is not None),
                     pol is not None]) < 2, "only one axis can be fed at a time"
 
-        if bl is not None:
-            data = self.get_data(bl, squeeze=False)
-            cov = self.get_cov(bl, squeeze=False)
-            flags = self.get_flags(bl, squeeze=False)
+        if bl is not None or bl_inds is not None:
+            assert not ((bl is not None) & (bl_inds is not None))
+            data = self.get_data(bl, bl_inds=bl_inds, squeeze=False)
+            cov = self.get_cov(bl, bl_inds=bl_inds, squeeze=False)
+            flags = self.get_flags(bl, bl_inds=bl_inds, squeeze=False)
+            if bl_inds is not None: bl = [self.bls[i] for i in bl_inds]
             self.setup_data(bl, self.times, self.freqs, pol=self.pol, 
                             data=data, flags=self.flags, cov=cov,
                             cov_axis=self.cov_axis, history=self.history)
 
-        elif times is not None:
-            data = self.get_data(times=times, squeeze=False)
-            cov = self.get_cov(times=times, squeeze=False)
-            flags = self.get_flags(times=times, squeeze=False)
+        elif times is not None or time_inds is not None:
+            assert not ((times is not None) & (time_inds is not None))
+            data = self.get_data(times=times, time_inds=time_inds, squeeze=False)
+            cov = self.get_cov(times=times, time_inds=time_inds, squeeze=False)
+            flags = self.get_flags(times=times, time_inds=time_inds, squeeze=False)
+            if time_inds is not None: times = self.times[time_inds]
             self.setup_data(self.bls, times, self.freqs, pol=self.pol, 
                             data=data, flags=self.flags, cov=cov,
                             cov_axis=self.cov_axis, history=self.history)
 
-        elif freqs is not None:
-            data = self.get_data(freqs=freqs, squeeze=False)
-            cov = self.get_cov(freqs=freqs, squeeze=False)
-            flags = self.get_flags(freqs=freqs, squeeze=False)
+        elif freqs is not None or freq_inds is not None:
+            assert not ((freqs is not None) & (freq_inds is not None))
+            data = self.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            cov = self.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            flags = self.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            if freq_inds is not None: freqs = self.freqs[freq_inds]
             self.setup_data(self.bls, self.times, freqs, pol=self.pol, 
                             data=data, flags=self.flags, cov=cov,
                             cov_axis=self.cov_axis, history=self.history)
@@ -1851,5 +1916,9 @@ def _list2slice(inds):
     if isinstance(inds, list):
         diff = list(set(np.diff(inds)))
         if len(diff) == 1:
-            return slice(inds[0], inds[-1]+diff[0], diff[0])
+            if (inds[1] - inds[0]) > 0:
+                # only return as slice if inds is increasing
+                return slice(inds[0], inds[-1]+diff[0], diff[0])
+
     return inds
+

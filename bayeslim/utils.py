@@ -2477,6 +2477,52 @@ def del_model_attr(model, name):
     delattr(model, name[0])
 
 
+class Difference(Module):
+    """
+    A difference block. Can act
+    on an input tensor, or on an input
+    VisData, CalData, MapData object
+    """
+    def __init__(self, idx1, idx2):
+        """
+        Parameters
+        ----------
+        idx1 : tuple of ints or dict
+            If fed as a tuple, treat
+            the block input as a tensor
+            and index it with idx1.
+            If this is a dict, treat
+            input as a Dataset object
+            and use its select(**idx1)
+        idx2 : tuple of ints or dict
+            Same format as idx1. The
+            difference is
+            params[idx1] - params[idx2]
+        """
+        super().__init__()
+        self.idx1 = idx1
+        self.idx2 = idx2
+        
+    def __call__(self, params, **kwargs):
+        return self.forward(params)
+    
+    def forward(self, params, **kwargs):
+        if isinstance(self.idx1, dict):
+            # treat params as a VisData or CalData
+            params1 = params.copy(detach=False)
+            params1.select(**self.idx1)
+            params2 = params.copy(detach=False)
+            params2.select(**self.idx2)
+            params1.data -= params2.data
+            res = params1
+
+        else:
+            # treat params as a tensor
+            res = params[self.idx1] - params[self.idx2]
+
+        return res
+
+
 #################################
 ######### Miscellaneous #########
 #################################

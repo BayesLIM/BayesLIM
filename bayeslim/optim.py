@@ -640,11 +640,11 @@ class LogProb(utils.Module):
         res = prediction - target.data
 
         # get inverse covariance
-        if hasattr(target, 'icov') and target.icov is not None:
+        if hasattr(target, 'icov'):
             icov = target.icov
             cov_axis = target.cov_axis
         else:
-            icov = torch.ones_like(res, device=res.device)
+            icov = None
             cov_axis = None
 
         # evaluate chi square
@@ -1184,7 +1184,10 @@ def apply_icov(data, icov, cov_axis):
     """
     if cov_axis is None:
         # icov is just diagonal
-        out = data.conj() * data * icov
+        if icov is None:
+            out = data.conj() * data
+        else:
+            out = data.conj() * data * icov
     elif cov_axis == 'full':
         # icov is full inv cov
         out = data.ravel().conj() @ icov @ data.ravel()
