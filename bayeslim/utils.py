@@ -1344,7 +1344,7 @@ class LinearModel:
         if self.dim == 0:
             # trivial matmul
             return A @ params
-        elif self.dim == ndim:
+        elif self.dim == ndim or self.dim == -1:
             # trivial transpose
             return params @ A.T
         else:
