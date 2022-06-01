@@ -852,7 +852,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if read_data:
             Ylm = Ylm[:, keep]
 
-    if to_real and np.iscomplex(Ylm):
+    if to_real and np.iscomplexobj(Ylm):
         Ylm = Ylm.real
         info['alm_mult'][:] = 1.0
 
