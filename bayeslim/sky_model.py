@@ -682,7 +682,7 @@ class PixelSkyResponse:
             self.alm_mult = self.alm_mult.to(device)
 
         if self.freq_mode == 'linear':
-            self.A = self.A.to(device)
+            self.freq_LM.push(device)
         elif self.freq_mode == 'bessel':
             for k in self.gln:
                 self.gln[k] = self.gln[k].to(device)
