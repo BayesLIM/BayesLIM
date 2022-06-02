@@ -193,13 +193,13 @@ class PixelBeam(utils.Module):
             A tensor beam model of shape
             (Npol, Nvec, Nmodel, Nfreqs, Npix)
         cut : array
-            Indexing of Npix axis given fov cut
+            FOV integer index along Npix axis
         zen, az : tensor
             truncated zen and az tensors
         """
         # enact fov cut
         if self.fov < 360:
-            cut = zen < self.fov / 2
+            cut = torch.where(zen < self.fov / 2)[0]
         else:
             cut = slice(None)
         zen, az = zen[cut], az[cut]
@@ -295,6 +295,25 @@ class PixelBeam(utils.Module):
 
         return psky
 
+    def _cut_sky_fov(self, sky, cut):
+        """
+        Given a sky tensor (..., Npixels) and a FOV cut
+        indexing array (Nfov_pixels,), apply the indexing to sky
+        and return the cut_sky. Optimized for backprop through
+        integer indexing.
+        """
+        if isinstance(cut, slice):
+            cut_sky = sky[..., cut]
+        else:
+            if isinstance(cut, np.ndarray):
+                cut = torch.as_tensor(cut)
+            if utils.device(cut.device) != utils.device(sky.device):
+                cut = cut.to(sky.device)
+            # for integer index, this is faster than sky[...,cut] on GPU
+            cut_sky = sky.index_select(-1, cut)
+
+        return cut_sky
+
     def forward(self, sky_comp, telescope, time, modelpairs, prior_cache=None, **kwargs):
         """
         Forward pass a single sky model through the beam
@@ -344,7 +363,7 @@ class PixelBeam(utils.Module):
 
             # evaluate beam
             beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
-            sky = sky_comp['sky'][..., cut]
+            sky = self._cut_sky_fov(sky_comp['sky'], cut)
             alt = alt[cut]
 
             # iterate over baselines

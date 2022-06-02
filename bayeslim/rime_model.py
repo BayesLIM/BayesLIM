@@ -308,7 +308,7 @@ class RIME(utils.Module):
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
                     ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
-                    cut_sky = sky[..., cut]
+                    cut_sky = self.beam._cut_sky_fov(sky, cut)
 
                 elif kind == 'alm':
                     raise NotImplementedError

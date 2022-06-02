@@ -1814,6 +1814,8 @@ class PixInterp:
                 inds, wgts = healpy.get_interp_weights(self.nside,
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
+                inds = inds.T
+                wgts = wgts.T
 
             # this is bipolynomial interpolation
             elif self.pixtype == 'rect':
@@ -1838,12 +1840,10 @@ class PixInterp:
                 inds, xyrel = bipoly_grid_index(xgrid, ygrid, xnew, ynew,
                                                 degree[0]+1, degree[1]+1,
                                                 wrapx=True, ravel=True)
-                inds = inds.T
 
                 # get weights
                 Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
                 wgts = Anew @ Ainv
-                wgts = wgts.T
 
             # store it
             interp = (torch.as_tensor(inds, device=self.device),
@@ -1859,7 +1859,8 @@ class PixInterp:
         Parameters
         ----------
         m : array_like or tensor
-            Map to interpolate. If Healpix map must be ring ordered.
+            Map to interpolate of shape (..., Npix).
+            If Healpix map must be ring ordered.
         zen, az : array_like or tensor
             Zenith angle (co-latitude) and azimuth [deg]
             points at which to interpolate map
@@ -1867,11 +1868,17 @@ class PixInterp:
         # get interpolation indices and weights
         inds, wgts = self.get_interp(zen, az)
 
-        # get nearest neighbors
-        nearest = m[..., inds.T]
+        # get nearest neighbors to use for interpolation
+        # inds has shape (Nnearest, Nangles)
+        nearest = m[..., inds]
+
+        # note that simple tests show that
+        # above fancy indexing is faster than
+        # an expand->gather indexing on CPU
+        # but is similar in speed on GPU
 
         # multiply by weights and sum
-        out = torch.sum(nearest * wgts.T, axis=-1)
+        out = torch.sum(nearest * wgts, axis=-1)
 
         ## LEGACY
 #        if self.interp_mode == 'nearest':
@@ -1900,7 +1907,8 @@ class PixInterp:
         self.device = device
         for k in self.interp_cache:
             cache = self.interp_cache[k]
-            self.interp_cache[k] = (cache[0], cache[1].to(device))
+            self.interp_cache[k] = (cache[0].to(device),
+                                    cache[1].to(device))
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,
