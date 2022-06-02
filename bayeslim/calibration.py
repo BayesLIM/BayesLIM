@@ -10,10 +10,13 @@ from . import utils, linalg, dataset
 
 class BaseResponse:
     """
-    A base parameter response object for JonesModel and VisModel
+    A base parameter response object for JonesModel taking
+    params of shape (Npol, Npol, Nantenna, Ntimes, Nfreqs),
+    and for VisModel taking params of shape
+    (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
-                 device=None, freq_kwargs={}, time_kwargs={}):
+                 device=None, freq_kwargs={}, time_kwargs={}, atol=1e-4):
         """
         Parameters
         ----------
@@ -32,6 +35,8 @@ class BaseResponse:
             freqs [Hz] for dly param_type
         time_kwargs : dict, optional
             Keyword arguments for setup_times().
+        atol : float, optional
+            Absolute tolerance used for time index caching.
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -41,15 +46,16 @@ class BaseResponse:
         self.time_kwargs = time_kwargs
         self.setup_freqs(**freq_kwargs)
         self.setup_times(**time_kwargs)
+        self.atol = atol
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
                           param_type=self.param_type)
 
-    def setup_times(self, **kwargs):
+    def setup_times(self, times=None, **kwargs):
         """
         Setup time parameterization. See required and optional
-        params given time_mode
+        params given time_mode.
 
         channel :
             None
@@ -58,6 +64,8 @@ class BaseResponse:
             For more kwargs see utils.LinearModel()
             dim is hard-coded according to expected params shape
         """
+        self.times = times
+        self.clear_cache()
         if self.time_mode == 'channel':
             pass  # nothing to do
 
@@ -65,8 +73,8 @@ class BaseResponse:
             # get linear A mapping wrt time
             kwgs = copy.deepcopy(kwargs)
             linear_mode = kwgs.pop('linear_mode')
-            if 'times' in kwgs:
-                kwgs['x'] = kwgs.pop('times')
+            if times is not None:
+                kwgs['x'] = times
             kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
             self.time_LM = utils.LinearModel(linear_mode, dim=-2,
                                              device=self.device, **kwgs)
@@ -74,7 +82,7 @@ class BaseResponse:
         else:
             raise ValueError("{} not recognized".format(self.time_mode))
 
-    def setup_freqs(self, **kwargs):
+    def setup_freqs(self, freqs=None, **kwargs):
         """
         Setup frequency parameterization. See required and optional
         params given freq_mode
@@ -86,6 +94,7 @@ class BaseResponse:
             For more kwargs see utils.LinearModel()
             dim is hard-coded according to expected params shape
         """
+        self.freqs = freqs
         if self.freq_mode == 'channel':
             pass  # nothing to do
 
@@ -94,15 +103,15 @@ class BaseResponse:
             kwgs = copy.deepcopy(kwargs)
             linear_mode = kwgs.pop('linear_mode')
             kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-            if 'freqs' in kwgs:
-                kwgs['x'] = kwgs.pop('freqs')
+            if freqs is not None:
+                kwgs['x'] = freqs
             self.freq_LM = utils.LinearModel(linear_mode, dim=-1,
                                              device=self.device, **kwgs)
 
         else:
             raise ValueError("{} not recognized".format(self.freq_mode))
 
-    def forward(self, params):
+    def forward(self, params, times=None, **kwargs):
         """
         Forward pass params through response
         """
@@ -126,6 +135,11 @@ class BaseResponse:
             params = self.time_LM(params)
 
         params = self.params2complex(params)
+
+        # index time axis if needed
+        if times is not None:
+            tidx = self.get_time_idx(times)
+            params = params[..., tidx, :]
 
         return params
 
@@ -159,8 +173,8 @@ class BaseResponse:
 
         return params
 
-    def __call__(self, params):
-        return self.forward(params)
+    def __call__(self, params, **kwargs):
+        return self.forward(params, **kwargs)
 
     def push(self, device):
         """
@@ -171,6 +185,34 @@ class BaseResponse:
             self.freq_LM.push(device)
         if self.time_mode == 'linear':
             self.time_LM.push(device)
+
+    def clear_cache(self):
+        """
+        Clear caching of time indices
+        """
+        self.cache_tidx = {}
+
+    def hash_times(self, times):
+        """get the hash of a times array"""
+        return hash((times[0], times[-1], len(times)))
+
+    def get_time_idx(self, times):
+        """
+        Get time indices, and store in cache.
+        This is used when minibatching over time axis.
+        """
+        h = self.hash_times(times)
+        if h in self.cache_tidx:
+            # query cache
+            return self.cache_tidx[h]
+        else:
+            # compute time indices
+            idx = [np.where(np.isclose(self.times, t, atol=self.atol, rtol=1e-15))[0][0] for t in times]
+            idx = utils._list2slice(idx)
+            # store in cache and return
+            self.cache_tidx[h] = idx
+            return idx
+
 
 
 class JonesModel(utils.Module):
@@ -345,15 +387,7 @@ class JonesModel(utils.Module):
 
         # push through reponse function
         if jones is None:
-            jones = self.R(self.params)
-
-        # get time select (in case we are mini-batching over time axis)
-        if vd.Ntimes != jones.shape[-2]:
-            tselect = np.ravel([np.where(np.isclose(self.R.times, t, atol=1e-4, rtol=1e-10))[0] for t in vd.times]).tolist()
-            diff = list(set(np.diff(tselect)))
-            if len(diff) == 1:
-                tselect = slice(tselect[0], tselect[-1]+diff[0], diff[0])
-            jones = jones[..., tselect, :]
+            jones = self.R(self.params, times=vd.times)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
@@ -439,6 +473,7 @@ class JonesModel(utils.Module):
 class JonesResponse(BaseResponse):
     """
     A response object for JonesModel, subclass of BaseResponse
+    taking params of shape (Npol, Npol, Nantenna, Ntimes, Nfreqs).
 
     Allows for polynomial parameterization across time and/or frequency,
     and for a gain type of complex, amplitude, phase, delay, EW & NS delay slope,
@@ -639,7 +674,7 @@ class RedVisModel(utils.Module):
         # setup predicted visibility
         vout = vd.copy()
 
-        redvis = self.R(self.params)
+        redvis = self.R(self.params, times=vd.times)
 
         # iterate through vis and apply redundant model
         for i, bl in enumerate(vout.bls):
@@ -730,7 +765,7 @@ class VisModel(utils.Module):
             with the visibility model.
         """
         vout = vd.copy()
-        vis = self.R(self.params)
+        vis = self.R(self.params, times=vd.times)
         if not undo:
             vout.data = vout.data + vis
         else:
@@ -751,6 +786,7 @@ class VisModel(utils.Module):
 class VisModelResponse(BaseResponse):
     """
     A response object for VisModel and RedVisModel, subclass of BaseResponse
+    taking params of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel',
                  param_type='com', device=None,
@@ -847,7 +883,7 @@ class VisCoupling(utils.Module):
             through coupling matrix
         """
         vout = vd.copy(detach=False)
-        coupling = self.R(self.params)
+        coupling = self.R(self.params, times=vd.times)
 
         if vout.Nbls == self.Nbls:
             # if Nbls is the same, assume bl ordering matches!

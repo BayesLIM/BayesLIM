@@ -2763,3 +2763,14 @@ def flatten(arr, Nelem=None):
             flat.append(item)
     return flat
 
+
+def _list2slice(inds):
+    """convert list indexing to slice if possible"""
+    if isinstance(inds, list):
+        diff = list(set(np.diff(inds)))
+        if len(diff) == 1:
+            if (inds[1] - inds[0]) > 0:
+                # only return as slice if inds is increasing
+                return slice(inds[0], inds[-1]+diff[0], diff[0])
+    return inds
+

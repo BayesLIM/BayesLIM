@@ -8,7 +8,7 @@ import os
 import copy
 import h5py
 
-from . import version
+from . import version, utils
 
 
 class TensorData:
@@ -409,7 +409,7 @@ class VisData(TensorData):
             pol_ind = slice(None)
 
         inds = [pol_ind, pol_ind, bl_inds, time_inds, freq_inds]
-        inds = tuple([_list2slice(ind) for ind in inds])
+        inds = tuple([utils._list2slice(ind) for ind in inds])
         slice_num = sum([isinstance(ind, slice) for ind in inds])
         assert slice_num > 3, "cannot fancy index more than 1 axis"
 
@@ -1255,7 +1255,7 @@ class CalData:
             pol_ind = slice(None)
 
         inds = [pol_ind, pol_ind, ant_inds, time_inds, freq_inds]
-        inds = tuple([_list2slice(ind) for ind in inds])
+        inds = tuple([utils._list2slice(ind) for ind in inds])
         slice_num = sum([isinstance(ind, slice) for ind in inds])
         assert slice_num > 3, "cannot fancy index more than 1 axis"
 
@@ -1909,16 +1909,3 @@ def pass_data(fname, copy=False, **kwargs):
         return deepcopy(fname)
     else:
         return fname
-
-
-def _list2slice(inds):
-    """convert list indexing to slice if possible"""
-    if isinstance(inds, list):
-        diff = list(set(np.diff(inds)))
-        if len(diff) == 1:
-            if (inds[1] - inds[0]) > 0:
-                # only return as slice if inds is increasing
-                return slice(inds[0], inds[-1]+diff[0], diff[0])
-
-    return inds
-
