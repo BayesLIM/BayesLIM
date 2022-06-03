@@ -224,7 +224,7 @@ def _log_legendre_norm(l, m):
     return 0.5 * (np.log(2*l+1) - np.log(4*np.pi) + gammaln(l - m + 1) - gammaln(l + m + 1))
 
 
-HYPF_KWGS = {'zeroprec': 100}
+HYPF_KWGS = {'zeroprec': 1000}
 
 
 def hypF(a, b, c, z, high_prec=True, keepdims=False):
