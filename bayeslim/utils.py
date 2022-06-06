@@ -505,7 +505,7 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         else:
             theta_max = np.pi
     x_max = np.cos(theta_max)
-    H_unq = legendre_func(x, l, m, method, x_max=x_max, high_prec=high_prec, bc_type=bc_type)
+    H_unq = legendre_func(x, l, m, method, x_crit=x_max, high_prec=high_prec, bc_type=bc_type)
 
     # now broadcast across redundant theta values
     H = H_unq[:, unq_idx]
