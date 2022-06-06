@@ -238,7 +238,7 @@ def gauss1d(x, scale=1.0, loc=0.0):
 
 def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
                interp='nearest', cosmo=None, nside=None, hpx=True,
-               roll=None):
+               idx=None, roll=None):
     """
     Project simulation cube onto a lightcone.
 
@@ -273,6 +273,9 @@ def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
         If True return a healpix map of shape
         (Nfreqs, Nhpix) otherwise return
         a box of shape (Nfreqs, Npix, Npix)
+    idx : ndarray, optional
+        If hpx, this is the pixel indicies to interpolate
+        onto (given nside). Default is to use all pixels.
     roll : int or tuple, optional
         Before sampling the cube, roll along x, y, and/or z
         axis. If int, all x,y,z are rolled the same, or if
@@ -339,7 +342,7 @@ def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
 
         # tile and sample onto a map
         m = cube2map(cube, dcs[i], sim_res, nside=nside, hpx=hpx,
-                     roll=roll, interp=interp)
+                     roll=roll, interp=interp, idx=idx)
         lcone.append(m)
 
     return np.array(lcone), dcs
