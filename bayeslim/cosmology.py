@@ -346,7 +346,7 @@ def cube2lcone(sims, sim_zs, freqs, sim_res, zinterp='nearest',
 
 
 def cube2map(cube, dc, sim_res, nside=None, hpx=True, roll=None,
-             interp='nearest'):
+             interp='nearest', idx=None):
     """
     Tile a simulation cube and extract
     a map at a fixed comoving distance away
@@ -372,6 +372,9 @@ def cube2map(cube, dc, sim_res, nside=None, hpx=True, roll=None,
         tuple roll (x, y, z) separately.
     interp : str, optional
         Spatial cube method ['nearest', 'linear']
+    idx : ndarray, optional
+        If hpx, this is the pixel indicies to interpolate
+        onto (given nside). Default is to use all pixels.
 
     Returns
     -------
@@ -388,7 +391,9 @@ def cube2map(cube, dc, sim_res, nside=None, hpx=True, roll=None,
         # tile onto a full sky healpix map
         assert utils.import_healpy
         # Get the vector coordinates (vx, vy, vz) of the HEALPIX pixels.
-        vx, vy, vz = utils.healpy.pix2vec(nside, np.arange(utils.healpy.nside2npix(nside)))
+        if idx is None:
+            idx = np.arange(utils.healpy.nside2npix(nside))
+        vx, vy, vz = utils.healpy.pix2vec(nside, idx)
 
         # translate hpx vector coords to comoving coords
         # and put into cube index units
