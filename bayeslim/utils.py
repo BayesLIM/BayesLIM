@@ -597,7 +597,7 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
     return Ylm / norm[:, None], norm
 
 
-def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=False):
+def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv=False):
     """
     Generate (un-normalized) assoc. Legendre basis
 
@@ -611,8 +611,11 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
         integer order
     method : str, ['stripe', 'sphere', 'cap']
         boundary condition method
-    x_max : float, optional
-        If method is stripe, this is the the x value for theta_max
+    x_crit : float, optional
+        If method is stripe, this is the x value for theta_max or theta_max,
+        whichever yields more stable results (generally this is whichever
+        is further from pi/2). Note that tests have shown that setting
+        the stripe center > pi/2 tends to be more stable than < pi/2.
     high_prec : bool, optional
         If True, use arbitrary precision for Plm and Qlm
         otherwise use standard (faster) scipy method
@@ -633,12 +636,12 @@ def legendre_func(x, l, m, method, x_max=None, high_prec=True, bc_type=2, deriv=
     P = special.Plm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=method!='stripe')
     if method == 'stripe':
         # spherical stripe: uses Plm and Qlm
-        assert x_max is not None
+        assert x_crit is not None
         # compute Qlms
         Q = special.Qlm(l, m, x, high_prec=high_prec, keepdims=True, deriv=deriv, sq_norm=False)
         # compute A coefficients
-        A = -special.Plm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False) \
-            / special.Qlm(l, m, x_max, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False)
+        A = -special.Plm(l, m, x_crit, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False) \
+            / special.Qlm(l, m, x_crit, high_prec=high_prec, keepdims=True, deriv=bc_type == 2, sq_norm=False)
 
         # construct legendre func without sq_norm
         H = P + A * Q
@@ -908,7 +911,7 @@ def _gen_bessel2freq_multiproc(job):
 
 def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
                     device=None, method='shell', bc_type=2,
-                    renorm=True, **kln_kwargs):
+                    renorm=True, r_crit=None, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r_nu)
@@ -952,10 +955,13 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         If True (default), renormalize the g_l modes
         such that inner product of r^1 g_l(k_n r) with
         itself equals pi/2 k^-2
+    r_crit : float, optional
+        Either r_min or r_max for method == 'shell'.
+        Used for normalization of 1st and 2nd sph bessel funcs.
     kln_kwargs : dict
-        kwargs to pass to sph_bessel_kln().
-        Note that r_min and r_max are inferred
-        from freqs if not passing kbins.
+        If kbins is not provided, compute them here.
+        These are the args and kwargs fed to
+        sph_bessel_kln().
 
     Returns
     -------
@@ -970,7 +976,6 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     """
     # convert frequency to LOS distance
     r = cosmo.f2r(freqs)
-    r_max, r_min = r.max(), r.min()
     ul = np.unique(l)
 
     # multiproc mode
@@ -985,7 +990,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
             args = (_l, freqs, cosmo)
-            kwargs = dict(device=device, method=method,
+            kwargs = dict(device=device, method=method, r_crit=r_crit,
                           renorm=renorm, bc_type=bc_type)
             kwargs.update(kln_kwargs)
             jobs.append([args, kwargs])
@@ -1009,18 +1014,19 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     # run single proc mode
     gln = {}
     kln = {}
+    if kbins is None:
+        kwgs = copy.deepcopy(kln_kwargs)
+        r_min = kwgs.pop('r_min')
+        r_max = kwgs.pop('r_max')
     for _l in ul:
         # get k bins for this l mode
         if kbins is None:
-            k = sph_bessel_kln(_l, r_min, r_max, bc_type=bc_type, **kln_kwargs)
+            k = sph_bessel_kln(_l, r_min, r_max, bc_type=bc_type, **kwgs)
         else:
             k = kbins[_l]
-        # add monopole term if l = 0
-        if _l == 0:
-            k = np.concatenate([[0], k])
         # get basis function g_l
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
-                             renorm=renorm, device=device, r_star=r_max)
+                             renorm=renorm, device=device, r_crit=r_crit)
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=_float())
         kt = torch.as_tensor(k, device=device, dtype=_float())
@@ -1030,7 +1036,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     return gln, kln
 
 
-def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=False, device=None):
+def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=False, device=None):
     """
     Generate a spherical bessel radial basis function, g_l(k_n r)
 
@@ -1051,7 +1057,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=Fals
         its derivative to zero at edges. Only used to 
         solve for the proportionality constant between
         j_l and y_l if method is shell.
-    r_star : float, optional
+    r_crit : float, optional
         One of the radial edges [cMpc] if method is shell
         (aka rmin or rmax).
     renorm : bool, optional
@@ -1069,7 +1075,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=Fals
     # configure 
     Nk = len(k)
     if method == 'shell':
-        assert r_star is not None
+        assert r_crit is not None
 
     j = torch.zeros(Nk, len(r), dtype=_float(), device=device)
     # loop over kbins and fill j matrix
@@ -1083,8 +1089,8 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=Fals
             j_i = special.jl(l, _k * r)
             deriv = bc_type == 2
             if _k > 0:
-                A = -special.jl(l, _k * r_star, deriv=deriv) / \
-                     special.yl(l, _k * r_star, deriv=deriv).clip(-1e50, np.inf)
+                A = -special.jl(l, _k * r_crit, deriv=deriv) / \
+                     special.yl(l, _k * r_crit, deriv=deriv).clip(-1e50, np.inf)
                 y_i = special.yl(l, _k * r).clip(-1e50, np.inf)
                 j_i += A * y_i
 
@@ -1102,7 +1108,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_star=None, renorm=Fals
 
 
 def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
-                   bc_type=2):
+                   bc_type=2, add_kzero=False):
     """
     Get spherical bessel Fourier bins given r_min, r_max and
     boundary conditions. If r_min == 0, this is a ball.
@@ -1132,6 +1138,8 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
         Type of boundary condition, 1 (Dirichlet) sets
         function to zero at edges, 2 (Neumann, default) sets
         its derivative to zero at edges.
+    add_kzero : bool, optional
+        Add zeroth k mode.
 
     Returns
     -------
@@ -1160,6 +1168,10 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     # decimate if desired
     if decimate:
         k = k[::2]
+
+    # add zeroth k mode
+    if add_kzero:
+        k = np.concatenate([[0.0], k])
 
     return np.asarray(k)
 
