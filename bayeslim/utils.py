@@ -818,8 +818,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         else:
             Ylm = None
 
-        info['alm_mult'] = torch.as_tensor(alm_mult)
-        info['norm'] = torch.as_tensor(norm)
+        if alm_mult is not None:
+            info['alm_mult'] = torch.as_tensor(alm_mult)
+        if norm is not None:
+            info['norm'] = torch.as_tensor(norm)
 
     # truncate sky
     if colat_min is not None:
@@ -857,7 +859,8 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
 
     if to_real and np.iscomplexobj(Ylm):
         Ylm = Ylm.real
-        info['alm_mult'][:] = 1.0
+        if alm_mult is not None:
+            info['alm_mult'][:] = 1.0
 
     if read_data:
         Ylm = torch.tensor(Ylm, device=device)
