@@ -666,10 +666,10 @@ class VisData(TensorData):
         arr[inds] = val
 
     def select(self, bl=None, times=None, freqs=None, pol=None,
-               bl_inds=None, time_inds=None, freq_inds=None):
+               bl_inds=None, time_inds=None, freq_inds=None,
+               inplace=True):
         """
         Downselect on data tensor. Can only specify one axis at a time.
-        Operates inplace.
 
         Parameters
         ----------
@@ -696,7 +696,15 @@ class VisData(TensorData):
             a list of freq indices if these
             are already known given location
             in self.freqs.
+        inplace : bool, optional
+            If True downselect inplace, otherwise return
+            a new VisData object
         """
+        if inplace:
+            obj = self
+        else:
+            obj = copy.deepcopy(self)
+
         assert sum([(bl is not None) | (bl_inds is not None),
                     (times is not None) | (time_inds is not None),
                     (freqs is not None) | (freq_inds is not None),
@@ -704,45 +712,48 @@ class VisData(TensorData):
 
         if bl is not None or bl_inds is not None:
             assert not ((bl is not None) & (bl_inds is not None))
-            data = self.get_data(bl, bl_inds=bl_inds, squeeze=False)
-            cov = self.get_cov(bl, bl_inds=bl_inds, squeeze=False)
-            icov = self.get_icov(bl, bl_inds=bl_inds, squeeze=False)
-            flags = self.get_flags(bl, bl_inds=bl_inds, squeeze=False)
-            if bl_inds is not None: bl = [self.bls[i] for i in bl_inds]
-            self.setup_data(bl, self.times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(bl, bl_inds=bl_inds, squeeze=False)
+            cov = obj.get_cov(bl, bl_inds=bl_inds, squeeze=False)
+            icov = obj.get_icov(bl, bl_inds=bl_inds, squeeze=False)
+            flags = obj.get_flags(bl, bl_inds=bl_inds, squeeze=False)
+            if bl_inds is not None: bl = [obj.bls[i] for i in bl_inds]
+            obj.setup_data(bl, obj.times, obj.freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif times is not None or time_inds is not None:
             assert not ((times is not None) & (time_inds is not None))
-            data = self.get_data(times=times, time_inds=time_inds, squeeze=False)
-            cov = self.get_cov(times=times, time_inds=time_inds, squeeze=False)
-            icov = self.get_icov(times=times, time_inds=time_inds, squeeze=False)
-            flags = self.get_flags(times=times, time_inds=time_inds, squeeze=False)
-            if time_inds is not None: times = self.times[time_inds]
-            self.setup_data(self.bls, times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(times=times, time_inds=time_inds, squeeze=False)
+            cov = obj.get_cov(times=times, time_inds=time_inds, squeeze=False)
+            icov = obj.get_icov(times=times, time_inds=time_inds, squeeze=False)
+            flags = obj.get_flags(times=times, time_inds=time_inds, squeeze=False)
+            if time_inds is not None: times = obj.times[time_inds]
+            obj.setup_data(obj.bls, times, obj.freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif freqs is not None or freq_inds is not None:
             assert not ((freqs is not None) & (freq_inds is not None))
-            data = self.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            cov = self.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            icov = self.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            flags = self.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            if freq_inds is not None: freqs = self.freqs[freq_inds]
-            self.setup_data(self.bls, self.times, freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            cov = obj.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            icov = obj.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            flags = obj.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            if freq_inds is not None: freqs = obj.freqs[freq_inds]
+            obj.setup_data(obj.bls, obj.times, freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif pol is not None:
-            data = self.get_data(pol=pol)
-            flags = self.get_flags(pol=pol)
-            cov = self.get_cov(pol=pol)
-            icov = self.get_icov(pol=pol)
-            self.setup_data(self.bls, self.times, self.freqs, pol=pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(pol=pol)
+            flags = obj.get_flags(pol=pol)
+            cov = obj.get_cov(pol=pol)
+            icov = obj.get_icov(pol=pol)
+            obj.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
+
+        if not inplace:
+            return obj
 
     def apply_cal(self, cd, undo=False, inplace=True, cal_2pol=False):
         """
@@ -1500,7 +1511,7 @@ class CalData:
 
         arr[inds] = val
 
-    def select(self, ants=None, times=None, freqs=None, pol=None):
+    def select(self, ants=None, times=None, freqs=None, pol=None, inplace=True):
         """
         Downselect on data tensor. Can only specify one axis at a time.
         Operates in place.
@@ -1515,47 +1526,55 @@ class CalData:
             List of frequencies [Hz] to downselect
         pol : str, optional
             Polarization to downselect
-        atol : float, optional
-            absolute tolerance for matching times or freqs
+        inplace : bool, optional
+            If True downselect inplace, otherwise return a new object.
         """
+        if inplace:
+            obj = self
+        else:
+            obj = copy.deepcopy(self)
+
         assert sum([ants is not None, times is not None, freqs is not None,
                     pol is not None]) < 2, "only one axis can be fed at a time"
 
         if ants is not None:
-            data = self.get_data(ants, squeeze=False)
-            cov = self.get_cov(ants, squeeze=False)
-            icov = self.get_icov(ants, squeeze=False)
-            flags = self.get_flags(ants, squeeze=False)
-            self.setup_data(ants, self.times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(ants, squeeze=False)
+            cov = obj.get_cov(ants, squeeze=False)
+            icov = obj.get_icov(ants, squeeze=False)
+            flags = obj.get_flags(ants, squeeze=False)
+            obj.setup_data(ants, obj.times, obj.freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif times is not None:
-            data = self.get_data(times=times, squeeze=False)
-            cov = self.get_cov(times=times, squeeze=False)
-            icov = self.get_icov(times=times, squeeze=False)
-            flags = self.get_flags(times=times, squeeze=False)
-            self.setup_data(self.ants, times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(times=times, squeeze=False)
+            cov = obj.get_cov(times=times, squeeze=False)
+            icov = obj.get_icov(times=times, squeeze=False)
+            flags = obj.get_flags(times=times, squeeze=False)
+            obj.setup_data(obj.ants, times, obj.freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif freqs is not None:
-            data = self.get_data(freqs=freqs, squeeze=False)
-            cov = self.get_cov(freqs=freqs, squeeze=False)
-            icov = self.get_icov(freqs=freqs, squeeze=False)
-            flags = self.get_flags(freqs=freqs, squeeze=False)
-            self.setup_data(self.ants, self.times, freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(freqs=freqs, squeeze=False)
+            cov = obj.get_cov(freqs=freqs, squeeze=False)
+            icov = obj.get_icov(freqs=freqs, squeeze=False)
+            flags = obj.get_flags(freqs=freqs, squeeze=False)
+            obj.setup_data(obj.ants, obj.times, freqs, pol=obj.pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
 
         elif pol is not None:
-            data = self.get_data(pol=pol)
-            flags = self.get_flags(pol=pol)
-            cov = self.get_cov(pol=pol)
-            icov = self.get_icov(pol=pol)
-            self.setup_data(self.ants, self.times, self.freqs, pol=pol, 
-                            data=data, flags=self.flags, cov=cov, icov=icov,
-                            cov_axis=self.cov_axis, history=self.history)
+            data = obj.get_data(pol=pol)
+            flags = obj.get_flags(pol=pol)
+            cov = obj.get_cov(pol=pol)
+            icov = obj.get_icov(pol=pol)
+            obj.setup_data(obj.ants, obj.times, obj.freqs, pol=pol, 
+                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            cov_axis=obj.cov_axis, history=obj.history)
+
+        if not inplace:
+            return obj
 
     def write_hdf5(self, fname, overwrite=False):
         """
