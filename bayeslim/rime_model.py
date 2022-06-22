@@ -233,6 +233,7 @@ class RIME(utils.Module):
         assert idx < self.Nbatch and idx >= 0
         self.bl_group_id = int(np.floor(idx / len(self.sim_time_groups)))
         self.time_group_id = idx % len(self.sim_time_groups)
+        self._set_group()
 
     def _set_group(self):
         """
