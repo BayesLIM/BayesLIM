@@ -343,7 +343,7 @@ def _gen_sph2pix_multiproc(job):
     return Ydict, norm, alm_mult
 
 
-def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
+def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
                 Nproc=None, Ntask=10, device=None, high_prec=True,
                 bc_type=2, real=False, m_phasor=False,
                 renorm=False, **norm_kwargs):
@@ -384,8 +384,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
         Spherical harmonic mode ['sphere', 'stripe', 'cap']
         For 'sphere', l modes are integer
         For 'stripe' or 'cap', l modes are float
-    theta_max : float, optional
-        For method == 'stripe' or 'cap', this is the maximum theta
+    theta_crit : float, optional
+        For method == 'stripe' or 'cap', this is a theta
         boundary [radians] of the mask.
     real_field : bool, optional
         If True, treat sky as real-valued
@@ -455,7 +455,7 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
             args = (theta, phi, _l, _m)
-            kwgs = dict(method=method, theta_max=theta_max,
+            kwgs = dict(method=method, theta_crit=theta_crit,
                         high_prec=high_prec, m_phasor=m_phasor,
                         renorm=renorm, bc_type=bc_type, real=real)
             kwgs.update(norm_kwargs)
@@ -500,12 +500,11 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_max=None,
     # compute assoc. legendre: note orthonorm is already in Plm and Qlm
     x = np.cos(unq_theta)
     if method == 'sphere':
-        if theta_max is not None:
-            assert np.isclose(theta_max, np.pi)
-        else:
-            theta_max = np.pi
-    x_max = np.cos(theta_max)
-    H_unq = legendre_func(x, l, m, method, x_crit=x_max, high_prec=high_prec, bc_type=bc_type)
+        if theta_crit is None:
+            theta_crit = np.pi
+
+    x_crit = np.cos(theta_crit)
+    H_unq = legendre_func(x, l, m, method, x_crit=x_crit, high_prec=high_prec, bc_type=bc_type)
 
     # now broadcast across redundant theta values
     H = H_unq[:, unq_idx]
@@ -612,7 +611,7 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
     method : str, ['stripe', 'sphere', 'cap']
         boundary condition method
     x_crit : float, optional
-        If method is stripe, this is the x value for theta_max or theta_max,
+        If method is stripe, this is the x value for theta_min or theta_max,
         whichever yields more stable results (generally this is whichever
         is further from pi/2). Note that tests have shown that setting
         the stripe center > pi/2 tends to be more stable than < pi/2.
