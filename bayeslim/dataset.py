@@ -706,38 +706,42 @@ class VisData(TensorData):
             assert not ((bl is not None) & (bl_inds is not None))
             data = self.get_data(bl, bl_inds=bl_inds, squeeze=False)
             cov = self.get_cov(bl, bl_inds=bl_inds, squeeze=False)
+            icov = self.get_icov(bl, bl_inds=bl_inds, squeeze=False)
             flags = self.get_flags(bl, bl_inds=bl_inds, squeeze=False)
             if bl_inds is not None: bl = [self.bls[i] for i in bl_inds]
             self.setup_data(bl, self.times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif times is not None or time_inds is not None:
             assert not ((times is not None) & (time_inds is not None))
             data = self.get_data(times=times, time_inds=time_inds, squeeze=False)
             cov = self.get_cov(times=times, time_inds=time_inds, squeeze=False)
+            icov = self.get_icov(times=times, time_inds=time_inds, squeeze=False)
             flags = self.get_flags(times=times, time_inds=time_inds, squeeze=False)
             if time_inds is not None: times = self.times[time_inds]
             self.setup_data(self.bls, times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif freqs is not None or freq_inds is not None:
             assert not ((freqs is not None) & (freq_inds is not None))
             data = self.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             cov = self.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            icov = self.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             flags = self.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             if freq_inds is not None: freqs = self.freqs[freq_inds]
             self.setup_data(self.bls, self.times, freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif pol is not None:
             data = self.get_data(pol=pol)
             flags = self.get_flags(pol=pol)
             cov = self.get_cov(pol=pol)
+            icov = self.get_icov(pol=pol)
             self.setup_data(self.bls, self.times, self.freqs, pol=pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
     def apply_cal(self, cd, undo=False, inplace=True, cal_2pol=False):
@@ -1520,33 +1524,37 @@ class CalData:
         if ants is not None:
             data = self.get_data(ants, squeeze=False)
             cov = self.get_cov(ants, squeeze=False)
+            icov = self.get_icov(ants, squeeze=False)
             flags = self.get_flags(ants, squeeze=False)
             self.setup_data(ants, self.times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif times is not None:
             data = self.get_data(times=times, squeeze=False)
             cov = self.get_cov(times=times, squeeze=False)
+            icov = self.get_icov(times=times, squeeze=False)
             flags = self.get_flags(times=times, squeeze=False)
             self.setup_data(self.ants, times, self.freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif freqs is not None:
             data = self.get_data(freqs=freqs, squeeze=False)
             cov = self.get_cov(freqs=freqs, squeeze=False)
+            icov = self.get_icov(freqs=freqs, squeeze=False)
             flags = self.get_flags(freqs=freqs, squeeze=False)
             self.setup_data(self.ants, self.times, freqs, pol=self.pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
         elif pol is not None:
             data = self.get_data(pol=pol)
             flags = self.get_flags(pol=pol)
             cov = self.get_cov(pol=pol)
+            icov = self.get_icov(pol=pol)
             self.setup_data(self.ants, self.times, self.freqs, pol=pol, 
-                            data=data, flags=self.flags, cov=cov,
+                            data=data, flags=self.flags, cov=cov, icov=icov,
                             cov_axis=self.cov_axis, history=self.history)
 
     def write_hdf5(self, fname, overwrite=False):
