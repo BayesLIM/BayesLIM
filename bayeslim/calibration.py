@@ -239,8 +239,9 @@ class JonesModel(utils.Module):
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
     """
-    def __init__(self, params, ants, bls=None, refant=None, R=None, parameter=True,
-                 polmode='1pol', single_ant=False, name=None, vis_type='com'):
+    def __init__(self, params, ants, p0=None, bls=None, refant=None, R=None,
+                 parameter=True, polmode='1pol', single_ant=False, name=None,
+                 vis_type='com'):
         """
         Antenna-based Jones model.
 
@@ -255,6 +256,10 @@ class JonesModel(utils.Module):
             List of antenna numbers associated with an ArrayModel object
             with matched ordering to params' antenna axis, with the
             exception of single_ant mode.
+        p0 : tensor, optional
+            Starting params to sum with params before Response
+            function. This reframes params as a perturbation about p0.
+            Same shape and dtype as params. 
         bls : list
             List of ant-pair tuples that hold the baselines of the
             input visibilities, matched ordering to baseline ax of V
@@ -287,6 +292,7 @@ class JonesModel(utils.Module):
         super().__init__(name=name)
         self.params = params
         self.device = params.device
+        self.p0 = p0
         self.refant, self.refant_idx = refant, None
         self.ants = ants
         if self.refant is not None:
@@ -385,9 +391,15 @@ class JonesModel(utils.Module):
         # setup empty VisData for output
         vout = vd.copy()
 
+        # add prior model for params
+        if self.p0 is None:
+            params = self.params
+        else:
+            params = self.params + self.p0
+
         # push through reponse function
         if jones is None:
-            jones = self.R(self.params, times=vd.times)
+            jones = self.R(params, times=vd.times)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
@@ -406,6 +418,8 @@ class JonesModel(utils.Module):
         self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
+        if self.p9 is not None:
+            self.p0 = self.p0.to(device)
 
     def to_CalData(self, pol=None, flags=None, cov=None, cov_axis=None,
                    telescope=None, antpos=None, history='', **kwargs):
