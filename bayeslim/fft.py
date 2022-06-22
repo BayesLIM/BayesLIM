@@ -10,10 +10,11 @@ from . import dataset, utils
 
 class FFT(utils.Module):
     """
-    An FFT block
+    A 1D FFT block
     """
     def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None,
-                 ndim=None, window=None, fftshift=True, ifft=False):
+                 ndim=None, window=None, fftshift=True, ifft=False,
+                 edgecut=None):
         """
         Parameters
         ----------
@@ -37,6 +38,12 @@ class FFT(utils.Module):
             if True, fftshift along dim after fft.
         inv : bool, optional
             if True, use the ifft convention instead of fft.
+        edgecut : tuple of int, optional
+            Number of channels to give zero weight on either end of
+            the FFT (edgecut_start, edgecut_end). If providing
+            a window, this ensures the window smoothly connects
+            to the edgecut (not the same as only giving zero weight
+            to edge channels).
         """
         super().__init__()
         self.dim = dim
@@ -51,11 +58,20 @@ class FFT(utils.Module):
         else:
             self.start = 0.0
             self.dx, self.freqs = None, None
+        if ininstance(edgecut, int):
+            edgecut = (edgecut, edgecut)
+        elif edgecut is None:
+            edgecut = (0, 0)
+        self.edgecut = edgecut
         self.win = None
         if window is not None:
             assert N is not None
             assert ndim is not None
-            win = gen_window(window, N)
+            Nwin = N - self.edgecut[0] - self.edgecut[1]
+            win = gen_window(window, Nwin)
+            win = torch.cat([torch.zeros(self.edgecut[0]),
+                             win,
+                             torch.zeros(self.edgecut[1])])
             shape = [1 for i in range(ndim)]
             shape[dim] = N
             self.win = win.reshape(*shape)
@@ -67,7 +83,7 @@ class FFT(utils.Module):
         if isinstance(inp, np.ndarray):
             inp = torch.as_tensor(inp)
 
-        elif isinstance(inp, (dataset.VisData, dataset.MapData)):
+        elif isinstance(inp, (dataset.VisData, dataset.CalData, dataset.MapData)):
             out = inp.copy()
             out.data = self.forward(inp.data, **kwargs)
             return out
