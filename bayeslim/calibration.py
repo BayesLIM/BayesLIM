@@ -418,7 +418,7 @@ class JonesModel(utils.Module):
         self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
-        if self.p9 is not None:
+        if self.p0 is not None:
             self.p0 = self.p0.to(device)
 
     def to_CalData(self, pol=None, flags=None, cov=None, cov_axis=None,
