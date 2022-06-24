@@ -293,7 +293,6 @@ class JonesModel(utils.Module):
         self.params = params
         self.device = params.device
         self.p0 = p0
-        self.refant, self.refant_idx = refant, None
         self.ants = ants
         if parameter:
             self.params = torch.nn.Parameter(self.params)
@@ -305,20 +304,7 @@ class JonesModel(utils.Module):
         self.single_ant = single_ant
         self._setup(bls)
         self.vis_type = vis_type
-        if self.refant is not None:
-            assert self.refant in ants, "need a valid refant"
-            self.refant_idx = ants.index(self.refant)
-            self.rephase_mode = None
-            if self.R.param_type == 'com':
-                if self.R.time_mode == 'channel' and self.R.freq_mode == 'channel':
-                    self.rephase_mode = 'divide'
-                else:
-                    self.rephase_mode = 'zero'
-            elif self.R.param_type in ['dly', 'phs']:
-                self.rephase_mode = 'subtract'
-            self.fix_refant_phs()
-            if self.p0 is not None:
-                rephase_to_refant(self.p0, self.refant_idx, mode=self.rephase_mode, inplace=True)
+        self.set_refant(refant)
 
         # construct _args for str repr
         self._args = dict(refant=refant, polmode=polmode)
@@ -334,6 +320,31 @@ class JonesModel(utils.Module):
             assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
             self._vis2ants = {bl: (0, 0) for bl in bls}
 
+    def set_refant(self, refant):
+        """
+        Set the reference antenna for phase calibration
+
+        Parameters
+        ----------
+        refant : int
+            Reference antenna number, to be indexed
+            in the self.ants list, which should
+            match the Nants ordering in self.params
+        """
+        self.refant, self.refant_idx = refant, None
+        self.rephase_mode = None
+        if refant is not None:
+            assert self.refant in self.ants, "need a valid refant"
+            self.refant_idx = self.ants.index(self.refant)
+            if self.R.time_mode == 'channel' and self.R.freq_mode == 'channel':
+                self.rephase_mode = 'rephase'
+            else:
+                self.rephase_mode = 'zero'
+            self.fix_refant_phs()
+            if self.p0 is not None:
+                rephase_to_refant(self.p0, self.R.param_type, self.refant_idx,
+                                  mode=self.rephase_mode, inplace=True)
+
     def fix_refant_phs(self):
         """
         Ensure that the reference antenna phase
@@ -343,7 +354,7 @@ class JonesModel(utils.Module):
         otherwise params is unaffected.
         """
         with torch.no_grad():
-            rephase_to_refant(self.params, self.refant_idx,
+            rephase_to_refant(self.params, self.R.param_type, self.refant_idx,
                               mode=self.rephase_mode, inplace=True)
 
     def forward(self, vd, undo=False, prior_cache=None, jones=None):
