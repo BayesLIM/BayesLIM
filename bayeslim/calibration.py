@@ -341,9 +341,6 @@ class JonesModel(utils.Module):
             else:
                 self.rephase_mode = 'zero'
             self.fix_refant_phs()
-            if self.p0 is not None:
-                rephase_to_refant(self.p0, self.R.param_type, self.refant_idx,
-                                  mode=self.rephase_mode, inplace=True)
 
     def fix_refant_phs(self):
         """
@@ -355,7 +352,7 @@ class JonesModel(utils.Module):
         """
         with torch.no_grad():
             rephase_to_refant(self.params, self.R.param_type, self.refant_idx,
-                              mode=self.rephase_mode, inplace=True)
+                              p0=self.p0, mode=self.rephase_mode, inplace=True)
 
     def forward(self, vd, undo=False, prior_cache=None, jones=None):
         """
@@ -1041,7 +1038,7 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
     return vout, cov_out
 
 
-def rephase_to_refant(params, param_type, refant_idx, mode='rephase', inplace=False):
+def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', inplace=False):
     """
     Rephase an antenna calibration parameter tensor such that
     the reference antenna has zero phase. In the default case,
@@ -1059,6 +1056,11 @@ def rephase_to_refant(params, param_type, refant_idx, mode='rephase', inplace=Fa
         Type of params tensor ['com', 'phs', 'dly', 'amp']
     refant_idx : int
         Reference antenna index in Nants axis of params
+    p0 : tensor, optional
+        Initial params tensor that is directly summed with params
+        before solving for reference antenna phase. Must have
+        same shape and dtype as params. Default is zeros.
+        Note in inplace, this tensor is also updated inplace.
     mode : str, optional
         If 'rephase', divide all antennas by refant phase (default)
         or 'zero', just zero-out the imag component of the refant
@@ -1068,34 +1070,46 @@ def rephase_to_refant(params, param_type, refant_idx, mode='rephase', inplace=Fa
 
     Returns
     -------
-    tensor
-        If not inplace
+    params : tensor
+        rephased (or zero'd) params tensor if not inplace
+    p0 : tensor
+        rephased (or zero'd) p0 tensor if not inplace
     """
+    if p0 is None:
+        p0 = torch.zeros_like(params)
+
     if not inplace:
         params = copy.deepcopy(params)
+        p0 = copy.deepcopy(p0)
 
     if mode == 'rephase':
         # rephase all antennas to refant phase
-        p = params
+        _p = params
 
         if param_type == 'com':
             # divide out refant complex phasor
             if not torch.is_complex(params):
-                p = utils.viewcomp(params)
+                _p = utils.viewcomp(params)
+                _p0 = utils.viewcomp(p0)
 
             # get refant phasor and divide params by it
-            phs = torch.angle(p[:, :, refant_idx:refant_idx+1]).detach().clone()
-            p /= torch.exp(1j * phs)
+            phs = torch.angle((_p + _p0)[:, :, refant_idx:refant_idx+1]).detach().clone()
+            phasor = torch.exp(1j * phs)
+            _p /= phasor
+            _p0 /= phasor
 
             if not torch.is_complex(params):
                 # recast as view_real
-                p = utils.viewreal(p)
+                _p = utils.viewreal(_p)
+                _p0 = utils.viewreal(_p0)
 
-            params[:] = p
+            params[:] = _p
+            p0[:] = _p0
 
         elif param_type in ['dly', 'phs']:
             # subtract dly or phs of refant for all antennas
             params -= params[:, :, refant_idx:refant_idx+1].clone()
+            p0 -= p0[:, :, refant_idx:refant_idx+1].clone()
 
     elif mode == 'zero':
         # just zero-out refant imag component (or dly / phs)
@@ -1105,17 +1119,27 @@ def rephase_to_refant(params, param_type, refant_idx, mode='rephase', inplace=Fa
                 params[:, :, refant_idx:refant_idx+1, ..., 1] = torch.zeros_like(
                     params[:, :, refant_idx:refant_idx+1, ..., 1]
                 )
+                p0[:, :, refant_idx:refant_idx+1, ..., 1] = torch.zeros_like(
+                    p0[:, :, refant_idx:refant_idx+1, ..., 1]
+                )
+
             else:
                 params.imag[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                     params.imag[:, :, refant_idx:refant_idx+1]
+                )
+                p0.imag[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
+                    p0.imag[:, :, refant_idx:refant_idx+1]
                 )
         elif param_type in ['dly', 'phs']:
             params[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                 params[:, :, refant_idx:refant_idx+1]
             )
+            p0[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
+                p0[:, :, refant_idx:refant_idx+1]
+            )
 
     if not inplace:
-        return params
+        return params, p0
 
 
 def compute_redcal_degen(params, ants, antpos, wgts=None):
