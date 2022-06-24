@@ -295,9 +295,6 @@ class JonesModel(utils.Module):
         self.p0 = p0
         self.refant, self.refant_idx = refant, None
         self.ants = ants
-        if self.refant is not None:
-            assert self.refant in ants, "need a valid refant"
-            self.refant_idx = ants.index(self.refant)
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
@@ -308,6 +305,21 @@ class JonesModel(utils.Module):
         self.single_ant = single_ant
         self._setup(bls)
         self.vis_type = vis_type
+        if self.refant is not None:
+            assert self.refant in ants, "need a valid refant"
+            self.refant_idx = ants.index(self.refant)
+            self.rephase_mode = None
+            if self.R.param_type == 'com':
+                if self.R.time_mode == 'channel' and self.R.freq_mode == 'channel':
+                    self.rephase_mode = 'divide'
+                else:
+                    self.rephase_mode = 'zero'
+            elif self.R.param_type in ['dly', 'phs']:
+                self.rephase_mode = 'subtract'
+            self.fix_refant_phs()
+            if self.p0 is not None:
+                rephase_to_refant(self.p0, self.refant_idx, mode=self.rephase_mode, inplace=True)
+
         # construct _args for str repr
         self._args = dict(refant=refant, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
@@ -331,28 +343,8 @@ class JonesModel(utils.Module):
         otherwise params is unaffected.
         """
         with torch.no_grad():
-            if self.R.param_type == 'com':
-                # cast params to complex if needed
-                if not torch.is_complex(self.params):
-                    params = utils.viewcomp(self.params)
-                else:
-                    params = self.params
-
-                # if time and freq mode are 'channel' then divide by phase
-                if self.R.time_mode == 'channel' and self.R.freq_mode == 'channel':
-                    phs = torch.angle(params[:, :, self.refant_idx:self.refant_idx+1]).detach().clone()
-                    params /= torch.exp(1j * phs)
-                # otherwise just set imag component to zero
-                else:
-                    params.imag[:, :, self.refant_idx:self.refant_idx+1] = torch.zeros_like(params.imag[:, :, self.refant_idx:self.refant_idx+1])
-
-                if not torch.is_complex(self.params):
-                    # recast as view_real
-                    params = utils.viewreal(params)
-                self.params[:] = params
-
-            elif self.R.param_type in ['dly', 'phs']:
-                self.params -= self.params[:, :, self.refant_idx:self.refant_idx+1].clone()
+            rephase_to_refant(self.params, self.refant_idx,
+                              mode=self.rephase_mode, inplace=True)
 
     def forward(self, vd, undo=False, prior_cache=None, jones=None):
         """
@@ -1036,6 +1028,66 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
             vout[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", g1, vis[:, :, i], g2.conj())
 
     return vout, cov_out
+
+
+def rephase_to_refant(params, refant_idx, mode='divide', inplace=False):
+    """
+    Rephase an antenna calibration parameter tensor such that
+    the reference antenna has zero phase. For complex gain tensors,
+    mode should be divide. For delay or phase gain tensors,
+    mode should be subtract. If time or freq axes have linear mappings
+    (e.g. polynomial) mode should be zero regardless of data type.
+
+    Parameters
+    ----------
+    params : tensor
+        Antenna gain parameters of shape
+        (Npol, Npol, Nants, Ntimes, Nfreqs)
+    refant_idx : int
+        Reference antenna index in Nants axis of params
+    mode : str, optional
+        Either divide params tensor by refant angle, subtract
+        by refant value, or simply set refant imag to zero.
+        ['divide', 'subtract', 'zero'].
+    inplace : bool, optional
+        If True operate inplace otherwise return new copy.
+
+    Returns
+    -------
+    tensor
+        If not inplace
+    """
+    if not inplace:
+        params = copy.deepcopy(params)
+
+    if mode == 'divide':
+        # assume params should be complex
+        if not torch.is_complex(params):
+            p = utils.viewcomp(params)
+        else:
+            p = params
+
+        # get refant phasor and divide params by it
+        phs = torch.angle(p[:, :, refant_idx:refant_idx+1]).detach().clone()
+        p /= torch.exp(1j * phs)
+
+        if not torch.is_complex(params):
+            # recast as view_real
+            p = utils.viewreal(p)
+
+        params[:] = p
+
+    elif mode == 'subtract':
+        # assume params is delay or phase type
+        params -= params[:, :, refant_idx:refant_idx+1].clone()
+
+    elif mode == 'zero':
+        # assume params has linear mappings
+        # just set imag to zero: use zeros_like b/c scalar assignment on GPU breaks
+        params.imag[:, :, refant_idx:refant_idx+1] = torch.zeros_like(params.imag[:, :, refant_idx:refant_idx+1])
+
+    if not inplace:
+        return params
 
 
 def compute_redcal_degen(params, ants, antpos, wgts=None):

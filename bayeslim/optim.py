@@ -600,7 +600,7 @@ class LogProb(utils.Module):
 
         return target, inp
 
-    def forward_chisq(self, idx=None):
+    def forward_chisq(self, idx=None, sum_chisq=True):
         """
         Compute and return chisquare
         by evaluating the forward model and comparing
@@ -613,6 +613,10 @@ class LogProb(utils.Module):
             is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
+        sum_chisq : bool, optional
+            If True, sum the chisquare over
+            the target data axes and return a scalar,
+            otherwise returns a tensor of chisq values
 
         Returns
         -------
@@ -648,7 +652,9 @@ class LogProb(utils.Module):
             cov_axis = None
 
         # evaluate chi square
-        chisq = torch.sum(apply_icov(res, icov, cov_axis))
+        chisq = apply_icov(res, icov, cov_axis)
+        if sum_chisq:
+            chisq = torch.sum(chisq)
         if torch.is_complex(chisq):
             chisq = chisq.real
 
