@@ -69,7 +69,7 @@ class BaseResponse:
             dim is hard-coded according to expected params shape
         """
         self.times = times
-        self.clear_cache()
+        self.clear_time_cache()
         if self.time_mode == 'channel':
             pass  # nothing to do
 
