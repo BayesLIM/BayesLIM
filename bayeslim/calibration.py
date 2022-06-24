@@ -478,7 +478,7 @@ class JonesModel(utils.Module):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
 
         # get g1 and g2 indexing
-        g1_idx, g2_idx = self.query_cache(bls)
+        g1_idx, g2_idx = self.query_cache(vd.bls)
 
         # apply calibration and insert into output vis
         vout.data, _ = _apply_cal(vd.data, jones, g1_idx, g2_idx,
