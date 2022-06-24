@@ -10,13 +10,13 @@ from . import utils, linalg, dataset
 
 class BaseResponse:
     """
-    A base parameter response object for JonesModel taking
-    params of shape (Npol, Npol, Nantenna, Ntimes, Nfreqs),
-    and for VisModel taking params of shape
-    (Npol, Npol, Nbl, Ntimes, Nfreqs)
+    A base parameter response object for JonesModel, VisModel,
+    and RedVisModel, taking a params tensor for JonesModel of shape
+    (Npol, Npol, Nantenna, Ntimes, Nfreqs), and for (Red)VisModel
+    of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
-                 device=None, freq_kwargs={}, time_kwargs={}, atol=1e-4):
+                 device=None, freq_kwargs={}, time_kwargs={}, atol=1e-4, bls=None):
         """
         Parameters
         ----------
@@ -37,6 +37,9 @@ class BaseResponse:
             Keyword arguments for setup_times().
         atol : float, optional
             Absolute tolerance used for time index caching.
+        bls : list, optional
+            List of baseline tuples (antenna numer integer pairs), used for
+            baseline minibatching, e.g. [(0, 1), (10, 25), ...]
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -47,6 +50,7 @@ class BaseResponse:
         self.setup_freqs(**freq_kwargs)
         self.setup_times(**time_kwargs)
         self.atol = atol
+        self.bls = bls
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
@@ -111,7 +115,7 @@ class BaseResponse:
         else:
             raise ValueError("{} not recognized".format(self.freq_mode))
 
-    def forward(self, params, times=None, **kwargs):
+    def forward(self, params, times=None, bls=None, **kwargs):
         """
         Forward pass params through response
         """
@@ -140,6 +144,15 @@ class BaseResponse:
         if times is not None:
             tidx = self.get_time_idx(times)
             params = params[..., tidx, :]
+
+        # index bl axis if needed
+        if bls is not None:
+            bidx = self.get_bl_idx(bls)
+            if isinstance(bidx, slice) and (bidx.stop-bidx.start) == parmas.shape[3] and bidx.step == 1:
+                # this is an empty slice
+                params = params
+            else:
+                params = params[..., bidx, :, :]
 
         return params
 
@@ -186,7 +199,7 @@ class BaseResponse:
         if self.time_mode == 'linear':
             self.time_LM.push(device)
 
-    def clear_cache(self):
+    def clear_time_cache(self):
         """
         Clear caching of time indices
         """
@@ -213,6 +226,32 @@ class BaseResponse:
             self.cache_tidx[h] = idx
             return idx
 
+    def clear_bl_cache(self):
+        """
+        Clear caching of bl indices
+        """
+        self.cache_bidx = {}
+
+    def hash_bls(self, bls):
+        """get the hash of a bls list"""
+        return hash((bls[0], bls[-1], len(bls)))
+
+    def get_bl_idx(self, bls):
+        """
+        Get bl indices, and store in cache.
+        This is used when minibatching over baseline axis.
+        """
+        h = self.hash_bls(bls)
+        if h in self.cache_bidx:
+            # query cache
+            return self.cache_bidx[h]
+        else:
+            # compute bl indices
+            idx = [bls.index(bl) for bl in bls]
+            idx = utils._list2slice(idx)
+            # store in cache and return
+            self.cache_bidx[h] = idx
+            return idx
 
 
 class JonesModel(utils.Module):
@@ -239,7 +278,7 @@ class JonesModel(utils.Module):
     and 4-pol mode it is non-diagonal of shape (2, 2),
     where the off-diagonal are the so called "D-terms".
     """
-    def __init__(self, params, ants, p0=None, bls=None, refant=None, R=None,
+    def __init__(self, params, ants, p0=None, refant=None, R=None,
                  parameter=True, polmode='1pol', single_ant=False, name=None,
                  vis_type='com'):
         """
@@ -260,9 +299,6 @@ class JonesModel(utils.Module):
             Starting params to sum with params before Response
             function. This reframes params as a perturbation about p0.
             Same shape and dtype as params. 
-        bls : list
-            List of ant-pair tuples that hold the baselines of the
-            input visibilities, matched ordering to baseline ax of V
         refant : int, optional
             Reference antenna number from ants list for fixing the gain
             phase. Only needed if JonesResponse param_type is
@@ -302,15 +338,56 @@ class JonesModel(utils.Module):
         self.R = R
         self.polmode = polmode
         self.single_ant = single_ant
-        self._setup(bls)
         self.vis_type = vis_type
         self.set_refant(refant)
+        self.clear_cache()
 
         # construct _args for str repr
         self._args = dict(refant=refant, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
-    def _setup(self, bls):
+    def hash_bls(self, bls):
+        return hash((bls[0], bls[-1], len(bls)))
+
+    def query_cache(self, bls):
+        """
+        Query gain_idx_cache for indexing
+
+        Parameters
+        ----------
+        bls : list
+            List of antenna number (int) pairs
+            e.g. [(0, 1), (0, 10), (1, 25)]
+
+        Returns
+        -------
+        g1_idx : tensor
+            len(bls) tensor indexing the Nants
+            axis of params for each baseline
+            for gain1 term
+        g2_idx : tensor
+            len(bls) tensor indexing the Nants
+            axis of params for each baseline
+            for gain2 term
+        """
+        h = self.hash_bls(bls)
+        if h not in self.gain_idx_cache:
+            if self.single_ant:
+                g1_idx = torch.as_tensor([0 for bl in bls], device=self.device)
+                g2_idx = torch.as_tensor([0 for bl in bls], device=self.device)
+            else:
+                g1_idx = torch.as_tensor([self.ants.index(bl[0]) for bl in bls], device=self.device)
+                g2_idx = torch.as_tensor([self.ants.index(bl[1]) for bl in bls], device=self.device)
+            self.gain_idx_cache[h] = (g1_idx, g2_idx)
+        else:
+            g1_idx, g2_idx = self.gain_idx_cache[h]
+
+        return g1_idx, g2_idx
+
+    def clear_cache(self):
+        self.gain_idx_cache = {}
+
+    def _setup_bls(self, bls):
         bls = [tuple(bl) for bl in bls]
         self.bls = bls
         if not self.single_ant:
@@ -381,10 +458,6 @@ class JonesModel(utils.Module):
         # fix reference antenna if needed
         self.fix_refant_phs()
 
-        # configure data if needed
-        if vd.bls != self.bls:
-            self._setup(vd.bls)
-
         # push vd to self.device
         vd.push(self.device)
 
@@ -404,8 +477,11 @@ class JonesModel(utils.Module):
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
 
+        # get g1 and g2 indexing
+        g1_idx, g2_idx = self.query_cache(bls)
+
         # apply calibration and insert into output vis
-        vout.data, _ = apply_cal(vd.data, self.bls, jones, self._vis2ants,
+        vout.data, _ = _apply_cal(vd.data, jones, g1_idx, g2_idx,
                                  cal_2pol=self.polmode=='2pol',
                                  vis_type=self.vis_type, undo=undo)
 
@@ -779,7 +855,7 @@ class VisModel(utils.Module):
             with the visibility model.
         """
         vout = vd.copy()
-        vis = self.R(self.params, times=vd.times)
+        vis = self.R(self.params, times=vd.times, bls=bls)
         if not undo:
             vout.data = vout.data + vis
         else:
@@ -825,12 +901,12 @@ class VisModelResponse(BaseResponse):
                          param_type=param_type, device=device,
                          freq_kwargs=freq_kwargs, time_kwargs=time_kwargs)
 
-    def forward(self, params):
+    def forward(self, params, bls=None):
         """
         Forward pass params through response to get
         complex visibility model per time and frequency
         """
-        params = super().forward(params)
+        params = super().forward(params, bls=bls)
 
         # detect if params needs to be casted into complex
         if self.param_type == 'amp_phs':
@@ -921,7 +997,7 @@ class VisCoupling(utils.Module):
         self.params = utils.push(self.params, device)
 
 
-def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
+def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
               vis_type='com', undo=False, inplace=False):
     """
     Apply calibration to a visibility tensor with a complex
@@ -944,11 +1020,8 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
     gains : tensor
         Gain tensor of shape
         (Npol, Npol, Nants, Ntimes, Nfreqs)
-    vis2ants : dict
-        Mapping between a baseline tuple in bls to the indices of
-        the two antennas (g_1, g_2) in gains to apply.
-        E.g. calibrating with Nants gains {(0, 1): (0, 1), (1, 3): (1, 3), ...}
-        E.g. calibrating vis with 1 gain, {(0, 1): (0, 0), (1, 3): (0, 0), ...}
+    ants : list
+        List of antenna integers of gains along Nants dimension
     cal_2pol : bool, optional
         If True, calibrate 4pol vis with diagonal of 4pol gains
         i.e., ignore off-diagonal gain terms. Only applicable if 
@@ -975,6 +1048,28 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
     cov_out : tensor, optional
         Output vis covariance
     """
+    g1_idx = torch.as_tensor([ants.index(bl[0]) for bl in bls], device=gains.device)
+    g2_idx = torch.as_tensor([ants.index(bl[1]) for bl in bls], device=gains.device)
+
+    return _apply_cal(vis, gains, g1_idx, g2_idx, cal_2pol=cal_2pol, cov=cov,
+                      vis_type=vis_type, undo=undo, inplace=inplace)
+
+
+def _apply_cal(vis, gains, g1_idx, g2_idx, cal_2pol=False, cov=None,
+               vis_type='com', undo=False, inplace=False):
+    """
+    Apply calibration
+
+    See apply_cal() for details on args and kwargs.
+
+    g1_idx, g2_idx : tensor
+        len(Nbls) tensor indexing the Nants dimension of gains for
+        each antenna (g1, g2) participating in a given baseline in vis.
+
+    Returns
+    -------
+    new_vis, new_cov
+    """
     assert vis.shape[:2] == gains.shape[:2], "vis and gains must have same Npols"
 
     # get polmode
@@ -997,7 +1092,6 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
                 invgains[:, :, i] = torch.pinv(gains[:, :, i])
         gains = invgains
 
-    # iterate through visibility and apply gain terms
     if inplace:
         vout = vis
     else:
@@ -1010,30 +1104,28 @@ def apply_cal(vis, bls, gains, vis2ants, cal_2pol=False, cov=None,
     else:
         cov_out = cov
 
-    for i, bl in enumerate(bls):
-        # pick out appropriate antennas
-        g1 = gains[:, :, vis2ants[bl][0]]
-        g2 = gains[:, :, vis2ants[bl][1]]
+    g1 = torch.gather(gains, 2, g1_idx[None, None, :, None, None].expand_as(vis))
+    g2 = torch.gather(gains, 2, g2_idx[None, None, :, None, None].expand_as(vis))
+       
+    if polmode in ['1pol', '2pol']:
+        # update visibilities
+        if vis_type == 'com':
+            G = g1 * g2.conj()
+            vout = linalg.diag_matmul(G, vis)
 
-        if polmode in ['1pol', '2pol']:
-            # update visibilities
-            if vis_type == 'com':
-                G = g1 * g2.conj()
-                vout[:, :, i] = linalg.diag_matmul(G, vis[:, :, i])
+            # update covariance
+            if cov is not None:
+                GG = G * G.conj()
+                if torch.is_complex(GG):
+                    GG = GG.real
+                cov_out = linalg.diag_matmul(GG, cov)
 
-                # update covariance
-                if cov is not None:
-                    GG = G * G.conj()
-                    if torch.is_complex(GG):
-                        GG = GG.real
-                    cov_out[:, :, i] = linalg.diag_matmul(GG, cov[:, :, i])
+        elif vis_type == 'dly':
+            vout = vis + g1 - g2
 
-            elif vis_type == 'dly':
-                vout[:, :, i] = vis[:, :, i] + g1 - g2
-
-        else:
-            assert vis_type == 'com', "must have complex vis_type for 4pol mode"
-            vout[:, :, i] = torch.einsum("ab...,bc...,dc...->ad...", g1, vis[:, :, i], g2.conj())
+    else:
+        assert vis_type == 'com', "must have complex vis_type for 4pol mode"
+        vout = torch.einsum("ab...,bc...,dc...->ad...", g1, vis, g2.conj())
 
     return vout, cov_out
 
