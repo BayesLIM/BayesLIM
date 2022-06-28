@@ -740,7 +740,7 @@ class RedVisModel(utils.Module):
         vd : VisData, optional
             Starting model visibilities of shape
             (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
-            this should be a unit matrix so that the
+            this should be a zero tensor so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
@@ -782,6 +782,7 @@ class RedVisModel(utils.Module):
         """
         Push to a new device
         """
+        self.device = device
         self.params = utils.push(self.params, device)
 
 
@@ -870,6 +871,7 @@ class VisModel(utils.Module):
         """
         Push to a new device
         """
+        self.device = device
         self.params = utils.push(self.params, device)
 
 
@@ -994,6 +996,7 @@ class VisCoupling(utils.Module):
         """
         Push to a new device
         """
+        self.device = device
         self.params = utils.push(self.params, device)
 
 
