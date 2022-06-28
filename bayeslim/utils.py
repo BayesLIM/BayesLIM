@@ -502,6 +502,7 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
     if method == 'sphere':
         if theta_crit is None:
             theta_crit = np.pi
+    assert theta_crit is not None
 
     x_crit = np.cos(theta_crit)
     H_unq = legendre_func(x, l, m, method, x_crit=x_crit, high_prec=high_prec, bc_type=bc_type)
@@ -1817,7 +1818,7 @@ class PixInterp:
             for each entry in zen, az for interpolation
         """
         # get hash
-        h = ang_hash(zen), ang_hash(az)
+        h = arr_hash(zen), arr_hash(az)
         if h in self.interp_cache:
             # retrieve interpolation if cached
             interp = self.interp_cache[h]
@@ -2583,27 +2584,26 @@ def white_noise(*args):
     return n / np.sqrt(2)
 
 
-def ang_hash(zen):
+def arr_hash(arr):
     """
-    Hash sky angle (e.g. zen) by using its
+    Hash an array or list by using its
     first value, last value and length as a
     unique identifier of the array.
-    Note that if zen is a tensor, the device and
+    Note that if arr is a tensor, the device and
     require_grad values will affect the hash!
     Also note, normally array hash is not allowed.
 
     Parameters
     ----------
-    zen : ndarray or tensor
-        sky angle [arb. units]
+    arr : ndarray or tensor or list
 
     Returns
     -------
     hash object
     """
-    if isinstance(zen, torch.Tensor):
-        zen = zen.numpy()
-    return hash((zen[0], zen[-1], len(zen)))
+    if isinstance(arr, torch.Tensor):
+        arr = arr.numpy()
+    return hash((arr[0], arr[-1], len(arr)))
 
 
 def push(tensor, device, parameter=False):

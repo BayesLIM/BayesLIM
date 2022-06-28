@@ -193,6 +193,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         super().__init__(pixtype, device=device, **pix_kwargs)
         # set location metadata
         self.ants = sorted(antpos.keys())
+        self._ant_idx = {a: self.ants.index(a) for a in self.ants}
         self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device=device)
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
@@ -224,7 +225,10 @@ class ArrayModel(utils.PixInterp, utils.Module):
         ant : int
             antenna number in self.ants
         """
-        return self.antpos[self.ants.index(ant)]
+        if isinstance(ant, list):
+            return self.antpos[[self._ant_idx[a] for a in ant]]
+        else:
+            return self.antpos[self._ant_idx[ant]]
 
     def match_bl_len(self, bl, bls):
         """
@@ -279,11 +283,16 @@ class ArrayModel(utils.PixInterp, utils.Module):
         self.cache = {}
 
     def _fringe(self, bl, zen, az):
-        """compute fringe term"""
+        """compute fringe term. Returns fringe tensor
+        of shape (Nbls, Nfreqs, Nzen)"""
+        if not isinstance(bl, list):
+            bl = [bl]
         zen, az = torch.as_tensor(zen), torch.as_tensor(az)
-        # check for pointing-vec s caching
-        s_h = utils.ang_hash(zen), utils.ang_hash(az)
-        if s_h not in self.cache and bl not in self.cache:
+        # get angle and baseline hash
+        s_h = utils.arr_hash(zen), utils.arr_hash(az)  # used for s caching
+        b_h = utils.arr_hash(bl)
+        key = (b_h, s_h)  # used for fringe caching
+        if s_h not in self.cache and key not in self.cache:
             # compute the pointing vector at each sky location
             _zen = zen * D2R
             _az = az * D2R
@@ -296,17 +305,23 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 self.cache[s_h] = s
         elif self.cache_s:
             s = self.cache[s_h]
-
-        # check for fringe caching
-        if bl not in self.cache:
-            # get bl_vec
-            bl_vec = self.get_antpos(bl[1]) - self.get_antpos(bl[0])
-            f = torch.exp(2j * np.pi * (bl_vec @ s) / 2.99792458e8 * self.freqs[:, None])
-            if self.cache_f:
-                self.cache[bl] = f
         else:
-            # interpolate cached fringe
-            f = self.interp(self.cache[bl], zen, az)
+            # this is fringe caching
+            pass
+
+        if key not in self.cache:
+            # get baseline vectors: shape (Nbls, 3)
+            bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
+
+            # get fringe pattern: shape (Nbls, Nfreqs, Npix)
+            f = torch.exp(2j * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
+
+            # if fringe caching, store the full fringe (this is large in memory!)
+            if self.cache_f:
+                self.cache[key] = f
+        else:
+            # interpolate cached fringe (not generally recommended)
+            f = self.interp(self.cache[key], zen, az)
 
         return f
 
@@ -317,7 +332,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         Parameters
         ----------
-        bl : 2-tuple
+        bl : 2-tuple or list of such
             Baseline tuple, specifying the participating
             antennas from self.ants, e.g. (1, 2)
         zen : tensor
@@ -330,15 +345,17 @@ class ArrayModel(utils.PixInterp, utils.Module):
         Returns
         -------
         fringe : tensor
-            Fringe response of shape (Nfreqs, Npix)
-            or (Nfreqs, Nalm)
+            Fringe response of shape (Nbls, Nfreqs, Npix)
         """
         # do checks for fringe caching
         if self.cache_f:
             # first figure out if a bl with same len is cached
-            if not self.parameter:
+            if not self.parameter and not isinstance(bl, list):
+                # this only works if feeding a single bl antpair
                 ang, match = self.match_bl_len(bl, self.cache.keys())
                 if match:
+                    # found a match, so swap this bl w/ existing
+                    # bl but rotate az angles
                     bl = match
                     az = (az + ang) % 360
 
@@ -358,10 +375,10 @@ class ArrayModel(utils.PixInterp, utils.Module):
         fringe : tensor
             Holds the fringe response for a given baseline
             vector across frequency. If kind = 'point'
-            or 'pixel' its shape is (Nfreqs, Npix)
+            or 'pixel' its shape is (Nbls, Nfreqs, Npix)
         sky : tensor
             Holds the sky coherency matrix, which generally
-            has a shape of (Npol, Npol, Nfreqs, Npix)
+            has a shape of (Nvec, Nvec, Nfreqs, Npix)
         kind : str
             Kind of fringe and sky model. 
             One of either ['point', 'pixel', 'alm']
@@ -370,12 +387,13 @@ class ArrayModel(utils.PixInterp, utils.Module):
         -------
         psky : tensor
             perceived sky, having mutiplied fringe with sky
+            of shape (Npol, Npol, Nbls, Nfreqs, Npix)
         """
         # move sky to fringe device
         sky = sky.to(self.device)
 
         if kind in ['point', 'pixel']:
-            psky = sky * fringe
+            psky = sky[:, :, None] * fringe
 
         elif kind == 'alm':
             raise NotImplementedError

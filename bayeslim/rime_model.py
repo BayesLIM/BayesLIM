@@ -78,13 +78,14 @@ class RIME(utils.Module):
         freqs : tensor
             Array of observational frequencies [Hz]
         data_bls : list, optional
-            List of baselines in the output visibilities.
+            List of all baselines in the output visibility.
             Default is just sim_bls. However, if simulating redundant
             baseline groups and array.antpos is not a parameter
             data_bls can contain bls not in sim_bls, and the
             redundant bl in sim_bls will be copied over to data_bls
-            appropriately. Note this will not work if array.antpos
-            is a parameter.
+            appropriately. If a bl in data_bls does not have a redudant
+            bl match in sim_bls, it is dropped. Baseline redundancies
+            are computed by the array object.
         name : str, optional
             Name for this object, stored as self.name
         verbose : bool, optional
@@ -115,10 +116,16 @@ class RIME(utils.Module):
 
     def setup_sim_bls(self, sim_bls, data_bls=None):
         """
-        Set the active set of baselines for sim_bls,
-        which is iterated over in forward().
-        Also sets self._bl2vis mapping, which maps a baseline
-        tuple to its indices in the output visibility.
+        Configure how baselines are grouped, simulated, copied,
+        and inserted into the output visibilities.
+
+        Also sets self._blg_index dictionary, which maps a
+        baseline group id to a slice object of the data bls
+        in the visibility, and an indexing tensor expanding
+        sim_bls to data_bls length.
+
+        This sets self.sim_bl_groups, self.data_bl_groups dictionaries,
+        the self._blg_index dictionary, and resets self.bl_group_id -> 0
 
         Parameters
         ----------
@@ -136,7 +143,7 @@ class RIME(utils.Module):
             if isinstance(sim_bls[0], tuple):
                 sim_bls = {0: sim_bls}
             elif isinstance(sim_bls[0], list):
-                sim_bls = {i: sim_bls[i] for i in range(len(sim_bls))}
+                sim_bls = {i: sbl for i, sbl in enumerate(sim_bls)}
 
         # type checks
         for k in sim_bls:
@@ -149,35 +156,47 @@ class RIME(utils.Module):
                     data_bls[i] = tuple(bl)
 
         self.sim_bl_groups = sim_bls
-        self.all_bls = [bl for k in self.sim_bl_groups for bl in self.sim_bl_groups[k]]
         data_bls = None if self.array.parameter else data_bls
 
-        # _bl2vis: maps baseline tuple to output visibility indices along bl dimension
+        # setup _blg_index
         if data_bls is None:
             # output visibility is same shape as sim_bls
-            self._bl2vis = {k: {bl: i for i, bl in enumerate(self.sim_bl_groups[k])} for k in self.sim_bl_groups}
+            self._blg_index = {}
+            N = 0
+            for i, blg in enumerate(self.sim_bl_groups):
+                Nbl = len(blg)
+                self._blg_index[i] = (slice(N, N + Nbl), None)
+                N += Nbl
             self.data_bl_groups = self.sim_bl_groups
         else:
             # output visibility has extra redundant baselines
-            self._bl2vis = {}
+            self._blg_index = {}
             self.data_bl_groups = {}
+            N = 0
             # iterate over sim baseline groups
-            for k in self.sim_bl_groups:
-                if k not in self._bl2vis:
-                    self._bl2vis[k] = {}
+            for i, blg in enumerate(self.sim_bl_groups):
                 # get redundant group indices for all sim_bls
-                sim_red_inds = [self.array.bl2red[bl] for bl in self.sim_bl_groups[k]]
-                # reject any data_bls that don't share a redundant group with sim_bls
+                sim_red_inds = [self.array.bl2red[bl] for bl in blg]
+                # reject any data_bls without a redundant type in sim_bls
                 _data_bls = [bl for bl in data_bls if self.array.bl2red[bl] in sim_red_inds]
                 # now get redundant group indices for data_bls
                 data_red_inds = [self.array.bl2red[bl] for bl in _data_bls]
-                assert set(sim_red_inds) == set(data_red_inds), "unique bl type(s) in data_bls wrt sim_bls or vice versa"
-                self.data_bl_groups[k] = [bl for i, bl in enumerate(_data_bls) if data_red_inds[i] in sim_red_inds]
-                # iterate over every bl in sim_bl_groups and compute its index in data_bl_groups
-                for si, bl in zip(sim_red_inds, self.sim_bl_groups[k]):
-                    indices = [i for i, di in enumerate(data_red_inds) if di == si]
-                    assert np.all(np.diff(indices) == 1), "redundant bls must be adjacent each other in data_bls"
-                    self._bl2vis[k][bl] = slice(indices[0], indices[-1] + 1)
+                # this ensures all simulated and data baselines have a redundant match
+                assert set(sim_red_inds) == set(data_red_inds), "non-overlapping bl type(s) in data_bls and sim_bls"
+                # this ensures that redundant baselines are grouped together in data_bls
+                assert len(set(np.diff(data_red_inds))) == len(blg)
+                self.data_bl_groups[i] = _data_bls
+                # get visibility slice object
+                Nbl = len(_data_bls)
+                slice_obj = slice(N, N + Nbl)
+                N += Nbl
+                # get sim_bls indexing tensor
+                index = torch.as_tensor(
+                    [sim_red_inds.index(i) for i in data_red_inds], 
+                    device=self.device
+                )
+                # populate
+                self._blg_index[i] = (slice_obj, index)
 
         self._set_group()
 
@@ -309,16 +328,15 @@ class RIME(utils.Module):
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
                     ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
-                    cut_sky = self.beam._cut_sky_fov(sky, cut)
+                    cut_sky = beam_model.cut_sky_fov(sky, cut)
 
                 elif kind == 'alm':
                     raise NotImplementedError
 
-                # iterate over baselines: generate and apply fringe, apply beam, sum
-                for k, bl in enumerate(self.sim_bls):
-                    bl_slice = self._bl2vis[self.bl_group_id][bl]
-                    self._prod_and_sum(ant_beams, cut_sky, bl[0], bl[1],
-                                       kind, zen, az, vis, bl_slice, j)
+                # apply beam and fringe for all bls to sky and sum into vis
+                bl_slice, red_idx = self._blg_index[self.bl_group_id]
+                self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
+                                   kind, zen, az, vis, bl_slice, red_idx, j)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope,
@@ -328,20 +346,43 @@ class RIME(utils.Module):
 
         return vd
 
-    def _prod_and_sum(self, ant_beams, cut_sky, ant1, ant2,
-                      kind, zen, az, vis, bl_slice, obs_ind):
+    def _prod_and_sum(self, beam, cut_sky, bl, kind,
+                      zen, az, vis, bl_slice, red_idx, obs_ind):
         """
         Sky product and sum into vis inplace
+
+        Parameters
+        ----------
+        beam : tensor
+            Beam model output from gen_beam() of shape
+            (Npol, Nvec, Nmodel, Nfreqs, Nsources)
+        cut_sky : tensor
+            Sky model (Nvec, Nvec, Nfreqs, Nsources)
+        bl : tuple or list of tuple
+            Baseline antenna pair e.g. (0, 1) or list
+            of such to operate on simultaneously
+        kind : str
+            Kind of sky model ['point', 'pixel', 'alm']
+        zen, az : tensor
+            Zenith and azimuth angles of sky model [degrees]
+        vis : tensor
+            Visibility tensor to insert results
+            (Npol, Npol, Nbls, Ntimes, Nfreqs)
+        bl_slice : slice object, int, or list of int
+            Baseline indexing along Nbls axis of vis
+            for all baselines in current baseline group.
+        red_idx : tensor
+            Indexing tensor that expands sim_bls into data_bls
+            for the current baseline group. If None, no expansion
+            is applied.
+        obs_ind : int
+            Time index along Ntimes axis of vis
         """
-        # get beam of each antenna
-        beam1 = ant_beams[:, :, self.beam.ant2beam[ant1]]
-        beam2 = ant_beams[:, :, self.beam.ant2beam[ant2]]
+        # first apply beam to sky: psky shape (Npol, Npol, Nbls, Nfreqs, Nsources)
+        psky = self.beam.apply_beam(beam, bl, cut_sky)
 
-        # generate fringe
-        fringe = self.array.gen_fringe((ant1, ant2), zen, az)
-
-        # first apply beam to sky
-        psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
+        # generate fringe: (Nbls, Nfreqs, Npix)
+        fringe = self.array.gen_fringe(bl, zen, az)
 
         # then apply fringe to beam-weighted sky
         psky = self.array.apply_fringe(fringe, psky, kind)
@@ -351,7 +392,14 @@ class RIME(utils.Module):
         #psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # sum across sky
-        vis[:, :, bl_slice, obs_ind, :] += torch.sum(psky, axis=-1).to(self.device)
+        sum_sky = torch.sum(psky, axis=-1).to(self.device)
+
+        # copy sim_bls over to each redundant bl in visibility if needed
+        if red_idx is not None:
+            sum_sky = torch.index_select(sum_sky, 2, red_idx)
+
+        # sum across sky
+        vis[:, :, bl_slice, obs_ind, :] += sum_sky
 
 
 def log(message, verbose=False, style=1):

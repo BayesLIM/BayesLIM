@@ -73,7 +73,7 @@ class PixelBeam(utils.Module):
             Observational frequency bins [Hz]
         ant2beam : dict
             Dict of integers that map a antenna number to a particular
-            index in the beam model output from beam.
+            index in the Nmodel dimension from beam.
             E.g. {10: 0, 11: 0, 12: 0} for 3-antennas [10, 11, 12] with
             1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
             [10, 11, 12] with different 3 beam models.
@@ -231,36 +231,60 @@ class PixelBeam(utils.Module):
 
         return beam, cut, zen, az
 
-    def apply_beam(self, beam1, sky, beam2=None):
+    def apply_beam(self, beam, bls, sky):
         """
-        Apply a baseline beam matrix to a representation
+        Apply a beam matrix to a pixel representation
         of the sky.
 
         Parameters
         ----------
-        beam1 : tensor
-            Holds the beam response for the first antenna in a
-            baseline, with shape (Npol, Nvec, Nfreqs, Nsources).
+        beam : tensor
+            Holds the full beam output from gen_beam()
+            of shape (Npol, Nvec, Nmodel, Nfreqs, Nsources)
+        bls : 2-tuple or list of tuples
+            Specifies which baselines (antenna-integer pairs)
+            to use in applying beam to sky.
+            self.ant2beam maps antenna integers to beam model indices.
         sky : tensor
             sky coherency matrix (Nvec, Nvec, Nfreqs, Nsources)
-        beam2 : tensor, optional
-            The beam response for the second antenna in the baseline.
-            If None, use beam1 for both ant1 and ant2.
 
         Returns
         -------
         psky : tensor
             perceived sky, having mutiplied beam with sky, of shape
-            (Npol, Npol, Nfreqs, Npix)
+            (Npol, Npol, Nmodelpair, Nfreqs, Npix)
         """
-        # move objects to device
-        beam1 = beam1.to(self.device)
-        sky = sky.to(self.device)
+        # get modelpairs from baseline(s)
+        if not isinstance(bls, list):
+            bls = [bls]
+        bl2mp = {_bl: (self.ant2beam[_bl[0]], self.ant2beam[_bl[1]]) for _bl in bls}
+        modelpairs = sorted(set(bl2mp.values()))
+        Nmp = len(modelpairs)
 
-        if beam2 is None:
-            beam2 = beam1
+        # move objects to device
+        if utils.device(beam.device) != utils.device(self.device):
+            beam = beam.to(self.device)
+        if utils.device(sky.device) != utils.device(self.device):
+            sky = sky.to(self.device)
+
+        # expand beam to (Npol, Nvec, Nmodelpair, Nfreqs, Nsources)
+        if Nmp == 1:
+            # simple case that is just a slice
+            p1 = modelpairs[0][0]
+            beam1 = beam[:, :, p1:p1+1]
+            if not self.powerbeam:
+                p2 = modelpairs[0][1]
+                beam2 = beam[:, :, p2:p2+1]
         else:
-            beam2 = beam2.to(self.device)
+            # for multiple pairs need to index along Nmodel dimension
+            ant1_idx = torch.as_tensor([mp[0] for mp in modelpairs], device=self.device)
+            beam1 = torch.index_select(beam, 2, ant1_idx)
+            if not self.powerbeam:
+                ant2_idx = torch.as_tensor([mp[1] for mp in modelpairs], device=self.device)
+                beam2 = torch.index_select(beam, 2, ant2_idx)
+
+        # give sky an Nmodelpair dimension
+        sky = sky[:, :, None]
 
         # multiply in the beam(s) depending on polmode
         if self.Npol == 1:
@@ -293,28 +317,16 @@ class PixelBeam(utils.Module):
                 assert sky.shape[:2] == (2, 2)
                 psky = torch.einsum("ab...,bc...,dc...->ad...", beam1, sky, beam2.conj())
 
+        # expand Nmodelpair dimension to Nbls length
+        if Nmp > 1:
+            mp_idx = torch.as_tensor([modelpairs.index(bl2mp[_bl]) for _bl in bls])
+            psky = torch.index_select(psky, 2, mp_idx)
+        else:
+            psky = psky.expand(psky.shape[:2] + (len(bls),) + psky.shape[3:])
+
         return psky
 
-    def _cut_sky_fov(self, sky, cut):
-        """
-        Given a sky tensor (..., Npixels) and a FOV cut
-        indexing array (Nfov_pixels,), apply the indexing to sky
-        and return the cut_sky. Optimized for backprop through
-        integer indexing.
-        """
-        if isinstance(cut, slice):
-            cut_sky = sky[..., cut]
-        else:
-            if isinstance(cut, np.ndarray):
-                cut = torch.as_tensor(cut)
-            if utils.device(cut.device) != utils.device(sky.device):
-                cut = cut.to(sky.device)
-            # for integer index, this is faster than sky[...,cut] on GPU
-            cut_sky = sky.index_select(-1, cut)
-
-        return cut_sky
-
-    def forward(self, sky_comp, telescope, time, modelpairs, prior_cache=None, **kwargs):
+    def forward(self, sky_comp, telescope, time, bls, prior_cache=None, **kwargs):
         """
         Forward pass a single sky model through the beam
         at a single observation time.
@@ -331,17 +343,12 @@ class PixelBeam(utils.Module):
             A model of the telescope location
         time : float
             Observation time in Julian Date (e.g. 2458101.23456)
-        modelpairs : list of 2-tuple
-            A list of all unique antenna-pairs of the beam's
-            "model" axis, with each 2-tuple indexing the
-            unique model axis of the beam.
-            For a beam with a single antenna model, or Nmodel=1,
-            then modelpairs = [(0, 0)].
-            For a beam with 3 antenna models and a baseline
-            list of [(ant1, ant2), (ant1, ant3), (ant2, ant3)],
-            then modelpairs = [(0, 1), (0, 2), (1, 2)]. Note that
-            the following ArrayModel object should have a mapping
-            of modelpairs to the physical baseline list.
+        bls : 2-tuple or list of 2-tuples
+            A list of baselines (antenna integer pairs) to use in
+            applying beam to sky. e.g. [(0, 1), (0, 10)].
+            Note that the self.ant2beam dictionary controls
+            which antenna integer maps to which beam model
+            along the Nmodel dimension of self.params
         prior_cache : dict, optional
             Cache for storing computed priors as self.name
 
@@ -349,7 +356,7 @@ class PixelBeam(utils.Module):
         -------
         psky_comp : dict
             Same input dictionary but with psky as 'sky' of shape
-            (Npol, Npol, Nmodelpair, Nfreqs, Nsources), where
+            (Npol, Npol, Nbls, Nfreqs, Nsources), where
             roughly psky = beam1 * sky * beam2. The FoV cut has
             been applied to psky as well as the 'angs' key
         """
@@ -363,20 +370,14 @@ class PixelBeam(utils.Module):
 
             # evaluate beam
             beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
-            sky = self._cut_sky_fov(sky_comp['sky'], cut)
+            sky = cut_sky_fov(sky_comp['sky'], cut)
             alt = alt[cut]
 
-            # iterate over baselines
-            shape = sky.shape
-            psky = torch.zeros((self.Npol, self.Npol) + (len(modelpairs),) + shape[2:],
-                               dtype=sky.dtype, device=self.device)
-            for k, (ant1, ant2) in enumerate(modelpairs):
-                # get beam of each antenna
-                beam1 = beam[:, :, ant1]
-                beam2 = beam[:, :, ant2]
+            # apply beam to sky to get perceived sky
+            psky = self.apply_beam(beam, bls, sky)
 
-                # apply beam to sky
-                psky[:, :, k] = self.apply_beam(beam1, sky, beam2=beam2)
+            if utils.device(psky) != utils.device(self.device):
+                psky = psky.to(self.device)
 
             sky_comp['sky'] = psky
             sky_comp['angs'] = sky_comp['angs'][0][cut], sky_comp['angs'][1][cut]
@@ -1046,7 +1047,7 @@ class YlmResponse(PixelResponse):
             if not stored return None
         """
         # get hash
-        h = utils.ang_hash(zen)
+        h = utils.arr_hash(zen)
         if h in self.Ylm_cache:
             Ylm = self.Ylm_cache[h]
             if isinstance(Ylm, (list, tuple)):
@@ -1054,10 +1055,11 @@ class YlmResponse(PixelResponse):
             else:
                 alm_mult = None
         else:
-            # generate it, may take a while
-            # generate exact Y_lm
-            Ylm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R, self.l, self.m,
-                                              device=self.device, **self.Ylm_kwargs)
+            # generate exact Y_lm, may take a while
+            Ylm, norm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R,
+                                                    self.l, self.m,
+                                                    device=self.device,
+                                                    **self.Ylm_kwargs)
             # store it
             self.Ylm_cache[h] = (Ylm, alm_mult)
             self.ang_cache[h] = (zen, az)
@@ -1086,7 +1088,7 @@ class YlmResponse(PixelResponse):
         """
         assert len(self.l) == len(Ylm)
         zen, az = angs
-        h = utils.ang_hash(zen)
+        h = utils.arr_hash(zen)
         self.Ylm_cache[h] = (Ylm, alm_mult)
         self.ang_cache[h] = (zen, az)
 
@@ -1457,3 +1459,22 @@ def pointing_offset(theta, phi, theta_x=0, theta_y=0):
 
     return new_theta, new_phi
 
+
+def cut_sky_fov(sky, cut):
+    """
+    Given a sky tensor (..., Npixels) and a FOV cut
+    indexing array (Nfov_pixels,), apply the indexing to sky
+    and return the cut_sky. Optimized for backprop through
+    integer indexing.
+    """
+    if isinstance(cut, slice):
+        cut_sky = sky[..., cut]
+    else:
+        if isinstance(cut, np.ndarray):
+            cut = torch.as_tensor(cut)
+        if utils.device(cut.device) != utils.device(sky.device):
+            cut = cut.to(sky.device)
+        # for integer index, this is faster than sky[...,cut] on GPU
+        cut_sky = sky.index_select(-1, cut)
+
+    return cut_sky
