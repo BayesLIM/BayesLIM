@@ -284,14 +284,18 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
     def _fringe(self, bl, zen, az):
         """compute fringe term. Returns fringe tensor
-        of shape (Nbls, Nfreqs, Nzen)"""
+        of shape (Nbls, Nfreqs, Nzen)
+        """
         if not isinstance(bl, list):
             bl = [bl]
         zen, az = torch.as_tensor(zen), torch.as_tensor(az)
         # get angle and baseline hash
         s_h = utils.arr_hash(zen), utils.arr_hash(az)  # used for s caching
         b_h = utils.arr_hash(bl)
-        key = (b_h, s_h)  # used for fringe caching
+        key = (b_h, s_h)
+        # s_h is used for pointing vector caching
+        # b_h is used for bl_vec caching
+        # key is used for complex fringe caching
         if s_h not in self.cache and key not in self.cache:
             # compute the pointing vector at each sky location
             _zen = zen * D2R
@@ -311,7 +315,11 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         if key not in self.cache:
             # get baseline vectors: shape (Nbls, 3)
-            bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
+            if b_h not in self.cache:
+                bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
+                self.cache[b_h] = bl_vec
+            else:
+                bl_vec = self.cache[b_h]
 
             # get fringe pattern: shape (Nbls, Nfreqs, Npix)
             f = torch.exp(2j * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
