@@ -184,7 +184,7 @@ class RIME(utils.Module):
                 # this ensures all simulated and data baselines have a redundant match
                 assert set(sim_red_inds) == set(data_red_inds), "non-overlapping bl type(s) in data_bls and sim_bls"
                 # this ensures that redundant baselines are grouped together in data_bls
-                assert len(set(np.diff(data_red_inds))) == len(blg)
+                assert len(np.where(np.diff(data_red_inds)!=0)[0]) == len(blg) - 1
                 self.data_bl_groups[i] = _data_bls
                 # get visibility slice object
                 Nbl = len(_data_bls)
