@@ -901,12 +901,12 @@ class VisModelResponse(BaseResponse):
                          param_type=param_type, device=device,
                          freq_kwargs=freq_kwargs, time_kwargs=time_kwargs)
 
-    def forward(self, params, bls=None):
+    def forward(self, params, bls=None, times=None, **kwargs):
         """
         Forward pass params through response to get
         complex visibility model per time and frequency
         """
-        params = super().forward(params, bls=bls)
+        params = super().forward(params, bls=bls, times=times)
 
         # detect if params needs to be casted into complex
         if self.param_type == 'amp_phs':
