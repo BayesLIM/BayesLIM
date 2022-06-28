@@ -729,6 +729,7 @@ class RedVisModel(utils.Module):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        self.clear_cache()
 
     def forward(self, vd, undo=False, prior_cache=None):
         """
@@ -764,19 +765,44 @@ class RedVisModel(utils.Module):
         # setup predicted visibility
         vout = vd.copy()
 
+        # get unique visibilities
         redvis = self.R(self.params, times=vd.times)
 
-        # iterate through vis and apply redundant model
-        for i, bl in enumerate(vout.bls):
-            if not undo:
-                vout.data[:, :, i] = vd.data[:, :, i] + redvis[:, :, self.bl2red[bl]]
-            else:
-                vout.data[:, :, i] = vd.data[:, :, i] - redvis[:, :, self.bl2red[bl]]
+        # expand redvis to vis size if needed
+        if redvis.shape[2] != vout.data.shape[2]:
+            index = self.query_cache(vd.bls)
+            redvis = torch.index_select(redvis, 2, index)
+
+        # apply redvis model
+        if not undo:
+            vout.data += redvis
+        else:
+            vout.data -= redvis
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
 
         return vout
+
+    def query_cache(self, bls):
+        """
+        Get indexing tensor that expands
+        redvis to vis shape along Nbls axis
+        """
+        if not isinstance(bls, list):
+            bls = [bls]
+        h = utils.arr_hash(bls)
+        if h not in self.cache:
+            index = torch.as_tensor(
+                [self.bl2red[bl] for bl in bls],
+                device=self.device)
+        else:
+            index = self.cache[h]
+
+        return index
+
+    def clear_cache(self):
+        self.cache = {}
 
     def push(self, device):
         """
