@@ -338,7 +338,7 @@ class RIME(utils.Module):
                     # calls to cut.to(sky.device) which can be a bottleneck if beam and
                     # sky are on different devices
                     if self.cache_skycut:
-                        self.beam.set_cache(zen, cut, device=sky.device)
+                        self.beam.set_sky_cut(zen, cut, device=sky.device)
                         cut = self.beam.query_cache(zen)
                     cut_sky = beam_model.cut_sky_fov(sky, cut)
 
