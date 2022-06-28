@@ -331,7 +331,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 if b_h not in self.cache:
                     # construct bl vector
                     bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
-                    self.cache[b_h] = bl_vec.to(self.device)
+                    bl_vec = bl_vec.to(self.device)
+                    self.cache[b_h] = bl_vec
                 else:
                     bl_vec = self.cache[b_h]
             else:
