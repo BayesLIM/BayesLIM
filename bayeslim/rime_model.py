@@ -39,7 +39,7 @@ class RIME(utils.Module):
     """
     def __init__(self, sky, telescope, beam, array, sim_bls,
                  times, freqs, data_bls=None, device=None, name=None,
-                 verbose=False):
+                 cache_skycut=True, verbose=False):
         """
         RIME object. Takes a model
         of the sky brightness, passes it through
@@ -88,6 +88,11 @@ class RIME(utils.Module):
             are computed by the array object.
         name : str, optional
             Name for this object, stored as self.name
+        cache_skycut : bool, optional
+            If True, cache the beam FOV cut indexing tensor
+            on sky.device. This sidesteps need to move
+            cut from beam.device to sky.device, which can
+            be a perf bottleneck
         verbose : bool, optional
             If True, print simulation progress info
         """
@@ -97,6 +102,7 @@ class RIME(utils.Module):
         self.beam = beam
         self.array = array
         self.device = device
+        self.cache_skycut = cache_skycut
         self.verbose = verbose
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
@@ -329,10 +335,12 @@ class RIME(utils.Module):
                     zen = utils.colat2lat(alt, deg=True)
                     ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
                     # cache a version of cut on sky.device: this prevents repeated
-                    # calls to cut.to(sky.device) which can be a bottleneck
-                    # TODO: setup flag to turn off if this becomes a memory bottleneck
-                    self.beam.set_cache(zen, cut, device=sky.device)
-                    cut_sky = beam_model.cut_sky_fov(sky, self.beam.query_cache(zen))
+                    # calls to cut.to(sky.device) which can be a bottleneck if beam and
+                    # sky are on different devices
+                    if self.cache_skycut:
+                        self.beam.set_cache(zen, cut, device=sky.device)
+                        cut = self.beam.query_cache(zen)
+                    cut_sky = beam_model.cut_sky_fov(sky, cut)
 
                 elif kind == 'alm':
                     raise NotImplementedError
