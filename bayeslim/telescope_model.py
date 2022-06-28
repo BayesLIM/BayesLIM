@@ -113,7 +113,7 @@ class TelescopeModel:
         ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
         dtype = ra.dtype if isinstance(ra, torch.Tensor) else None
         angs = eq2top(self.tloc, time, ra, dec)
-        angs = torch.as_tensor(angs, device=self.device, dtype=dtype)
+        angs = torch.as_tensor(np.asarray(angs), device=self.device, dtype=dtype)
 
         # and save to cache
         if store:
@@ -136,10 +136,15 @@ class ArrayModel(utils.PixInterp, utils.Module):
         This recomputes the fringes exactly
     2. caching the fringe on the sky
         This interpolates an existing fringe
+
+    Note that for performance reasons in the RIME object,
+    antpos is always kept on the CPU. If the model is pushed
+    to the GPU, the antpos tensor becomes pinned to speed
+    up CPU -> GPU transfer.
     """
     def __init__(self, antpos, freqs, pixtype='healpix', parameter=False,
                  device=None, cache_s=True, cache_f=False, cache_f_angs=None,
-                 redtol=0.1, name=None, red_kwargs={}, pix_kwargs={}):
+                 cache_blv=True, redtol=0.1, name=None, red_kwargs={}, pix_kwargs={}):
         """
         A model of an interferometric array
 
@@ -176,6 +181,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
         cache_f_angs : tensor, optional
             If cache_f, these are the sky angles (zen, az, [deg]) to
             evaluate the fringe at and then cache.
+        cache_blv : bool, optional
+            If True, cache the baseline vectors to prevent repeated
+            calls to self.get_antpos(). Must be False if parameter=True.
         redtol : float, optional
             If parameter is False, then redundant baseline groups
             are built. This is the bl vector redundancy tolerance [m]
@@ -194,10 +202,11 @@ class ArrayModel(utils.PixInterp, utils.Module):
         # set location metadata
         self.ants = sorted(antpos.keys())
         self._ant_idx = {a: self.ants.index(a) for a in self.ants}
-        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device=device)
+        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device='cpu')
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
+        self.cache_blv = cache_blv
         self._clear_cache()
         self.parameter = parameter
         self.redtol = redtol
@@ -215,6 +224,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
             # build redundant info
             (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
              self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
+
+        self.push(device)
 
     def get_antpos(self, ant):
         """
@@ -315,11 +326,25 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         if key not in self.cache:
             # get baseline vectors: shape (Nbls, 3)
-            if b_h not in self.cache:
-                bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
-                self.cache[b_h] = bl_vec
+            if self.cache_blv:
+                # antpos is not a parameter, so cache the baseline vectors
+                if b_h not in self.cache:
+                    # construct bl vector
+                    bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
+                    self.cache[b_h] = bl_vec.to(self.device)
+                else:
+                    bl_vec = self.cache[b_h]
             else:
-                bl_vec = self.cache[b_h]
+                # antpos is a parameter, so cache the antpos indexing tensors
+                if b_h not in self.cache:
+                    ant1 = torch.as_tensor([self.ants.index(b[0]) for b in bl])
+                    ant2 = torch.as_tensor([self.ants.index(b[1]) for b in bl])
+                    self.cache[b_h] = (ant1, ant2)
+                else:
+                    ant1, ant2 = self.cache[b_h]
+                # generate bl_vector (note that antpos is on CPU always but is pinned)
+                bl_vec = torch.index_select(self.antpos, 0, ant2) - torch.index_select(self.antpos, 0, ant1)
+                bl_vec = bl_vec.to(self.device)
 
             # get fringe pattern: shape (Nbls, Nfreqs, Npix)
             f = torch.exp(2j * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
@@ -415,7 +440,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
     def push(self, device):
         """push model to a new device"""
-        self.antpos = utils.push(self.antpos, device)
+        # setting antpos like this ensures it stays a Parameter
+        # if it is to begin with
+        self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)
         self.freqs = self.freqs.to(device)
