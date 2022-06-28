@@ -107,7 +107,7 @@ class RIME(utils.Module):
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
-
+ 
     def setup_freqs(self, freqs):
         """
         Set frequency array
@@ -125,13 +125,12 @@ class RIME(utils.Module):
         Configure how baselines are grouped, simulated, copied,
         and inserted into the output visibilities.
 
-        Also sets self._blg_index dictionary, which maps a
-        baseline group id to a slice object of the data bls
-        in the visibility, and an indexing tensor expanding
+        Also sets self._sim2data dictionary, which maps a
+        baseline group id to an indexing tensor expanding
         sim_bls to data_bls length.
 
         This sets self.sim_bl_groups, self.data_bl_groups dictionaries,
-        the self._blg_index dictionary, and resets self.bl_group_id -> 0
+        the self._sim2data dictionary, and resets self.bl_group_id -> 0
 
         Parameters
         ----------
@@ -164,21 +163,16 @@ class RIME(utils.Module):
         self.sim_bl_groups = sim_bls
         data_bls = None if self.array.parameter else data_bls
 
-        # setup _blg_index
+        # setup _sim2data
         if data_bls is None:
             # output visibility is same shape as sim_bls
-            self._blg_index = {}
-            N = 0
-            for i, blg in self.sim_bl_groups.items():
-                Nbl = len(blg)
-                self._blg_index[i] = (slice(N, N + Nbl), None)
-                N += Nbl
             self.data_bl_groups = self.sim_bl_groups
+            self._sim2data = {i: None for i in range(len(self.sim_bl_groups))}
+
         else:
             # output visibility has extra redundant baselines
-            self._blg_index = {}
+            self._sim2data = {}
             self.data_bl_groups = {}
-            N = 0
             # iterate over sim baseline groups
             for i, blg in self.sim_bl_groups.items():
                 # get redundant group indices for all sim_bls
@@ -192,17 +186,13 @@ class RIME(utils.Module):
                 # this ensures that redundant baselines are grouped together in data_bls
                 assert len(np.where(np.diff(data_red_inds)!=0)[0]) == len(blg) - 1
                 self.data_bl_groups[i] = _data_bls
-                # get visibility slice object
-                Nbl = len(_data_bls)
-                slice_obj = slice(N, N + Nbl)
-                N += Nbl
                 # get sim_bls indexing tensor
                 index = torch.as_tensor(
                     [sim_red_inds.index(i) for i in data_red_inds], 
                     device=self.device
                 )
                 # populate
-                self._blg_index[i] = (slice_obj, index)
+                self._sim2data[i] = index
 
         self._set_group()
 
@@ -346,9 +336,9 @@ class RIME(utils.Module):
                     raise NotImplementedError
 
                 # apply beam and fringe for all bls to sky and sum into vis
-                bl_slice, red_idx = self._blg_index[self.bl_group_id]
+                sim2data_idx = self._sim2data[self.bl_group_id]
                 self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
-                                   kind, zen, az, vis, bl_slice, red_idx, j)
+                                   kind, zen, az, vis, sim2data_idx, j)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope,
@@ -359,7 +349,7 @@ class RIME(utils.Module):
         return vd
 
     def _prod_and_sum(self, beam, cut_sky, bl, kind,
-                      zen, az, vis, bl_slice, red_idx, obs_ind):
+                      zen, az, vis, sim2data_idx, obs_ind):
         """
         Sky product and sum into vis inplace
 
@@ -380,10 +370,7 @@ class RIME(utils.Module):
         vis : tensor
             Visibility tensor to insert results
             (Npol, Npol, Nbls, Ntimes, Nfreqs)
-        bl_slice : slice object, int, or list of int
-            Baseline indexing along Nbls axis of vis
-            for all baselines in current baseline group.
-        red_idx : tensor
+        sim2data_idx : tensor
             Indexing tensor that expands sim_bls into data_bls
             for the current baseline group. If None, no expansion
             is applied.
@@ -407,11 +394,11 @@ class RIME(utils.Module):
         sum_sky = torch.sum(psky, axis=-1).to(self.device)
 
         # copy sim_bls over to each redundant bl in visibility if needed
-        if red_idx is not None:
-            sum_sky = torch.index_select(sum_sky, 2, red_idx)
+        if sim2data_idx is not None:
+            sum_sky = torch.index_select(sum_sky, 2, sim2data_idx)
 
         # sum across sky
-        vis[:, :, bl_slice, obs_ind, :] += sum_sky
+        vis[:, :, :, obs_ind, :] += sum_sky
 
 
 def log(message, verbose=False, style=1):
