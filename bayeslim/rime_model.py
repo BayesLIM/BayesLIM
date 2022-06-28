@@ -219,7 +219,7 @@ class RIME(utils.Module):
                 times = {0: times}
 
         self.sim_time_groups = times
-        self.all_times = np.asarray(utils.flatten(self.sim_time_groups))
+        self.all_times = np.asarray(utils.flatten(self.sim_time_groups.values()))
         self.Ntime_groups = len(self.sim_time_groups)
         self._set_group()
 
