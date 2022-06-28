@@ -328,7 +328,11 @@ class RIME(utils.Module):
                     # evaluate beam response
                     zen = utils.colat2lat(alt, deg=True)
                     ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
-                    cut_sky = beam_model.cut_sky_fov(sky, cut)
+                    # cache a version of cut on sky.device: this prevents repeated
+                    # calls to cut.to(sky.device) which can be a bottleneck
+                    # TODO: setup flag to turn off if this becomes a memory bottleneck
+                    self.beam.set_cache(zen, cut, device=sky.device)
+                    cut_sky = beam_model.cut_sky_fov(sky, self.beam.query_cache(zen))
 
                 elif kind == 'alm':
                     raise NotImplementedError

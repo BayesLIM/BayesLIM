@@ -157,6 +157,9 @@ class PixelBeam(utils.Module):
         offset = (0, 0) if offset is None else offset
         self.set_pointing_offset(*offset)
 
+        # caching
+        self.clear_cache()
+
         # construct _args for str repr
         self._args = dict(powerbeam=powerbeam, fov=fov, Npol=self.Npol, Nmodel=self.Nmodel)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
@@ -471,6 +474,31 @@ class PixelBeam(utils.Module):
         """
         self.theta_x = theta_x
         self.theta_y = theta_y
+
+    def set_cache(self, zen, cut, device=None):
+        """
+        Insert a sky cut index array into the cache
+
+        Parameters
+        ----------
+        zen : tensor
+            zenith angle tensor for a sky model
+        cut : tensor
+            indexing tensor of that sky model given FOV
+        device : str, optional
+            Device to push cut
+        """
+        h = utils.arr_hash(zen)
+        if h not in self.cache:
+            self.cache[h] = cut.to(device)
+
+    def query_cache(self, zen):
+        h = utils.arr_hash(zen)
+        if h in self.cache:
+            return self.cache[h]
+
+    def clear_cache(self):
+        self.cache = {}
 
 
 class PixelResponse(utils.PixInterp):
