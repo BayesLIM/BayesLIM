@@ -283,8 +283,9 @@ class PixelBeam(utils.Module):
                 ant2_idx = torch.as_tensor([mp[1] for mp in modelpairs], device=self.device)
                 beam2 = torch.index_select(beam, 2, ant2_idx)
 
-        # give sky an Nmodelpair dimension
-        sky = sky[:, :, None]
+        # give sky an Nmodelpair dimension if needed
+        if sky.ndim == 4:
+            sky = sky[:, :, None]
 
         # multiply in the beam(s) depending on polmode
         if self.Npol == 1:
