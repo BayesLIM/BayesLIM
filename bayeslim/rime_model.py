@@ -162,6 +162,7 @@ class RIME(utils.Module):
 
         self.sim_bl_groups = sim_bls
         self.all_sim_bls = utils.flatten(sim_bls.values())
+        self.Nbl_groups = len(self.sim_bl_groups)
         data_bls = None if self.array.parameter else data_bls
 
         # setup _sim2data
@@ -219,6 +220,7 @@ class RIME(utils.Module):
 
         self.sim_time_groups = times
         self.all_times = np.asarray(utils.flatten(self.sim_time_groups))
+        self.Ntime_groups = len(self.sim_time_groups)
         self._set_group()
 
     @property
