@@ -163,7 +163,7 @@ class RIME(utils.Module):
             # output visibility is same shape as sim_bls
             self._blg_index = {}
             N = 0
-            for i, blg in enumerate(self.sim_bl_groups):
+            for i, blg in self.sim_bl_groups.items():
                 Nbl = len(blg)
                 self._blg_index[i] = (slice(N, N + Nbl), None)
                 N += Nbl
@@ -174,7 +174,7 @@ class RIME(utils.Module):
             self.data_bl_groups = {}
             N = 0
             # iterate over sim baseline groups
-            for i, blg in enumerate(self.sim_bl_groups):
+            for i, blg in self.sim_bl_groups.items():
                 # get redundant group indices for all sim_bls
                 sim_red_inds = [self.array.bl2red[bl] for bl in blg]
                 # reject any data_bls without a redundant type in sim_bls
