@@ -161,6 +161,7 @@ class RIME(utils.Module):
                     data_bls[i] = tuple(bl)
 
         self.sim_bl_groups = sim_bls
+        self.all_sim_bls = utils.flatten(sim_bls.values())
         data_bls = None if self.array.parameter else data_bls
 
         # setup _sim2data
@@ -217,7 +218,7 @@ class RIME(utils.Module):
                 times = {0: times}
 
         self.sim_time_groups = times
-        self.all_times = torch.tensor([time for k in self.sim_time_groups for time in self.sim_time_groups[k]])
+        self.all_times = np.asarray(utils.flatten(self.sim_time_groups))
         self._set_group()
 
     @property
