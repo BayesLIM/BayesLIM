@@ -393,7 +393,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
         sky = sky.to(self.device)
 
         if kind in ['point', 'pixel']:
-            psky = sky[:, :, None] * fringe
+            if sky.ndim == 4:
+                sky = sky[:, :, None]
+            psky = sky * fringe
 
         elif kind == 'alm':
             raise NotImplementedError
