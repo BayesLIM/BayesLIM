@@ -331,6 +331,7 @@ class JonesModel(utils.Module):
         self.device = params.device
         self.p0 = p0
         self.ants = ants
+        self.Nants = len(self.ants)
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
@@ -387,16 +388,6 @@ class JonesModel(utils.Module):
 
     def clear_cache(self):
         self.gain_idx_cache = {}
-
-    def _setup_bls(self, bls):
-        bls = [tuple(bl) for bl in bls]
-        self.bls = bls
-        if not self.single_ant:
-            self._vis2ants = {bl: (self.ants.index(bl[0]), self.ants.index(bl[1])) for bl in bls}
-        else:
-            # a single antenna for all baselines
-            assert self.params.shape[2] == 1, "params must have 1 antenna for single_ant"
-            self._vis2ants = {bl: (0, 0) for bl in bls}
 
     def set_refant(self, refant):
         """
