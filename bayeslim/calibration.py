@@ -220,6 +220,7 @@ class BaseResponse:
             return self.cache_tidx[h]
         else:
             # compute time indices
+            assert hasattr(self, 'times')
             idx = [np.where(np.isclose(self.times, t, atol=self.atol, rtol=1e-15))[0][0] for t in times]
             idx = utils._list2slice(idx)
             # store in cache and return
@@ -1364,3 +1365,25 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
         gains = gains * torch.exp(1j * phs)
 
     return gains
+
+
+def Vis2Jones(vis, refant=None):
+    """
+    Create a vanilla JonesModel object from
+    a VisData object
+
+    Parameters
+    ----------
+    vis : VisData
+
+    Returns
+    -------
+    JonesModel
+    """
+    R = JonesResponse(time_kwargs=dict(times=vis.times),
+                      freq_kwargs=dict(freqs=vis.freqs))
+    ants = list(np.unique(np.concatenate([vis.ant1, vis.ant2])).astype(int))
+    polmode = '1pol' if vis.Npol == 1 else '4pol'
+    params = torch.ones((vis.Npol, vis.Npol, len(ants), vis.Ntimes, vis.Nfreqs),
+                        dtype=utils._cfloat())
+    return JonesModel(params, ants=ants, R=R, refant=refant, polmode=polmode)
