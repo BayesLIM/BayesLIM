@@ -380,9 +380,6 @@ class PixelBeam(utils.Module):
             # apply beam to sky to get perceived sky
             psky = self.apply_beam(beam, bls, sky)
 
-            if utils.device(psky) != utils.device(self.device):
-                psky = psky.to(self.device)
-
             sky_comp['sky'] = psky
             sky_comp['angs'] = sky_comp['angs'][0][cut], sky_comp['angs'][1][cut]
             sky_comp['altaz'] = torch.vstack([alt, az])
