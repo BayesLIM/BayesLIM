@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import copy
 
-from . import utils, linalg, dataset
+from . import utils, linalg, dataset, telescope_model
 
 
 class BaseResponse:
@@ -205,16 +205,12 @@ class BaseResponse:
         """
         self.cache_tidx = {}
 
-    def hash_times(self, times):
-        """get the hash of a times array"""
-        return hash((times[0], times[-1], len(times)))
-
     def get_time_idx(self, times):
         """
         Get time indices, and store in cache.
         This is used when minibatching over time axis.
         """
-        h = self.hash_times(times)
+        h = utils.arr_hash(times)
         if h in self.cache_tidx:
             # query cache
             return self.cache_tidx[h]
@@ -233,16 +229,12 @@ class BaseResponse:
         """
         self.cache_bidx = {}
 
-    def hash_bls(self, bls):
-        """get the hash of a bls list"""
-        return hash((bls[0], bls[-1], len(bls)))
-
     def get_bl_idx(self, bls):
         """
         Get bl indices, and store in cache.
         This is used when minibatching over baseline axis.
         """
-        h = self.hash_bls(bls)
+        h = utils.arr_hash(bls)
         if h in self.cache_bidx:
             # query cache
             return self.cache_bidx[h]
@@ -1359,7 +1351,8 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
     return gains
 
 
-def Vis2Jones(vis, refant=None):
+def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
+                   freq_kwargs=None, freq_kwargs=None, refant=None):
     """
     Create a vanilla JonesModel object from
     a VisData object
@@ -1372,10 +1365,39 @@ def Vis2Jones(vis, refant=None):
     -------
     JonesModel
     """
-    R = JonesResponse(time_kwargs=dict(times=vis.times),
-                      freq_kwargs=dict(freqs=vis.freqs))
+    time_kwargs = {} if time_kwargs is None else time_kwargs
+    freq_kwargs = {} if freq_kwargs is None else freq_kwargs
+    time_kwargs['times'] = vis.times
+    freq_kwargs['freqs'] = vis.freqs
+    R = JonesResponse(param_type=param_type, antpos=vis.antpos,
+                      freq_mode=freq_mode, freq_kwargs=freq_kwargs,
+                      time_mode=time_mode, time_kwargs=time_kwargs)
     ants = list(np.unique(np.concatenate([vis.ant1, vis.ant2])).astype(int))
     polmode = '1pol' if vis.Npol == 1 else '4pol'
     params = torch.ones((vis.Npol, vis.Npol, len(ants), vis.Ntimes, vis.Nfreqs),
                         dtype=utils._cfloat())
+    params = utils.viewreal(params)
     return JonesModel(params, ants=ants, R=R, refant=refant, polmode=polmode)
+
+
+def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
+                    time_kwargs=None, freq_kwargs=None):
+    """
+    Create a vanilla RedVisModel object
+    from a VisData object
+    """
+    # get reds
+    reds, rvecs, bl2red, bls, rl, ra, rt = telescope_model.build_reds(vis.antpos,
+                                                                      bls=vis.bls,
+                                                                      redtol=redtol)
+    time_kwargs = {} if time_kwargs is None else time_kwargs
+    freq_kwargs = {} if freq_kwargs is None else freq_kwargs
+    time_kwargs['times'] = vis.times
+    freq_kwargs['freqs'] = vis.freqs
+    R = VisModelResponse(param_type=param_type,
+                         freq_mode=freq_mode, freq_kwargs=freq_kwargs,
+                         time_mode=time_mode, time_kwargs=time_kwargs)
+    params = torch.ones(vis.Npol, vis.Npol, len(reds), vis.Ntimes, vis.Nfreqs, dtype=utils._cfloat())
+    params = utils.viewreal(params)
+    return RedVisModel(params, bl2red, R=R)
+
