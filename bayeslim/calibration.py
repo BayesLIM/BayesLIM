@@ -1207,6 +1207,7 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
     if mode == 'rephase':
         # rephase all antennas to refant phase
         _p = params
+        _p0 = p0
 
         if param_type == 'com':
             # divide out refant complex phasor
