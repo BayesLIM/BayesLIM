@@ -1381,7 +1381,7 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
 
 
 def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
-                    time_kwargs=None, freq_kwargs=None):
+                    time_kwargs=None, freq_kwargs=None, redtol=1.0):
     """
     Create a vanilla RedVisModel object
     from a VisData object
