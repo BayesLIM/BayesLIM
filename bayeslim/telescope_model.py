@@ -443,7 +443,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
         """push model to a new device"""
         # setting antpos like this ensures it stays a Parameter
         # if it is to begin with
-        self['antpos'] = self.antpos.pin_memory()
+        if utils.device(device) != utils.device('cpu'):
+            self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)
         self.freqs = self.freqs.to(device)
