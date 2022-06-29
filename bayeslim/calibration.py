@@ -1352,7 +1352,7 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
 
 
 def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
-                   freq_kwargs=None, freq_kwargs=None, refant=None):
+                   freq_kwargs=None, time_kwargs=None, refant=None):
     """
     Create a vanilla JonesModel object from
     a VisData object
