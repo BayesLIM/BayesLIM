@@ -71,7 +71,7 @@ class BaseResponse:
         self.times = times
         self.clear_time_cache()
         if self.time_mode == 'channel':
-            pass  # nothing to do
+            self.Ntime_params = None if times is None else len(times)
 
         elif self.time_mode == 'linear':
             # get linear A mapping wrt time
@@ -82,6 +82,7 @@ class BaseResponse:
             kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
             self.time_LM = utils.LinearModel(linear_mode, dim=-2,
                                              device=self.device, **kwgs)
+            self.Ntime_params = self.time_LM.A.shape[1]
 
         else:
             raise ValueError("{} not recognized".format(self.time_mode))
@@ -100,7 +101,7 @@ class BaseResponse:
         """
         self.freqs = freqs
         if self.freq_mode == 'channel':
-            pass  # nothing to do
+            self.Nfreq_params = None if freqs is None else len(freqs)
 
         elif self.freq_mode == 'linear':
             # get linear A mapping wrt freq
@@ -111,6 +112,7 @@ class BaseResponse:
                 kwgs['x'] = freqs
             self.freq_LM = utils.LinearModel(linear_mode, dim=-1,
                                              device=self.device, **kwgs)
+            self.Nfreq_params = self.freq_LM.A.shape[1]
 
         else:
             raise ValueError("{} not recognized".format(self.freq_mode))
@@ -516,7 +518,11 @@ class JonesModel(utils.Module):
             cd.setup_meta(telescope=telescope, antpos=antpos)
 
             # get gains
-            gains = self.R(self.params)
+            if self.p0 is not None:
+                p = (self.params + self.p0).detach()
+            else:
+                p = self.params.detach()
+            gains = self.R(p).cpu().clone()
 
             # try to get time and freq metadata
             if 'freqs' in self.R.freq_kwargs:
@@ -594,11 +600,11 @@ class JonesResponse(BaseResponse):
                          param_type=param_type, device=device,
                          freq_kwargs=freq_kwargs, time_kwargs=time_kwargs)
         self.vis_type = vis_type
+        self.antpos = antpos
 
         if self.param_type in ['dly_slope', 'phs_slope']:
             # setup antpos tensors
             assert antpos is not None, 'need antpos for dly_slope or phs_slope'
-            self.antpos = antpos
             EW = torch.as_tensor([antpos[a][0] for a in antpos], device=self.device)
             self.antpos_EW = EW[None, None, :, None, None]  
             NS = torch.as_tensor([antpos[a][1] for a in antpos], device=self.device)
@@ -1248,7 +1254,56 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
         return params, p0
 
 
-def compute_redcal_degen(params, ants, antpos, wgts=None):
+def remove_redcal_degen(gains, ants, antpos, degen=None,
+                        wgts=None, redvis=None, bls=None):
+    """
+    Remove redcal degeneracies from a set of gains and model visibilities
+    Note this currently only works for 1pol or 2pol gains.
+
+    Parameters
+    ----------
+    gains : tensor
+        Complex gain tensor of shape (Npol, Npol, Nants, Ntimes, Nfreqs)
+    ants : list
+        List of antenna numbers along Nants dim of gains
+    antpos : dict
+        Antenna position dictionary, ant num as key, ENU antvec [meter] as value
+    degen : tensor, optional
+        Complex gain tensor of new redcal degeneracy to insert into gains
+    wgts : tensor, optional
+        1D weight tensor of length Nants used for computing degeneracies
+    redvis : tensor, optional
+        Redundant model visibility to remove degenerate gains from
+        of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
+    bls : list, optional
+        List of baseline tuples along Nbls dim of redvis
+
+    Returns
+    -------
+    new_gains : tensor
+    new_vis : tensor
+    degen_gains : tensor
+    """
+    # compute degenerate gains
+    rd = compute_redcal_degen(gains, ants, antpos, wgts=wgts)
+    degen_gains = redcal_degen_gains(ants, antpos=antpos, abs_amp=rd[0], phs_slope=rd[1])
+
+    if degen is not None:
+        degen_gains /= degen
+
+    # get new gains
+    new_gains = gains / degen_gains
+
+    # get new vis
+    if redvis is None:
+        new_vis = None
+    else:
+        new_vis = apply_cal(redvis, bls, degen_gains, ants, undo=False)[0]
+
+    return new_gains, new_vis, degen_gains
+
+
+def compute_redcal_degen(gains, ants, antpos, wgts=None):
     """
     Given a set of antenna gains compute the degeneracy
     parameters of redundant calibration, 1. the overall
@@ -1267,7 +1322,7 @@ def compute_redcal_degen(params, ants, antpos, wgts=None):
 
     Parameters
     ----------
-    params : tensor
+    gains : tensor
         Antenna gains of shape (Npol, Npol, Nant, Ntimes, Nfreqs)
     ants : list
         List of antenna numbers along the Nant axis
@@ -1297,15 +1352,15 @@ def compute_redcal_degen(params, ants, antpos, wgts=None):
     wsum = torch.sum(wgts)
 
     # compute absolute amplitude parameter
-    eta = torch.log(torch.abs(params))
+    eta = torch.log(torch.abs(gains))
     abs_amp = torch.sum(eta * wgts, dim=2, keepdims=True) / wsum
 
     # compute phase slope parameter
-    phs = torch.angle(params).moveaxis(2, -1)
+    phs = torch.angle(gains)
     A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
     W = torch.eye(Nants) * wgts.squeeze()
-    AtWAinv = torch.pinverse(A.T @ W @ A)
-    phs_slope = (phs @ W @ A @ AtWAinv.T).moveaxis(-1, 2)
+    AtWAinvAt = torch.pinverse(A.T @ W @ A) @ A.T
+    phs_slope = torch.einsum("ab,ijblm->ijalm", AtWAinvAt, phs)
 
     return abs_amp, phs_slope
 
@@ -1352,7 +1407,7 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
 
 
 def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
-                   freq_kwargs=None, time_kwargs=None, refant=None):
+                   freq_kwargs=None, time_kwargs=None, refant=None, single_ant=False):
     """
     Create a vanilla JonesModel object from
     a VisData object
@@ -1360,6 +1415,7 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
     Parameters
     ----------
     vis : VisData
+    kwargs : see JonesModel and JonesResponse for descriptions
 
     Returns
     -------
@@ -1374,10 +1430,23 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
                       time_mode=time_mode, time_kwargs=time_kwargs)
     ants = list(np.unique(np.concatenate([vis.ant1, vis.ant2])).astype(int))
     polmode = '1pol' if vis.Npol == 1 else '4pol'
-    params = torch.ones((vis.Npol, vis.Npol, len(ants), vis.Ntimes, vis.Nfreqs),
-                        dtype=utils._cfloat())
-    params = utils.viewreal(params)
-    return JonesModel(params, ants=ants, R=R, refant=refant, polmode=polmode)
+    Nants = len(ants)
+    if 'slope' in param_type:
+        Nants = 2
+    elif single_ant:
+        Nants = 1
+    if param_type == 'com':
+        init_func = torch.ones
+        dtype = utils._cfloat()
+    else:
+        init_func = torch.zeros
+        dtype = utils._float()
+    params = init_func(vis.Npol, vis.Npol, Nants, R.Ntime_params, R.Nfreq_params,
+                       dtype=dtype)
+    if param_type == 'com':
+        params = utils.viewreal(params)
+    return JonesModel(params, ants=ants, R=R, refant=refant,
+                      polmode=polmode, single_ant=single_ant)
 
 
 def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
@@ -1385,6 +1454,15 @@ def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='chann
     """
     Create a vanilla RedVisModel object
     from a VisData object
+
+    Parameters
+    ----------
+    vis : VisData object
+    kwargs : see RedVisModel and VisModelResponse for details
+
+    Returns
+    -------
+    RedVisModel
     """
     # get reds
     reds, rvecs, bl2red, bls, rl, ra, rt = telescope_model.build_reds(vis.antpos,
@@ -1397,7 +1475,9 @@ def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='chann
     R = VisModelResponse(param_type=param_type,
                          freq_mode=freq_mode, freq_kwargs=freq_kwargs,
                          time_mode=time_mode, time_kwargs=time_kwargs)
-    params = torch.ones(vis.Npol, vis.Npol, len(reds), vis.Ntimes, vis.Nfreqs, dtype=utils._cfloat())
-    params = utils.viewreal(params)
+    params = torch.zeros(vis.Npol, vis.Npol, len(reds), R.Ntime_params, R.Nfreq_params,
+                         dtype=utils._cfloat())
+    if param_type == 'com':
+        params = utils.viewreal(params)
     return RedVisModel(params, bl2red, R=R)
 

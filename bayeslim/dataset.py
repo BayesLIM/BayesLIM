@@ -1575,6 +1575,89 @@ class CalData:
         if not inplace:
             return obj
 
+    def rephase_to_refant(self, refant):
+        """
+        Rephase the complex gains to a reference antenna phase
+
+        Parameters
+        ----------
+        refant : int
+        """
+        from bayeslim.calibration import rephase_to_refant
+        idx = self.ants.index(refant)
+        rephase_to_refant(self.data, 'com', idx, mode='rephase', inplace=True)
+
+    def redcal_degens(self, wgts=None):
+        """
+        Compute redcal degenerate parameters
+
+        Parameters
+        ----------
+        wgts : tensor
+            1D weights of length Nants to use in
+            computing degeracies. Should be number of visibilities
+            per antenna used in redcal. Default is uniform weight.
+
+        Returns
+        -------
+        abs_amp : tensor
+            Shape (Npol, Npol, 1, Ntimes, Nfreqs)
+        phs_slope : tensor
+            Shape (Npol, Npol, 2, Ntimes, Nfreqs) where
+            two elements are [East, North] phs gradient [rad / meter]
+        """
+        from bayeslim.calibration import compute_redcal_degen
+        return compute_redcal_degen(self.data, self.ants, self.antpos, wgts=wgts)
+
+    def redcal_degen_gains(self, wgts=None):
+        """
+        Compute redcal degenerate gains
+
+        Parameters
+        ----------
+        wgts : tensor
+            1D weights of length Nants to use in
+            computing degeracies. Should be number of visibilities
+            per antenna used in redcal. Default is uniform weight.
+
+        Returns
+        -------
+        tensor
+            (Npol, Npol, Nants, Ntimes, Nfreqs)
+        """
+        from bayeslim.calibration import redcal_degen_gains
+        rd = self.redcal_degens(wgts=wgts)
+        return redcal_degen_gains(self.ants, antpos=self.antpos,
+                                  abs_amp=rd[0], phs_slope=rd[1])
+
+    def remove_redcal_degen(self, redvis=None, degen=None, wgts=None):
+        """
+        Remove redcal degeneracies from gains and model visibility.
+        Updates gains and model visibility inplace.
+
+        Parameters
+        ----------
+        redvis : VisData object, optional
+            Holds redcal model visibilities
+        degen : tensor or CalData object
+            New redcal degeneracies to insert into gains
+        wgts : tensor, optional
+            1D weights of length Nants to use in computing degeneracies
+        """
+        from bayeslim.calibration import remove_redcal_degen
+        rvis = None if redvis is None else redvis.data
+        bls = None if redvis is None else redvis.bls
+        if isinstance(degen, CalData):
+            degen = degen.data
+        degen = None if degen is None else degen
+        new_gain, new_vis, _ = remove_redcal_degen(self.data, self.ants,
+                                                   self.antpos, degen=degen,
+                                                   wgts=wgts,
+                                                   redvis=rvis, bls=bls)
+        self.data = new_gain
+        if redvis is not None:
+            redvis.data = new_vis
+
     def write_hdf5(self, fname, overwrite=False):
         """
         Write CalData to hdf5 file.
