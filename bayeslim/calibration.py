@@ -1351,9 +1351,13 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None):
     wgts = wgts[:, None, None]
     wsum = torch.sum(wgts)
 
-    # compute absolute amplitude parameter
-    eta = torch.log(torch.abs(gains))
-    abs_amp = torch.sum(eta * wgts, dim=2, keepdims=True) / wsum
+    # compute absolute amplitude parameter: average abs of gains
+    abs_amp = torch.sum(torch.abs(gains) * wgts, dim=2, keepdims=True) / wsum
+    abs_amp = torch.log(abs_amp)
+
+    ### LEGACY
+    #eta = torch.log(torch.abs(gains))
+    #abs_amp = torch.sum(eta * wgts, dim=2, keepdims=True) / wsum
 
     # compute phase slope parameter
     phs = torch.angle(gains)
