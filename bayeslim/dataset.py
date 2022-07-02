@@ -783,8 +783,11 @@ class VisData(TensorData):
             vd = self
         else:
             vd = self.copy(detach=True)
+        cal_data = cd.data
+        if utils.device(vd.data) != utils.device(cal_data):
+            cal_data = cal_data.to(vd.data.device)
 
-        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cd.data, cd.ants, cal_2pol=cal_2pol,
+        vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cal_data, cd.ants, cal_2pol=cal_2pol,
                                                 cov=vd.cov, vis_type='com', undo=undo, inplace=inplace)
 
         return vd
@@ -1004,7 +1007,7 @@ class MapData(TensorData):
         raise NotImplementedError 
 
 
-class CalData:
+class CalData(TensorData):
     """
     An object for holding calibration solutions
     of shape (Npol, Npol, Nant, Ntimes, Nfreqs)
@@ -1142,7 +1145,7 @@ class CalData:
             # this is a list of ants or antpols
             ant_list, pol_list = [], []
             for a in ant:
-                _ant, _pol = self._ant2uniq_antpol(b)
+                _ant, _pol = self._ant2uniq_antpol(a)
                 if _ant not in ant_list:
                     ant_list.extend(_ant_list)
                 if _pol not in pol_list:
