@@ -1135,6 +1135,7 @@ class CalData(TensorData):
         Given a antenna or antenna-pol tuple "ant",
         or list of such, return unique ants and pols
         """
+        pol = None
         if isinstance(ant, tuple):
             # this is a single ant or antpol
             if len(ant) == 1:
