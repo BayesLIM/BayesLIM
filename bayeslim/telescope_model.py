@@ -63,7 +63,7 @@ class TelescopeModel:
 
         return hash((time, ra[0], dec[0], ra[-1], dec[-1]))
 
-    def _clear_cache(self, key=None):
+    def clear_cache(self, key=None):
         """Clear conversion cache, or just a single
         key from the cache
 
@@ -207,7 +207,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
         self.cache_blv = cache_blv
-        self._clear_cache()
+        self.clear_cache()
         self.parameter = parameter
         self.redtol = redtol
         self.device = device
@@ -281,11 +281,11 @@ class ArrayModel(utils.PixInterp, utils.Module):
     def set_freqs(self, freqs):
         """set frequency array"""
         self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
-        self._clear_cache()
+        self.clear_cache()
 
-    def _clear_cache(self):
+    def clear_cache(self):
         """
-        Overloads PixInterp._clear_cache
+        Overloads PixInterp.clear_cache
         to clear both PixInterp and fringe_cache
         """
         # this is PixInterp cache

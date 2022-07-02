@@ -16,7 +16,7 @@ class BaseResponse:
     of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
-                 device=None, freq_kwargs={}, time_kwargs={}, atol=1e-4, bls=None):
+                 device=None, freq_kwargs={}, time_kwargs={}):
         """
         Parameters
         ----------
@@ -35,11 +35,6 @@ class BaseResponse:
             freqs [Hz] for dly param_type
         time_kwargs : dict, optional
             Keyword arguments for setup_times().
-        atol : float, optional
-            Absolute tolerance used for time index caching.
-        bls : list, optional
-            List of baseline tuples (antenna numer integer pairs), used for
-            baseline minibatching, e.g. [(0, 1), (10, 25), ...]
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -49,8 +44,6 @@ class BaseResponse:
         self.time_kwargs = time_kwargs
         self.setup_freqs(**freq_kwargs)
         self.setup_times(**time_kwargs)
-        self.atol = atol
-        self.bls = bls
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
@@ -69,7 +62,6 @@ class BaseResponse:
             dim is hard-coded according to expected params shape
         """
         self.times = times
-        self.clear_time_cache()
         if self.time_mode == 'channel':
             self.Ntime_params = None if times is None else len(times)
 
@@ -117,7 +109,7 @@ class BaseResponse:
         else:
             raise ValueError("{} not recognized".format(self.freq_mode))
 
-    def forward(self, params, times=None, bls=None, **kwargs):
+    def forward(self, params, **kwargs):
         """
         Forward pass params through response
         """
@@ -141,20 +133,6 @@ class BaseResponse:
             params = self.time_LM(params)
 
         params = self.params2complex(params)
-
-        # index time axis if needed
-        if times is not None:
-            tidx = self.get_time_idx(times)
-            params = params[..., tidx, :]
-
-        # index bl axis if needed
-        if bls is not None:
-            bidx = self.get_bl_idx(bls)
-            if isinstance(bidx, slice) and (bidx.stop-bidx.start) == parmas.shape[3] and bidx.step == 1:
-                # this is an empty slice
-                params = params
-            else:
-                params = params[..., bidx, :, :]
 
         return params
 
@@ -201,6 +179,32 @@ class BaseResponse:
         if self.time_mode == 'linear':
             self.time_LM.push(device)
 
+
+class IndexCache:
+    """
+    A class used by JonesModel, VisModel, and
+    RedVisModel for time, baseline index
+    caching, needed when minibatching over
+    these dimensions. Assumes input to forward is
+    of shape (..., Nbls, Ntimes, Nfreqs)
+    """
+    def __init__(self, times=None, bls=None, atol=1e-4):
+        """
+        Parameters
+        ----------
+        times : tensor, optional
+            Total set of observation times
+        bls : list, optional
+            Total set of baseline tuples
+        atol : float, optional
+            Absolute tolerance for time indexing
+        """
+        self._times = times
+        self._bls = bls
+        self._atol = atol
+        self.clear_time_cache()
+        self.clear_bl_cache()
+
     def clear_time_cache(self):
         """
         Clear caching of time indices
@@ -212,14 +216,16 @@ class BaseResponse:
         Get time indices, and store in cache.
         This is used when minibatching over time axis.
         """
+        if times is None or not hasattr(self, '_times'):
+            return None
         h = utils.arr_hash(times)
         if h in self.cache_tidx:
             # query cache
             return self.cache_tidx[h]
         else:
             # compute time indices
-            assert hasattr(self, 'times')
-            idx = [np.where(np.isclose(self.times, t, atol=self.atol, rtol=1e-15))[0][0] for t in times]
+            assert hasattr(self, '_times')
+            idx = [np.where(np.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0][0] for t in times]
             idx = utils._list2slice(idx)
             # store in cache and return
             self.cache_tidx[h] = idx
@@ -236,20 +242,48 @@ class BaseResponse:
         Get bl indices, and store in cache.
         This is used when minibatching over baseline axis.
         """
+        if bls is None or not hasattr(self, '_bls'):
+            return None
         h = utils.arr_hash(bls)
         if h in self.cache_bidx:
             # query cache
             return self.cache_bidx[h]
         else:
             # compute bl indices
-            idx = [bls.index(bl) for bl in bls]
+            assert hasattr(self, '_bls')
+            idx = [self._bls.index(bl) for bl in bls]
             idx = utils._list2slice(idx)
             # store in cache and return
             self.cache_bidx[h] = idx
             return idx
 
+    def clear_cache(self):
+        """clear all caches"""
+        self.clear_time_cache()
+        self.clear_bl_cache()
 
-class JonesModel(utils.Module):
+    def index_params(self, params, times=None, bls=None):
+        if times is not None:
+            idx = self.get_time_idx(times)
+            if idx is None:
+                params = params
+            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-2]:
+                params = params
+            else:
+                params = params[..., idx, :]
+        if bls is not None:
+            idx = self.get_bl_idx(bls)
+            if idx is None:
+                params = params
+            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-3]:
+                params = params
+            else:
+                params = params[..., idx, :, :]
+
+        return params
+
+
+class JonesModel(utils.Module, IndexCache):
     """
     A generic, antenna-based, direction-independent
     Jones term, relating the model (m) visibility to the
@@ -275,7 +309,7 @@ class JonesModel(utils.Module):
     """
     def __init__(self, params, ants, p0=None, refant=None, R=None,
                  parameter=True, polmode='1pol', single_ant=False, name=None,
-                 vis_type='com'):
+                 vis_type='com', atol=1e-4):
         """
         Antenna-based Jones model.
 
@@ -319,6 +353,8 @@ class JonesModel(utils.Module):
             Name for this object, stored as self.name
         vis_type : str, optional
             Type of visibility, complex or delay ['com', 'dly']
+        atol : float, optional
+            Absolute tolerance for time index caching
         """
         super().__init__(name=name)
         self.params = params
@@ -332,6 +368,8 @@ class JonesModel(utils.Module):
             # default response
             R = JonesResponse()
         self.R = R
+        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
+                                              atol=atol)
         self.polmode = polmode
         self.single_ant = single_ant
         self.vis_type = vis_type
@@ -342,18 +380,23 @@ class JonesModel(utils.Module):
         self._args = dict(refant=refant, polmode=polmode)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
-    def hash_bls(self, bls):
-        return hash((bls[0], bls[-1], len(bls)))
+    def clear_cache(self):
+        """clear all caches, some come from IndexCache object"""
+        self.clear_time_cache()
+        self.clear_bl_cache()
+        self.clear_ant_cache()
 
-    def query_cache(self, bls):
+    def clear_ant_cache(self):
+        self.cache_aidx = {}
+
+    def get_ant_idx(self, bls):
         """
-        Query gain_idx_cache for indexing
+        Query cache_aidx for ant -> bls mapping
 
         Parameters
         ----------
-        bls : list
-            List of antenna number (int) pairs
-            e.g. [(0, 1), (0, 10), (1, 25)]
+        bls : list of tuple
+            List of baseline tuples e.g. [(0, 1), (2, 3), ...]
 
         Returns
         -------
@@ -366,22 +409,19 @@ class JonesModel(utils.Module):
             axis of params for each baseline
             for gain2 term
         """
-        h = self.hash_bls(bls)
-        if h not in self.gain_idx_cache:
+        h = utils.arr_hash(bls)
+        if h not in self.cache_aidx:
             if self.single_ant:
                 g1_idx = torch.as_tensor([0 for bl in bls], device=self.device)
                 g2_idx = torch.as_tensor([0 for bl in bls], device=self.device)
             else:
                 g1_idx = torch.as_tensor([self.ants.index(bl[0]) for bl in bls], device=self.device)
                 g2_idx = torch.as_tensor([self.ants.index(bl[1]) for bl in bls], device=self.device)
-            self.gain_idx_cache[h] = (g1_idx, g2_idx)
+            self.cache_aidx[h] = (g1_idx, g2_idx)
         else:
-            g1_idx, g2_idx = self.gain_idx_cache[h]
+            g1_idx, g2_idx = self.cache_aidx[h]
 
         return g1_idx, g2_idx
-
-    def clear_cache(self):
-        self.gain_idx_cache = {}
 
     def set_refant(self, refant):
         """
@@ -458,13 +498,16 @@ class JonesModel(utils.Module):
 
         # push through reponse function
         if jones is None:
-            jones = self.R(params, times=vd.times)
+            jones = self.R(params)
 
-        # evaluate priors
+        # evaluate priors on full jones tensor size
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
 
+        # down select on times and freqs
+        jones = self.index_params(jones, times=vd.times)
+
         # get g1 and g2 indexing
-        g1_idx, g2_idx = self.query_cache(vd.bls)
+        g1_idx, g2_idx = self.get_ant_idx(vd.bls)
 
         # apply calibration and insert into output vis
         vout.data, _ = _apply_cal(vd.data, jones, g1_idx, g2_idx,
@@ -675,7 +718,7 @@ class JonesResponse(BaseResponse):
             self.antpos_NS = self.antpos_NS.to(device)
 
 
-class RedVisModel(utils.Module):
+class RedVisModel(utils.Module, IndexCache):
     """
     Redundant visibility model (r) relating the starting
     model visibility (m) to the data visibility (d)
@@ -686,7 +729,7 @@ class RedVisModel(utils.Module):
         V^{d}_{jk} = V^{r} + V^{m}_{jk}
 
     """
-    def __init__(self, params, bl2red, R=None, parameter=True, name=None):
+    def __init__(self, params, bl2red, R=None, parameter=True, name=None, atol=1e-4):
         """
         Redundant visibility model
 
@@ -708,6 +751,8 @@ class RedVisModel(utils.Module):
             otherwise treat it as fixed to its input value.
         name : str, optional
             Name for this object, stored as self.name
+        atol : float, optional
+            Absolute tolerance for time index caching
         """
         super().__init__(name=name)
         self.params = params
@@ -719,6 +764,8 @@ class RedVisModel(utils.Module):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
+                                              atol=atol)
         self.clear_cache()
 
     def forward(self, vd, undo=False, prior_cache=None):
@@ -756,11 +803,17 @@ class RedVisModel(utils.Module):
         vout = vd.copy()
 
         # get unique visibilities
-        redvis = self.R(self.params, times=vd.times)
+        redvis = self.R(self.params)
+
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
+
+        # down select on time
+        redvis = self.index_params(redvis, times=vd.times)
 
         # expand redvis to vis size if needed
         if redvis.shape[2] != vout.data.shape[2]:
-            index = self.query_cache(vd.bls)
+            index = self.get_bl_idx(vd.bls)
             redvis = torch.index_select(redvis, 2, index)
 
         # apply redvis model
@@ -769,30 +822,33 @@ class RedVisModel(utils.Module):
         else:
             vout.data -= redvis
 
-        # evaluate priors
-        self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
-
         return vout
 
-    def query_cache(self, bls):
+    def get_bl_idx(self, bls):
         """
         Get indexing tensor that expands
-        redvis to vis shape along Nbls axis
+        redvis to vis shape along Nbls axis.
+        Overloads IndexCache.get_bl_idx
         """
         if not isinstance(bls, list):
             bls = [bls]
         h = utils.arr_hash(bls)
-        if h not in self.cache:
+        if h not in self.cache_bidx:
             index = torch.as_tensor(
                 [self.bl2red[bl] for bl in bls],
                 device=self.device)
         else:
-            index = self.cache[h]
+            index = self.cache_bidx[h]
 
         return index
 
     def clear_cache(self):
-        self.cache = {}
+        """clear all caches, some come from IndexCache object"""
+        self.clear_time_cache()
+        self.clear_bl_cache()
+
+    def clear_bl_cache(self):
+        self.cache_bidx = {}
 
     def push(self, device):
         """
@@ -800,9 +856,11 @@ class RedVisModel(utils.Module):
         """
         self.device = device
         self.params = utils.push(self.params, device)
+        for h in self.cache_bidx:
+            self.cache_bidx[h] = self.cache_bidx[h].to(device)
 
 
-class VisModel(utils.Module):
+class VisModel(utils.Module, IndexCache):
     """
     Visibility model (v) relating the starting
     model visibility (m) to the data visibility (d)
@@ -813,7 +871,7 @@ class VisModel(utils.Module):
         V^{d}_{jk} = V^{v}_{jk} + V^{m}_{jk} 
 
     """
-    def __init__(self, params, R=None, parameter=True, name=None):
+    def __init__(self, params, R=None, parameter=True, name=None, atol=1e-4):
         """
         Visibility model
 
@@ -834,6 +892,8 @@ class VisModel(utils.Module):
             otherwise treat it as fixed to its input value.
         name : str, optional
             Name for this object, stored as self.name
+        atol : float, optional
+            Absolute tolerance for time index caching
         """
         super().__init__(name=name)
         self.params = params
@@ -844,6 +904,10 @@ class VisModel(utils.Module):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
+                                              bls=R.bls if hasattr(R, 'bls') else None,
+                                              atol=atol)
+        self.clear_cache()
 
     def forward(self, vd, undo=False, prior_cache=None, **kwargs):
         """
@@ -872,14 +936,20 @@ class VisModel(utils.Module):
             with the visibility model.
         """
         vout = vd.copy()
-        vis = self.R(self.params, times=vd.times, bls=bls)
+
+        # forward model params
+        vis = self.R(self.params)
+
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
+
+        # down select
+        vis = self.index_params(vis, times=vd.times, bls=vd.bls)
+
         if not undo:
             vout.data = vout.data + vis
         else:
             vout.data = vout.data - vis
-
-        # evaluate priors
-        self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
 
         return vout
 
@@ -896,12 +966,15 @@ class VisModelResponse(BaseResponse):
     A response object for VisModel and RedVisModel, subclass of BaseResponse
     taking params of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
-    def __init__(self, freq_mode='channel', time_mode='channel',
+    def __init__(self, bls=None, freq_mode='channel', time_mode='channel',
                  param_type='com', device=None,
                  freq_kwargs={}, time_kwargs={}):
         """
         Parameters
         ----------
+        bls : list of 2-tuple, optional
+            List of baseline tuples for baseline indexing (minibatching)
+            e.g. [(0, 1), (1, 2). ...] along the Nbls params dimension
         freq_mode : str, optional
             Frequency parameterization, ['channel', 'linear']
         time_mode : str, optional
@@ -924,7 +997,7 @@ class VisModelResponse(BaseResponse):
         Forward pass params through response to get
         complex visibility model per time and frequency
         """
-        params = super().forward(params, bls=bls, times=times)
+        params = super().forward(params)
 
         # detect if params needs to be casted into complex
         if self.param_type == 'amp_phs':
@@ -938,7 +1011,7 @@ class VisCoupling(utils.Module):
     A visibility coupling module, describing
     a Nbls x Nbls coupling matrix
     """
-    def __init__(self, params, bls, R=None, parameter=True, name=None):
+    def __init__(self, params, bls, R=None, parameter=True, name=None, atol=1e-4):
         """
         Visibility coupling model
 
@@ -958,6 +1031,8 @@ class VisCoupling(utils.Module):
             If True, treat params as differentiable
         name : str, optional
             Name for this module, default is class name
+        atol : float, optional
+            Absolute tolerance for time index caching
         """
         super().__init__(name=name)
         self.params = params
@@ -970,6 +1045,10 @@ class VisCoupling(utils.Module):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
+                                              bls=R.bls if hasattr(R, 'bls') else None,
+                                              atol=atol)
+        self.clear_cache()
 
     def forward(self, vd, prior_cache=None, **kwargs):
         """
@@ -991,22 +1070,41 @@ class VisCoupling(utils.Module):
             through coupling matrix
         """
         vout = vd.copy(detach=False)
-        coupling = self.R(self.params, times=vd.times)
 
-        if vout.Nbls == self.Nbls:
-            # if Nbls is the same, assume bl ordering matches!
-            bl_idx = slice(None)
-        else:
-            # otherwise get relevant bls in vout for this coupling model
-            bl_idx = vout._bl2ind(coupling.bls)
-
-        # multiply coupling tensor
-        vout.data[:, :, bl_idx] = torch.einsum("iijk...,iik...->iij...", coupling, vout.data)
+        # forward model
+        coupling = self.R(self.params)
 
         # evaluate priors
-        self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=coupling)
+
+        # down select on times and bls
+        coupling = self.index_params(coupling, times=vd.times, bls=vd.bls)
+
+        # multiply coupling tensor
+        vout.data = torch.einsum("iijk...,iik...->iij...", coupling, vout.data)
 
         return vout
+
+    def index_params(self, params, times=None, bls=None):
+        """overload IndexCache index_params b/c of double bl-bl axis"""
+        if times is not None:
+            idx = self.get_time_idx(times)
+            if idx is None:
+                params = params
+            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-2]:
+                params = params
+            else:
+                params = params[..., idx, :]
+        if bls is not None:
+            idx = self.get_bl_idx(bls)
+            if idx is None:
+                params = params
+            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-3]:
+                params = params
+            else:
+                params = params[:, :, idx, idx]
+
+        return params
 
     def push(self, device):
         """

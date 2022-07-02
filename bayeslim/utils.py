@@ -1799,7 +1799,7 @@ class PixInterp:
         self.phi_grid = phi_grid
         self.device = device
 
-    def _clear_cache(self):
+    def clear_cache(self):
         """Clears interpolation cache"""
         self.interp_cache = {}
 
@@ -2244,33 +2244,10 @@ class Module(torch.nn.Module):
 
     def eval_prior(self, prior_cache, inp_params=None, out_params=None):
         """
-        Shallow wrapper around self._eval_prior. Default
-        behavior is to pass self.params and self.R(self.params)
-        to self._eval_prior if self.name not in prior_cache.
-        Non-standard subclasses should overload this method
-        for proper usage.
-
-        Parameters
-        ----------
-        prior_cache : dict
-            Dictionary to hold computed prior, assigned as self.name
-        inp_params, out_params : tensor, optional
-            self.params and self.R(self.params), respectively
-        """
-        if prior_cache is not None and self.name not in prior_cache:
-            # configure inp_params if needed
-            if self.priors_inp_params is not None and inp_params is None: 
-                inp_params = self.params
-            # configure out_params if needed
-            if self.priors_out_params is not None and out_params is None: 
-                out_params = self.R(self.params)
-            self._eval_prior(prior_cache, inp_params, out_params)
-
-    def _eval_prior(self, prior_cache, inp_params=None, out_params=None):
-        """
         Evaluate prior and insert into prior_cache.
         Will use self.name (default) or __class__.__name__ as key.
         If the key already exists, the prior will not be computed or stored.
+        This is needed when minibatching.
 
         Parameters
         ----------
@@ -2280,7 +2257,7 @@ class Module(torch.nn.Module):
             self.params and self.R(self.params), respectively
         """
         # append to cache
-        if self.name not in prior_cache:
+        if prior_cache is not None and self.name not in prior_cache:
             prior_value = torch.as_tensor(0.0)
             if (hasattr(self, 'priors_inp_params') and
                 inp_params is not None and
@@ -2375,6 +2352,15 @@ class Sequential(Module):
             self.get_submodule(self._models[0]).set_batch_idx(idx)
         elif idx > 0:
             raise ValueError("No method set_batch_idx and requested idx > 0")
+
+    def push(self, device):
+        """
+        push all models to device
+        """
+        for name in self._models:
+            model = self.get_submodule(name)
+            if hasattr(model, 'push'):
+                model.push(device)
 
 
 def has_model_attr(model, name):
@@ -2747,15 +2733,19 @@ def smi(name, fname='nvidia_mem.txt'):
     with open(fname) as f: lines = f.readlines()
     date = lines[0].strip()
     output = []
+    usage = {}
     for i, line in enumerate(lines):
         if name in line:
             gpu = line[4]
             mems = lines[i+1].split('|')[2].strip().split('/')
+            usage[i] - int(mems[0].strip()[:-3])
             alloc = "{:>6} MiB".format("{:,}".format(int(mems[0].strip()[:-3])))
             total = "{:>6} MiB".format("{:,}".format(int(mems[1].strip()[:-3])))
             mem = "{} / {}".format(alloc, total)
             output.append("| GPU {} | {} |".format(gpu, mem))
     print('\n'.join([date] + ['o' + '-'*33 + 'o'] + output + ['o' + '-'*33 + 'o']))
+
+    return usage
 
 
 def flatten(arr, Nelem=None):
