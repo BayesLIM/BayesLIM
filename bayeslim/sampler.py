@@ -451,7 +451,6 @@ class Potential(utils.Module):
         """
         super().__init__()
         self.prob = prob
-        self.named_params = [k[0] for k in self.prob.named_parameters()]
         self.param_name = param_name
 
     def forward(self, x=None, **kwargs):
@@ -476,9 +475,9 @@ class Potential(utils.Module):
         # update params
         if x is not None:
             if isinstance(x, ParamDict):
-                self.prob.update(x)
+                self.update(x)
             else:
-                self.prob[self.param_name] = torch.as_tensor(x)
+                self[self.param_name] = torch.as_tensor(x)
 
         # zero gradients
         self.prob.zero_grad()
@@ -487,7 +486,7 @@ class Potential(utils.Module):
         U = self.prob.closure()
 
         # collect gradients
-        gradU = ParamDict({k: self.prob[k].grad.clone() for k in self.named_params})
+        gradU = ParamDict({k: self[k].grad.clone() for k in self.named_params})
 
         return U, gradU
 
