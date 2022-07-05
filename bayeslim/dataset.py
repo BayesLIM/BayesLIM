@@ -1626,13 +1626,14 @@ class CalData(TensorData):
 
         Returns
         -------
-        tensor
-            (Npol, Npol, Nants, Ntimes, Nfreqs)
+        CalData
         """
         from bayeslim.calibration import redcal_degen_gains
-        rd = self.redcal_degens(wgts=wgts)
-        return redcal_degen_gains(self.ants, antpos=self.antpos,
-                                  abs_amp=rd[0], phs_slope=rd[1])
+        out = self.copy()
+        rd = out.redcal_degens(wgts=wgts)
+        out.data = redcal_degen_gains(out.ants, antpos=out.antpos,
+                                      abs_amp=rd[0], phs_slope=rd[1])
+        return out
 
     def remove_redcal_degen(self, redvis=None, degen=None, wgts=None):
         """
