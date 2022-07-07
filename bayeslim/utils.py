@@ -2733,12 +2733,12 @@ def smi(name, fname='nvidia_mem.txt'):
     with open(fname) as f: lines = f.readlines()
     date = lines[0].strip()
     output = []
-    usage = {}
+    usage = {'date': date}
     for i, line in enumerate(lines):
         if name in line:
             gpu = line[4]
             mems = lines[i+1].split('|')[2].strip().split('/')
-            usage[i] - int(mems[0].strip()[:-3])
+            usage[gpu] = "{:>5} / {:>5} MiB".format(mems[0].strip()[:-3], mems[1].strip()[:-3])
             alloc = "{:>6} MiB".format("{:,}".format(int(mems[0].strip()[:-3])))
             total = "{:>6} MiB".format("{:,}".format(int(mems[1].strip()[:-3])))
             mem = "{} / {}".format(alloc, total)
