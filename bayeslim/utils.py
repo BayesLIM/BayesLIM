@@ -1763,7 +1763,8 @@ class PixInterp:
     Sky pixel spatial interpolation object
     """
     def __init__(self, pixtype, nside=None, interp_mode='nearest',
-                 theta_grid=None, phi_grid=None, device=None):
+                 theta_grid=None, phi_grid=None, device=None,
+                 gpu=False, downcast=False):
         """
         Interpolation is a weighted average of nearest neighbors.
         If pixtype is 'healpix', this is bilinear interpolation.
@@ -1790,6 +1791,13 @@ class PixInterp:
             generally not start at 0).
         device : str, optional
             Device to place object on
+        gpu : bool, optional
+            If True and pixtype is 'rect', perform grid sorting
+            on GPU for speedups
+        downcast : bool, optional
+            If True and using gpu, downcast grids to float32
+            before sending to GPU for further speedup (with
+            slight loss of accuracy)
         """
         self.pixtype = pixtype
         self.nside = nside
@@ -1798,6 +1806,8 @@ class PixInterp:
         self.theta_grid = theta_grid
         self.phi_grid = phi_grid
         self.device = device
+        self.gpu = gpu
+        self.downcast = downcast
 
     def clear_cache(self):
         """Clears interpolation cache"""
@@ -1854,7 +1864,8 @@ class PixInterp:
                 # get map indices
                 inds, xyrel = bipoly_grid_index(xgrid, ygrid, xnew, ynew,
                                                 degree[0]+1, degree[1]+1,
-                                                wrapx=True, ravel=True)
+                                                wrapx=True, ravel=True,
+                                                gpu=self.gpu, downcast=self.downcast)
 
                 # get weights
                 Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
@@ -1973,7 +1984,8 @@ def freq_interp(params, param_freqs, freqs, kind, axis,
         return torch.tensor(interp_param, device=params.device, dtype=params.dtype)
 
 
-def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny, wrapx=False, ravel=True):
+def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
+                      wrapx=False, ravel=True, gpu=False, downcast=False):
     """
     For uniform grid in x and y, pick out N nearest grid indices
     in x and y given a sampling of new xy values.
@@ -2002,7 +2014,14 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny, wrapx=False, ravel=True)
             X, Y = np.meshgrid(xgrid, ygrid)
             grid = X.ravel(), Y.ravel()
         i.e. [(x1, y1), (x2, y1), ..., (x1, y2), (x2, y2), ...]
-        
+    gpu : bool or str, optional
+        If True, pass input arrays to GPU to speed up argsort.
+        Default is to send to 'cuda:0', but gpu can be passed
+        as a str specifying the exact GPU to use, e.g. 'cuda:1'
+    downcast : bool, optional
+        If also using gpu, cast input arrays down to torch.float32,
+        which speeds CPU->GPU transfer and argsort.
+
     Returns
     -------
     inds : array
@@ -2016,6 +2035,11 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny, wrapx=False, ravel=True)
         xnew and ynew but cast into dimensionless units
         relative to the start of inds and dx,dy spacing
     """
+    # parse gpu kwarg
+    if gpu:
+        if isinstance(gpu, bool):
+            gpu = 'cuda:0'
+
     # get dx, dy
     dx, dy = np.median(np.diff(xgrid)), np.median(np.diff(ygrid))
     
@@ -2025,13 +2049,28 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny, wrapx=False, ravel=True)
         xgrid = np.concatenate([xgrid[-Nx:]-N*dx, xgrid, xgrid[:Nx]+N*dx])
 
     # get xgrid and ygrid indices for each xynew
-    xnn = np.sort(np.argsort(np.abs(xgrid - xnew[:, None]), axis=-1)[:, :Nx], -1)
-    ynn = np.sort(np.argsort(np.abs(ygrid - ynew[:, None]), axis=-1)[:, :Ny], -1)
+    if gpu:
+        # send arrays to the GPU
+        dtype = torch.float32 if downcast else None
+        _xgrid = torch.as_tensor(xgrid, dtype=dtype).to(gpu)
+        _ygrid = torch.as_tensor(ygrid, dtype=dtype).to(gpu)
+        _xnew = torch.as_tensor(xnew, dtype=dtype).to(gpu)
+        _ynew = torch.as_tensor(ynew, dtype=dtype).to(gpu)
+
+        # get indices
+        xnn = torch.sort(torch.argsort(torch.abs(_xgrid - _xnew[:, None]), dim=-1)[:, :Nx], dim=-1).values
+        ynn = torch.sort(torch.argsort(torch.abs(_ygrid - _ynew[:, None]), dim=-1)[:, :Ny], dim=-1).values
+        xnn, ynn = xnn.cpu().numpy(), ynn.cpu().numpy()
+
+    else:
+        # if using numpy, argpartition is ~4x faster than argsort for large arrays
+        xnn = np.sort(np.argpartition(-np.abs(xgrid - xnew[:, None]), -Nx, axis=-1)[:, -Nx:], axis=-1)
+        ynn = np.sort(np.argpartition(-np.abs(ygrid - ynew[:, None]), -Ny, axis=-1)[:, -Ny:], axis=-1)
 
     # get xnew ynew in coords relative to xnn[:, 0] and ynn[:, 0]
     xrel = (xnew - xgrid[xnn[:, 0]]) / dx
     yrel = (ynew - ygrid[ynn[:, 0]]) / dy
-    
+
     # unwrap
     if wrapx:
         xnn -= Nx

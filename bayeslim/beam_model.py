@@ -490,11 +490,15 @@ class PixelBeam(utils.Module):
             self.cache[h] = cut.to(device)
 
     def query_cache(self, zen):
+        """
+        Query sky cut cache
+        """
         h = utils.arr_hash(zen)
         if h in self.cache:
             return self.cache[h]
 
     def clear_cache(self):
+        """clear the sky cut cache"""
         self.cache = {}
 
 
@@ -551,7 +555,8 @@ class PixelResponse(utils.PixInterp):
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  theta_grid=None, phi_grid=None, freq_mode='channel', nside=None,
-                 device=None, log=False, freq_kwargs=None, powerbeam=True, Rchi=None):
+                 device=None, log=False, freq_kwargs=None, powerbeam=True, Rchi=None,
+                 interp_gpu=False):
         """
         Parameters
         ----------
@@ -593,9 +598,13 @@ class PixelResponse(utils.PixInterp):
             matrix from J phi theta to J alpha delta (see Memo 1),
             should be shape (2, 2, Npix) where Npix is the spatial
             size of the pixelized beam cache, i.e. len(theta)
+        interp_gpu : bool, optional
+            If True and pixtype is 'rect', use GPU when solving
+            for pixel interpolation weights for speedup (PixInterp)
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
-                         device=device, theta_grid=theta_grid, phi_grid=phi_grid)
+                         device=device, theta_grid=theta_grid, phi_grid=phi_grid,
+                         gpu=interp_gpu)
         self.powerbeam = powerbeam
         self.freqs = freqs
         self.comp_params = comp_params
@@ -851,7 +860,7 @@ class YlmResponse(PixelResponse):
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None):
+                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -899,6 +908,9 @@ class YlmResponse(PixelResponse):
             matrix from J phi theta to J alpha delta (see Memo 1),
             should be shape (2, 2, Npix) where Npix is the spatial
             size of the pixelized beam cache, i.e. len(theta)
+        interp_gpu : bool, optional
+            If True and pixtype is 'rect', use GPU when solving
+            for pixel interpolation weights for speedup (PixInterp)
 
         Notes
         -----
@@ -910,7 +922,8 @@ class YlmResponse(PixelResponse):
                                           interp_mode=interp_mode,
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
-                                          theta_grid=theta_grid, phi_grid=phi_grid)
+                                          theta_grid=theta_grid, phi_grid=phi_grid,
+                                          interp_gpu=interp_gpu)
         self.theta, self.phi = theta, phi
         self.l, self.m = l, m
         dtype = utils._cfloat() if comp_params else utils._float()
