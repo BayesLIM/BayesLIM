@@ -2040,6 +2040,9 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
         if isinstance(gpu, bool):
             gpu = 'cuda:0'
 
+    # set gpu to false if no cuda
+    gpu = gpu if torch.cuda.is_available() else False
+
     # get dx, dy
     dx, dy = np.median(np.diff(xgrid)), np.median(np.diff(ygrid))
     
