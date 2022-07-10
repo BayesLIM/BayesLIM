@@ -412,7 +412,7 @@ class PixelBeam(utils.Module):
                 if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
                     out_params = self.R.beam_cache
 
-            self._eval_prior(prior_cache, inp_params, out_params)
+            self.eval_prior(prior_cache, inp_params, out_params)
 
     def freq_interp(self, freqs, kind='linear'):
         """
