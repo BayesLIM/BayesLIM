@@ -230,7 +230,7 @@ class PixelBeam(utils.Module):
         beam = self.R(p, new_zen, new_az, self.freqs)
 
         # evaluate prior
-        self.eval_prior(prior_cache)
+        self._eval_prior(prior_cache)
 
         return beam, cut, zen, az
 
@@ -387,12 +387,9 @@ class PixelBeam(utils.Module):
         else:
             raise NotImplementedError
 
-        # evaluate prior
-        self.eval_prior(prior_cache)
-
         return sky_comp
 
-    def eval_prior(self, prior_cache, inp_params=None, out_params=None):
+    def _eval_prior(self, prior_cache, inp_params=None, out_params=None):
         """
         Parameters
         ----------
@@ -405,6 +402,8 @@ class PixelBeam(utils.Module):
             # configure inp_params if needed
             if self.priors_inp_params is not None and inp_params is None: 
                 inp_params = self.params
+                if self.p0 is not None:
+                    inp_params += self.p0
             # configure out_params if needed
             if self.priors_out_params is not None and out_params is None:
                 out_params = None
