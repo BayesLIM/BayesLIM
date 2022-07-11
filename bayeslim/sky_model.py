@@ -1134,3 +1134,40 @@ class Stokes2Coherency(utils.Module):
         self.eval_prior(prior_cache, inp_params=frac_pol)
 
         return B
+
+
+def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None):
+    """
+    Cut the lm modes of a PixelSky object with a YlmResponse function.
+    Operates inplace
+
+    Parameters
+    ----------
+    obj : PixelSky object
+    lmin : float, optional
+    lmax : float, optional
+    mmin : float, optional
+    mmax : float, optional
+    other : array, optional
+        A custom boolean array
+        indexing lm axis.
+    """
+    s = np.ones(len(obj.R.l), dtype=bool)
+    if lmin is not None:
+        s = s & (obj.R.l >= lmin)
+    if lmax is not None:
+        s = s & (obj.R.l <= lmax)
+    if mmin is not None:
+        s = s & (obj.R.m >= mmin)
+    if mmax is not None:
+        s = s & (obj.R.m <= mmax)
+    if other is not None:
+        s = s & (other)
+
+    obj.R.Ylm = obj.R.Ylm[s]
+    with torch.no_grad():
+        if obj.p0 is not None:
+            obj.p0 = obj.p0[..., s, :]
+        obj['params'] = obj.params[..., s, :]
+    obj.R.alm_mult = obj.R.alm_mult[s]
+    obj.R.l, obj.R.m = obj.R.l[s], obj.R.m[s]
