@@ -669,7 +669,7 @@ class VisData(TensorData):
                bl_inds=None, time_inds=None, freq_inds=None,
                inplace=True):
         """
-        Downselect on data tensor. Can only specify one axis at a time.
+        Downselect on data tensor.
 
         Parameters
         ----------
@@ -705,11 +705,6 @@ class VisData(TensorData):
         else:
             obj = copy.deepcopy(self)
 
-        assert sum([(bl is not None) | (bl_inds is not None),
-                    (times is not None) | (time_inds is not None),
-                    (freqs is not None) | (freq_inds is not None),
-                    pol is not None]) < 2, "only one axis can be fed at a time"
-
         if bl is not None or bl_inds is not None:
             assert not ((bl is not None) & (bl_inds is not None))
             data = obj.get_data(bl, bl_inds=bl_inds, squeeze=False)
@@ -721,7 +716,7 @@ class VisData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif times is not None or time_inds is not None:
+        if times is not None or time_inds is not None:
             assert not ((times is not None) & (time_inds is not None))
             data = obj.get_data(times=times, time_inds=time_inds, squeeze=False)
             cov = obj.get_cov(times=times, time_inds=time_inds, squeeze=False)
@@ -732,7 +727,7 @@ class VisData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif freqs is not None or freq_inds is not None:
+        if freqs is not None or freq_inds is not None:
             assert not ((freqs is not None) & (freq_inds is not None))
             data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             cov = obj.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
@@ -743,7 +738,7 @@ class VisData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif pol is not None:
+        if pol is not None:
             data = obj.get_data(pol=pol)
             flags = obj.get_flags(pol=pol)
             cov = obj.get_cov(pol=pol)
@@ -1516,7 +1511,7 @@ class CalData(TensorData):
 
     def select(self, ants=None, times=None, freqs=None, pol=None, inplace=True):
         """
-        Downselect on data tensor. Can only specify one axis at a time.
+        Downselect on data tensor.
         Operates in place.
 
         Parameters
@@ -1537,9 +1532,6 @@ class CalData(TensorData):
         else:
             obj = copy.deepcopy(self)
 
-        assert sum([ants is not None, times is not None, freqs is not None,
-                    pol is not None]) < 2, "only one axis can be fed at a time"
-
         if ants is not None:
             data = obj.get_data(ants, squeeze=False)
             cov = obj.get_cov(ants, squeeze=False)
@@ -1549,7 +1541,7 @@ class CalData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif times is not None:
+        if times is not None:
             data = obj.get_data(times=times, squeeze=False)
             cov = obj.get_cov(times=times, squeeze=False)
             icov = obj.get_icov(times=times, squeeze=False)
@@ -1558,7 +1550,7 @@ class CalData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif freqs is not None:
+        if freqs is not None:
             data = obj.get_data(freqs=freqs, squeeze=False)
             cov = obj.get_cov(freqs=freqs, squeeze=False)
             icov = obj.get_icov(freqs=freqs, squeeze=False)
@@ -1567,7 +1559,7 @@ class CalData(TensorData):
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
-        elif pol is not None:
+        if pol is not None:
             data = obj.get_data(pol=pol)
             flags = obj.get_flags(pol=pol)
             cov = obj.get_cov(pol=pol)
