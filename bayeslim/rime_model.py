@@ -403,12 +403,19 @@ class RIME(utils.Module):
         # sum across sky
         vis[:, :, :, obs_ind, :] += sum_sky
 
-    def run_batches(self):
+    def run_batches(self, concat=True):
         """
         Run forward() for all minibatches
         and concatenate the output VisData.
         Note this really only makes sense when
         running in a torch.no_grad() context.
+
+        Parameters
+        ----------
+        concat : bool, optional
+            If True (default) concatenate batched VisData
+            into a single VisData, otherwise keep
+            as a single long list (if Nbatch > 1)
         """
         vis_times = []
         vis_bls = []
@@ -416,16 +423,24 @@ class RIME(utils.Module):
         for i in range(self.Nbatch):
             self.set_batch_idx(i)
             vis = self.forward(i)
-            if self.Nbatch == 1:
-                return vis
             vis_times.append(vis)
+            if self.Nbatch == 1:
+                vis_bls.append(vis)
             # if you've reached the end of the time minibatch axis, concatenate
             if i != 0 and self.time_group_id == self.Ntime_groups-1:
-                vis_bls.append(dataset.concat_VisData(vis_times, 'time'))
+                if concat:
+                    vis = dataset.concat_VisData(vis_times, 'time')
+                    vis_bls.append(vis)
+                else:
+                    vis_bls.extend(vis_times)
                 vis_times = []
 
         # concatenate over baselines
-        vis = dataset.concat_VisData(vis_bls, 'bl')
+        if concat:
+            vis = dataset.concat_VisData(vis_bls, 'bl')
+        else:
+            vis = vis_bls
+
         self.set_batch_idx(0)
 
         return vis
