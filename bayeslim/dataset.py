@@ -1882,7 +1882,12 @@ def concat_VisData(vds, axis, run_check=True):
         Axis to concatenate over. All other
         axes must match exactly in all vds.
     """
+    if isinstance(vds, VisData):
+        return vds
     Nvd = len(vds)
+    assert Nvd > 0
+    if Nvd == 1:
+        return vds[0]
     vd = vds[0]
     out = VisData()
     flags, cov = None, None

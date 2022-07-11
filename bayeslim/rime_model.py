@@ -6,7 +6,7 @@ import numpy as np
 from collections.abc import Iterable
 from datetime import datetime
 
-from . import telescope_model, calibration, beam_model, sky_model, utils, io
+from . import telescope_model, calibration, beam_model, sky_model, utils, io, dataset
 from .utils import _float, _cfloat
 from .dataset import VisData
 
@@ -402,6 +402,33 @@ class RIME(utils.Module):
 
         # sum across sky
         vis[:, :, :, obs_ind, :] += sum_sky
+
+    def run_batches(self):
+        """
+        Run forward() for all minibatches
+        and concatenate the output VisData.
+        Note this really only makes sense when
+        running in a torch.no_grad() context.
+        """
+        vis_times = []
+        vis_bls = []
+        # iterate over all batches
+        for i in range(self.Nbatch):
+            self.set_batch_idx(i)
+            vis = self.forward(i)
+            if self.Nbatch == 1:
+                return vis
+            vis_times.append(vis)
+            # if you've reached the end of the time minibatch axis, concatenate
+            if i != 0 and self.time_group_id == self.Ntime_groups-1:
+                vis_bls.append(dataset.concat_VisData(vis_times, 'time'))
+                vis_times = []
+
+        # concatenate over baselines
+        vis = dataset.concat_VisData(vis_bls, 'bl')
+        self.set_batch_idx(0)
+
+        return vis
 
 
 def log(message, verbose=False, style=1):
