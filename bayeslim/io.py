@@ -217,7 +217,7 @@ def build_beam(modfile=None, pdict=None, device=None):
     PixelBeam
         beam model
     """
-    if isinstance(modfile, str):
+    if modfile is not None:
         beam = read_pkl(modfile, device=device)
 
     if device is not None:
