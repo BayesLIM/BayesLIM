@@ -293,7 +293,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         # this is fringe cache
         self.cache = {}
 
-    def _fringe(self, bl, zen, az):
+    def _fringe(self, bl, zen, az, conj=False):
         """compute fringe term. Returns fringe tensor
         of shape (Nbls, Nfreqs, Nzen)
         """
@@ -348,7 +348,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 bl_vec = bl_vec.to(self.device)
 
             # get fringe pattern: shape (Nbls, Nfreqs, Npix)
-            f = torch.exp(2j * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
+            sign = -2j if conj else 2j
+            f = torch.exp(sign * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
 
             # if fringe caching, store the full fringe (this is large in memory!)
             if self.cache_f:
@@ -359,7 +360,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         return f
 
-    def gen_fringe(self, bl, zen, az):
+    def gen_fringe(self, bl, zen, az, conj=False):
         """
         Generate a fringe-response given a baseline and
         collection of sky angles
@@ -375,6 +376,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
         az : tensor
             Azimuth [degrees] of shape (Npix,).
             Used for kind of 'pixel' or 'point'
+        conj : bool, optional
+            If True, conjugate complex fringe
 
         Returns
         -------
@@ -395,9 +398,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
             # if no cache for this bl, first generate it
             if bl not in self.cache:
-                self._fringe(bl, *self.cache_f_angs)
+                self._fringe(bl, *self.cache_f_angs, conj=conj)
 
-        return self._fringe(bl, zen, az)
+        return self._fringe(bl, zen, az, conj=conj)
 
     def apply_fringe(self, fringe, sky, kind):
         """
