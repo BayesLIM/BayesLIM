@@ -455,7 +455,9 @@ class PixelSky(SkyBase):
 
 class PixelSkyResponse:
     """
-    Spatial and frequency parameterization for PixelSky
+    Spatial and frequency parameterization for PixelSky.
+    Takes a params tensor (Nstokes, 1, Nfreq_coeff, Npix_coeff)
+    and returns a sky tensor (Nstokes, 1, Nfreq, Npix)
 
     options for spatial parameterization include
         - 'pixel' : sky pixel
@@ -608,7 +610,7 @@ class PixelSkyResponse:
             Sky model of shape (Nstokes, 1, Ndeg, Npix)
         """
         # detect if params needs to be casted into complex
-        if self.comp_params or self.freq_mode == 'bessel' or self.spatial_mode == 'alm':
+        if self.comp_params:
             if not torch.is_complex(params):
                 params = utils.viewcomp(params)
 
@@ -1138,7 +1140,7 @@ class Stokes2Coherency(utils.Module):
 
 def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None):
     """
-    Cut the lm modes of a PixelSky object with a YlmResponse function.
+    Cut the lm modes of a PixelSky object with a alm spatial response function.
     Operates inplace
 
     Parameters
