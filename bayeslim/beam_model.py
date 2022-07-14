@@ -18,6 +18,10 @@ class PixelBeam(utils.Module):
     """
     Handles antenna primary beam models for a
     discrete pixelized or point source sky model.
+    Note: this class does not require the beam to
+    be pixelated, but the sky to be pixelated.
+    Analytic beam response functions can be used.
+
     This relates the directional and frequency
     response of the sky to the "perceived" sky for
     a baseline between antennas p and q
@@ -49,8 +53,7 @@ class PixelBeam(utils.Module):
         '4pol' : All four auto and cross pols
             powerbeam = False : (Npol=2 Nvec=2, ...)
     """
-    def __init__(self, params, freqs, ant2beam=None, response=None,
-                 response_args=(), response_kwargs={},
+    def __init__(self, params, freqs, R=None, ant2beam=None,
                  parameter=True, pol=None, powerbeam=True,
                  fov=180, name=None, p0=None, offset=None):
         """
@@ -78,21 +81,13 @@ class PixelBeam(utils.Module):
             1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
             [10, 11, 12] with different 3 beam models.
             Default is all ants map to index 0.
-        response : PixelResponse class, optional
-            A PixelResponse class to instantiate with params, which
-            maps the input params to the output beam.
-            The instantiated object has a __call__ signature
-            that takes (params, zen [deg], az [deg], freqs [Hz])
-            as arguments and returns the beam values of shape
-            (Npol, Nvec, Nmodel, Nfreqs, Npix). Note that unlike
-            sky_model, params are stored on both the Model and
-            the Response function with the same pointer! Hence the
-            different intialization API.
-        response_args : tuple, optional
-            arguments for instantiating response object
-            after passing params as first argument
-        response_kwargs : tuple, optional
-            Keyword arguments for instantiating response object
+        R : PixelResponse or other, optional
+            A response function mapping the beam params
+            to the requested beam values at zenith and azimuth
+            angles and at each frequency.
+            Must have a signature of (params, zen, az, freqs)
+            and returns a beam of shape
+            (Npol, Nvec, Nmodel, Nfreqs, Npix).
         parameter : bool, optional
             If True, fit for params (default), otherwise
             keep it fixed to its input value
@@ -130,12 +125,11 @@ class PixelBeam(utils.Module):
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
-        if response is None:
-            # assumes Npix axis of params is healpix
-            self.R = PixelResponse(freqs, 'healpix',
-                                   nside=utils.healpy.npix2nside(params.shape[-1]))
+        if R is None:
+            # assumes uniform beam response
+            self.R = UniformResponse()
         else:
-            self.R = response(*response_args, **response_kwargs)
+            self.R = R
 
         self.powerbeam = powerbeam
         if hasattr(self.R, 'powerbeam'):
@@ -824,10 +818,30 @@ class AiryResponse:
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
                          square=self.powerbeam, brute_force=self.brute_force,
                          Ntau=self.Ntau)
+        beam = torch.as_tensor(beam, device=params.device)
         return beam
   
     def push(self, device):
         pass
+
+
+class UniformResponse:
+    """
+    A uniform beam response
+    """
+    def __init__(self, device=None):
+        self.device = device
+
+    def _setup(self):
+        pass
+
+    def __call__(self, params, zen, az, freqs):
+        out = torch.ones(params.shape[:3] + (len(freqs), len(zen)),
+                          dtype=utils._float(), device=self.device)
+        return out
+
+    def push(self, device):
+        self.device = device
 
 
 class YlmResponse(PixelResponse):
