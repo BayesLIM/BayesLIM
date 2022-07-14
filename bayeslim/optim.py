@@ -422,6 +422,18 @@ class LogProb(utils.Module):
         # set no main params by default
         self.set_main_params()
 
+        # iterate over modules to check for overlapping _names
+        # which makes conflicts in prior evaluation
+        names = []
+        overlap = False
+        for mod in self.model.modules():
+            if mod.name in names:
+                overlap = True
+            names.append(mod.name)
+        if overlap:
+            print("Warning: overlapping module names in model could" \
+                  " lead to conflicts in prior evaluation")
+
     def set_main_params(self, model_params=None):
         """
         Setup a single main parameter tensor that automatically
