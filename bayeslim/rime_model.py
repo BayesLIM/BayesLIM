@@ -446,6 +446,134 @@ class RIME(utils.Module):
         return vis
 
 
+class VisMapper:
+    """
+    A class for producing images from interferometric
+    visibilities in VisData format.
+
+    The complex visibilities (y) are related
+    to the pixelized sky (x) via the linear model
+
+    y = A x
+
+    The dirty map is produced by
+
+    m = A^T W y
+
+    where W are visibility weights
+
+    Deconvolution is performed as
+
+    dm = D m
+
+    where D can take multiple values but is in the general case
+
+    D = (A^T W A)^-1
+    """
+    def __init__(self, vis, ra, dec, beam=None, fov=180):
+        """
+        Parameters
+        ----------
+        vis : VisData object
+        ra : array
+            Right ascension [deg] of map pixels (Npix,)
+        dec : array
+            Declination [deg] of map pixels (Ndeg,)
+        beam : PixelBeam object, optional
+            Include beam in A matrix when mapping
+        fov : int, optional
+            fov parameter if beam is None, otherwise
+            use beam.fov value
+        """
+        ## TODO: add on-the-fly vis loading
+        self.vis = vis
+        self.telescope = vis.telescope
+        self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device)
+        self.ra = ra
+        self.dec = dec
+        self.Npix = len(ra)
+        self.beam = beam
+        self.fov = fov
+        self.device = vis.data.device
+        self.clear_A()
+
+    def clear_A(self):
+        self.A = None
+        self.w = None
+        self.D = None
+        self.Dinv = None
+
+    def make_map(self):
+        """
+        Make a dirty map. Populates self.A, self.w
+        """
+        Ntimes = self.vis.Ntimes
+        Nbls = self.vis.Nbls
+        Nfreqs = self.vis.Nfreqs
+        self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
+        self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
+        v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=self.vis.data.dtype, device=self.device)
+        # build A matrix
+        for i, time in enumerate(self.vis.times):
+            # get alt, az
+            alt, az = self.telescope.eq2top(time, self.ra, self.dec, store=True)
+            zen = 90 - alt
+            # get beam and cut
+            if self.beam is not None:
+                beam, cut, zen, az = self.beam.gen_beam(zen, az)
+                beam = beam.to(self.device)
+                # only single pol imaging with antenna-independent beam for now
+                beam = beam[0, 0, 0]
+            else:
+                beam = None
+                cut = zen <= self.fov/2
+                zen, az = zen[cut], az[cut]
+
+            # get conjugate of fringe (for vis sim we use fr, for mapping we use fr.conj)
+            fr = self.array.gen_fringe(self.vis.bls, zen, az, conj=True)
+
+            # multiply in beam
+            if beam is not None:
+                fr *= beam
+
+            # get weights
+            if self.vis.icov is not None and self.vis.cov_axis is None:
+                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0]
+            else:
+                wgt = torch.tensor(1.0, device=self.device)
+
+            # insert
+            self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
+            self.w[i*Nbls:(i+1)*Nbls] = wgt
+            v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time)
+
+        # normalize weights
+        self.w /= self.w.sum(0)
+
+        # make map
+        m = torch.einsum('ijk,ij->jk', self.A, v * self.w).real
+
+        return m
+
+    def deconvolve_map(self, m, pinv=True, rcond=1e-15, hermitian=True):
+        """
+        Deconvolve a dirty map (currently experimental)
+        Populates self.D, self.Dinv
+        """
+        ### experimental
+        D = torch.einsum("ijk,ij,ijl->jkl", self.A.conj(), self.w, self.A)
+        self.D = D.real
+        if pinv:
+            self.Dinv = torch.linalg.pinv(self.D, rcond=rcond, hermitian=hermitian)
+        else:
+            self.Dinv = torch.zeros_like(self.D)
+            self.Dinv[..., range(D.shape[1]), range(D.shape[1])] = 1/torch.diagonal(self.D, dim1=1, dim2=2)
+
+        dm = torch.einsum("ijk,ik->ij", self.Dinv, m)
+
+        return dm
+
+
 def log(message, verbose=False, style=1):
     """
     Print message to stdout
