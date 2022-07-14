@@ -362,7 +362,8 @@ def cmatmul(a, b):
     return c
 
 
-def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, eps=0):
+def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
+                  eps=0, rcond=1e-15, hermitian=True):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -406,12 +407,14 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
         'inv' : invert A.T Ninv A
         'diag' : take inverse of diagonal of A.T Ninv A
     pinv : bool, optional
-        Use pseudo inverse if inverting A (default).
+        Use pseudo inverse if inverting A.T A (default).
         Can also specify regularization parameter instead.
-    rcond : float, optional
-        rcond parameter for taking pseudo-inverse
     eps : float, optional
         Regularization parameter (default is None)
+    rcond : float, optional
+        rcond parameter for taking pseudo-inverse
+    hermitian : bool, optional
+        Hermitian parameter for pseudo-inverse
 
     Returns
     -------
@@ -463,7 +466,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True, rcond=1e-15, ep
             Dinv = Dinv.real
         # invert
         if pinv:
-            D = torch.pinverse(Dinv, rcond=rcond)
+            D = torch.pinverse(Dinv, rcond=rcond, hermitian=hermitian)
         else:
             D = torch.inverse(Dinv)
         xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
