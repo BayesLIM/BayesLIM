@@ -478,7 +478,7 @@ class VisMapper:
         ra : array
             Right ascension [deg] of map pixels (Npix,)
         dec : array
-            Declination [deg] of map pixels (Ndeg,)
+            Declination [deg] of map pixels (Npix,)
         beam : PixelBeam object, optional
             Include beam in A matrix when mapping
         fov : int, optional
@@ -559,6 +559,15 @@ class VisMapper:
         """
         Given A matrix and other products from build_A(),
         make and normalize a dirty map
+
+        Parameters
+        ----------
+        clip : float, optional
+            Clip DI matrix at this value
+        norm_sqbeam : bool, optional
+            If True, normalize map with two factors
+            of the powerbeam (standard least squares)
+            otherwise normalize with only one factor.
         """
         if self.A is None:
             raise ValueError("must run build_A() first")
