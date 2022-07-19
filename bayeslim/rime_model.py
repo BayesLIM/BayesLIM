@@ -495,25 +495,27 @@ class VisMapper:
         self.beam = beam
         self.fov = fov
         self.device = vis.data.device
-        self.clear_A()
+        self.clear_cache()
 
-    def clear_A(self):
+    def clear_cache(self):
         self.A = None
         self.w = None
+        self.DI = None
         self.D = None
+        self.v = None
         self.Dinv = None
 
     @torch.no_grad()
-    def make_map(self):
+    def build_A(self):
         """
-        Make a dirty map. Populates self.A, self.w
+        Build A matrix and associated weights and visibility vector
         """
         Ntimes = self.vis.Ntimes
         Nbls = self.vis.Nbls
         Nfreqs = self.vis.Nfreqs
         self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
         self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
-        v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=self.vis.data.dtype, device=self.device)
+        self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=self.vis.data.dtype, device=self.device)
         # build A matrix
         for i, time in enumerate(self.vis.times):
             # get alt, az
@@ -548,16 +550,27 @@ class VisMapper:
             # insert
             self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
             self.w[i*Nbls:(i+1)*Nbls] = wgt
-            v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
+            self.v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
         # normalize weight sum
         self.w /= self.w.sum(0)
 
-        # normalize A matrix such that diagonal of A^t w A is one
-        self.A /= torch.sqrt((torch.abs(self.A)**2 * self.w[:, :, None]).sum(0)).clip(1e-50)
+    def make_map(self):
+        """
+        Given A matrix and other products from build_A(),
+        make and normalize a dirty map
+        """
+        if self.A is None:
+            raise ValueError("must run build_A() first")
 
-        # make map
-        m = torch.einsum('ijk,ij->jk', self.A, v * self.w).real
+        # make un-normalized map
+        m = torch.einsum('ijk,ij->jk', self.A, self.v * self.w).real
+
+        # compute diagonal of A^t w A
+        self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(1e-50)
+
+        # normalize map
+        m /= self.DI
 
         return m
 
