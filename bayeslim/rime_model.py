@@ -503,6 +503,7 @@ class VisMapper:
         self.D = None
         self.Dinv = None
 
+    @torch.no_grad()
     def make_map(self):
         """
         Make a dirty map. Populates self.A, self.w
@@ -545,10 +546,13 @@ class VisMapper:
             # insert
             self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
             self.w[i*Nbls:(i+1)*Nbls] = wgt
-            v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time)
+            v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
-        # normalize weights
+        # normalize weight sum
         self.w /= self.w.sum(0)
+
+        # normalize A matrix such that diagonal of A^t w A is one
+        self.A /= torch.sqrt((torch.abs(self.A)**2 * self.w[:, :, None]).sum(0))
 
         # make map
         m = torch.einsum('ijk,ij->jk', self.A, v * self.w).real
