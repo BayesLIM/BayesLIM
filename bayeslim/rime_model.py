@@ -555,7 +555,7 @@ class VisMapper:
         # normalize weight sum
         self.w /= self.w.sum(0)
 
-    def make_map(self):
+    def make_map(self, clip=1e-5, norm_sqbeam=False):
         """
         Given A matrix and other products from build_A(),
         make and normalize a dirty map
@@ -567,7 +567,14 @@ class VisMapper:
         m = torch.einsum('ijk,ij->jk', self.A, self.v * self.w).real
 
         # compute diagonal of A^t w A
-        self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(1e-50)
+        # note that abs(A) means fringe term is just 1.0, so this really
+        # only accounts for factors of the beam
+        if norm_sqbeam:
+            # normalize by two factors of beam (standard least squares)
+            self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(clip)
+        else:
+            # normalize by one factor of beam (prevents overshoot far from fov)
+            self.DI = (torch.abs(self.A)**1 * self.w[:, :, None]).sum(0).clip(clip)
 
         # normalize map
         m /= self.DI
