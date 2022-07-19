@@ -552,7 +552,7 @@ class VisMapper:
         self.w /= self.w.sum(0)
 
         # normalize A matrix such that diagonal of A^t w A is one
-        self.A /= torch.sqrt((torch.abs(self.A)**2 * self.w[:, :, None]).sum(0))
+        self.A /= torch.sqrt((torch.abs(self.A)**2 * self.w[:, :, None]).sum(0)).clip(1e-50)
 
         # make map
         m = torch.einsum('ijk,ij->jk', self.A, v * self.w).real
