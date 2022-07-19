@@ -525,6 +525,8 @@ class VisMapper:
                 beam = beam.to(self.device)
                 # only single pol imaging with antenna-independent beam for now
                 beam = beam[0, 0, 0]
+                if not self.beam.powerbeam:
+                    beam = beam**2
             else:
                 beam = None
                 cut = zen <= self.fov/2
