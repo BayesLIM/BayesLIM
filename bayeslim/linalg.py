@@ -466,7 +466,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
             Dinv = Dinv.real
         # invert
         if pinv:
-            D = torch.pinverse(Dinv, rcond=rcond, hermitian=hermitian)
+            D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
         else:
             D = torch.inverse(Dinv)
         xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
