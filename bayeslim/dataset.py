@@ -8,7 +8,7 @@ import os
 import copy
 import h5py
 
-from . import version, utils
+from . import version, utils, telescope_model
 
 
 class TensorData:
@@ -807,7 +807,7 @@ class VisData(TensorData):
         VisData
         """
         # get setup an array object
-        array = ba.telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol)
+        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol)
         # get redundant indices of current baselines
         redinds = [array.bl2red[bl] for bl in self.bls]
         
