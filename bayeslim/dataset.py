@@ -787,6 +787,49 @@ class VisData(TensorData):
 
         return vd
 
+    def inflate_by_redundancy(self, redtol=1.0, min_len=None, max_len=None):
+        """
+        If current data only includes unique redundant baseline types,
+        copy over redundant types to all physical baselines and return
+        a new copy of the object.
+
+        Parameters
+        ----------
+        redtol : float, optional
+            Redundancy tolerance in meters
+        min_len : float, optional
+            Minimum baseline length to keep in meters
+        max_len : float, optional
+            Maximum baseline length to keep in meters
+
+        Returns
+        -------
+        VisData
+        """
+        # get setup an array object
+        array = ba.telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol)
+        # get redundant indices of current baselines
+        redinds = [array.bl2red[bl] for bl in self.bls]
+        
+        # get all new baselines
+        new_bls = array.get_bls(min_len=min_len, max_len=max_len)
+        _bls = [self.bls[redinds.index(array.bl2red[bl])] for bl in new_bls]
+        
+        # expand data across redundant baselines
+        data = self.get_data(bl=_bls, squeeze=False)
+        flags = self.get_flags(bl=_bls, squeeze=False)
+        cov = self.get_cov(bl=_bls, squeeze=False)
+        icov = self.get_icov(bl=_bls, squeeze=False)
+        
+        # setup new object
+        new_vis = VisData()
+        new_vis.setup_meta(telescope=self.telescope, antpos=self.antpos)
+        new_vis.setup_data(new_bls, self.times, self.freqs, pol=self.pol,
+                           data=data, flags=flags, cov=cov, icov=icov,
+                           history=self.history)
+        
+        return new_vis
+
     def write_hdf5(self, fname, overwrite=False):
         """
         Write VisData to hdf5 file.
