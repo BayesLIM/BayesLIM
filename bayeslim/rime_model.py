@@ -421,6 +421,7 @@ class RIME(utils.Module):
         vis_bls = []
         # iterate over all batches
         for i in range(self.Nbatch):
+            torch.cuda.empty_cache()
             self.set_batch_idx(i)
             vis = self.forward(i)
             vis_times.append(vis)
