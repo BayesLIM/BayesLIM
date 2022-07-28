@@ -52,12 +52,14 @@ class FFT(utils.Module):
         self.dx = dx if dx is not None else 1.0
         self.fftshift = fftshift
         if N is not None:
-            self.freqs = torch.fft.fftshift(torch.fft.fftfreq(N, d=self.dx))
+            self.freqs = torch.fft.fftfreq(N, d=self.dx)
+            if fftshift:
+                self.freqs = torch.fft.fftshift(self.freqs)
             self.start = self.freqs[0]
-            self.dx = self.freqs[1] - self.freqs[0]
+            self.df = self.freqs[1] - self.freqs[0]
         else:
             self.start = 0.0
-            self.dx, self.freqs = None, None
+            self.dx, self.freqs, self.df = None, None, None
         if isinstance(edgecut, int):
             edgecut = (edgecut, edgecut)
         elif edgecut is None:
@@ -132,7 +134,7 @@ class PeakDelay(FFT):
         dneg = rneg / (1 - rneg)
         max_bin = argmax + ((dneg + dpos) / 2 + self.k(dneg**2) - self.k(dpos**2))
 
-        return self.start + max_bin * self.dx
+        return self.start + max_bin * self.df
 
     def _iter_peak(self, inp, dim, out):
         if inp.ndim == 1:
