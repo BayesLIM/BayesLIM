@@ -2770,6 +2770,30 @@ class SimpleIndex:
         return self.value
 
 
+def split_into_groups(arr, Nelem=10):
+    """
+    Split a list or array of elements into
+    a nested list of groups each being Nelem long
+
+    Parametrs
+    ---------
+    arr : array or list
+        List of elements
+    Nelem : int, optional
+        Number of elements in each sublist
+
+    Returns
+    -------
+    array or list
+    """
+    N = len(arr)
+    sublist = [arr[i*Nelem:(i+1)*Nelem] for i in range(N//Nelem + 1)]
+    if len(sublist[-1]) == 0:
+        sublist.pop(-1)
+
+    return sublist
+
+
 def smi(name, fname='nvidia_mem.txt'):
     os.system("nvidia-smi -f {}".format(fname))
     with open(fname) as f: lines = f.readlines()
