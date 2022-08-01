@@ -246,12 +246,14 @@ class PointSky(SkyBase):
             params = self.params
 
         if self.p0 is not None:
-            params = params + self.p0
+            p = params + self.p0
+        else:
+            p = params
 
         # pass through response
-        sky = self.R(params)
+        sky = self.R(p)
 
-        # evaluate prior
+        # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         # pass through response
@@ -441,12 +443,14 @@ class PixelSky(SkyBase):
             params = self.params
 
         if self.p0 is not None:
-            params = params + self.p0
+            p = params + self.p0
+        else:
+            p = params
 
         # pass through response
         sky = self.R(params) * self.px_area
 
-        # evaluate prior
+        # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         name = getattr(self, 'name', None)

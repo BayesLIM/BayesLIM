@@ -385,6 +385,8 @@ class PixelBeam(utils.Module):
 
     def _eval_prior(self, prior_cache, inp_params=None, out_params=None):
         """
+        Evaluate prior on params (not params + p0) and R(params + p0)
+
         Parameters
         ----------
         prior_cache : dict
@@ -396,12 +398,10 @@ class PixelBeam(utils.Module):
             # configure inp_params if needed
             if self.priors_inp_params is not None and inp_params is None: 
                 inp_params = self.params
-                if self.p0 is not None:
-                    inp_params += self.p0
             # configure out_params if needed
             if self.priors_out_params is not None and out_params is None:
                 out_params = None
-                # we can evaluate prior on PixelResponse beam
+                # we can evaluate prior on PixelResponse beam if mode is interpolate
                 if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
                     out_params = self.R.beam_cache
 

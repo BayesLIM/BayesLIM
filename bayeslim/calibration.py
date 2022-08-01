@@ -729,7 +729,8 @@ class RedVisModel(utils.Module, IndexCache):
         V^{d}_{jk} = V^{r} + V^{m}_{jk}
 
     """
-    def __init__(self, params, bl2red, R=None, parameter=True, name=None, atol=1e-4):
+    def __init__(self, params, bl2red, R=None, parameter=True, p0=None,
+                 name=None, atol=1e-4):
         """
         Redundant visibility model
 
@@ -749,6 +750,10 @@ class RedVisModel(utils.Module, IndexCache):
         parameter : bool, optional
             If True, treat params as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
+        p0 : tensor, optional
+            Starting params to sum with params before Response
+            function. This reframes params as a perturbation about p0.
+            Same shape and dtype as params.
         name : str, optional
             Name for this object, stored as self.name
         atol : float, optional
@@ -764,6 +769,7 @@ class RedVisModel(utils.Module, IndexCache):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        self.p0 = p0
         super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
                                               atol=atol)
         self.clear_cache()
@@ -803,7 +809,11 @@ class RedVisModel(utils.Module, IndexCache):
         vout = vd.copy()
 
         # get unique visibilities
-        redvis = self.R(self.params)
+        if self.p0 is not None:
+            params = self.params + self.p0
+        else:
+            params = self.params
+        redvis = self.R(params)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
@@ -871,7 +881,8 @@ class VisModel(utils.Module, IndexCache):
         V^{d}_{jk} = V^{v}_{jk} + V^{m}_{jk} 
 
     """
-    def __init__(self, params, R=None, parameter=True, name=None, atol=1e-4):
+    def __init__(self, params, R=None, parameter=True, p0=None,
+                 name=None, atol=1e-4):
         """
         Visibility model
 
@@ -890,6 +901,10 @@ class VisModel(utils.Module, IndexCache):
         parameter : bool, optional
             If True, treat vis as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
+        p0 : tensor, optional
+            Starting params to sum with params before Response
+            function. This reframes params as a perturbation about p0.
+            Same shape and dtype as params.
         name : str, optional
             Name for this object, stored as self.name
         atol : float, optional
@@ -904,6 +919,7 @@ class VisModel(utils.Module, IndexCache):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        self.p0 = p0
         super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
                                               bls=R.bls if hasattr(R, 'bls') else None,
                                               atol=atol)
@@ -938,7 +954,11 @@ class VisModel(utils.Module, IndexCache):
         vout = vd.copy()
 
         # forward model params
-        vis = self.R(self.params)
+        if self.p0 is not None:
+            params = self.params + self.p0
+        else:
+            params = self.params
+        vis = self.R(params)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
@@ -1011,7 +1031,8 @@ class VisCoupling(utils.Module):
     A visibility coupling module, describing
     a Nbls x Nbls coupling matrix
     """
-    def __init__(self, params, bls, R=None, parameter=True, name=None, atol=1e-4):
+    def __init__(self, params, bls, R=None, parameter=True, p0=None,
+                 name=None, atol=1e-4):
         """
         Visibility coupling model
 
@@ -1029,6 +1050,10 @@ class VisCoupling(utils.Module):
             Default is VisModelResponse
         parameter : bool, optional
             If True, treat params as differentiable
+        p0 : tensor, optional
+            Starting params to sum with params before Response
+            function. This reframes params as a perturbation about p0.
+            Same shape and dtype as params.
         name : str, optional
             Name for this module, default is class name
         atol : float, optional
@@ -1045,6 +1070,7 @@ class VisCoupling(utils.Module):
             # default response is per freq channel and time bin
             R = VisModelResponse()
         self.R = R
+        self.p0 = p0
         super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
                                               bls=R.bls if hasattr(R, 'bls') else None,
                                               atol=atol)
@@ -1072,7 +1098,11 @@ class VisCoupling(utils.Module):
         vout = vd.copy(detach=False)
 
         # forward model
-        coupling = self.R(self.params)
+        if self.p0 is not None:
+            params = self.params + self.p0
+        else:
+            params = self.params
+        coupling = self.R(params)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=coupling)
