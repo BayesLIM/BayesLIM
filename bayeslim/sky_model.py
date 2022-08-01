@@ -79,15 +79,25 @@ class SkyBase(utils.Module):
         attrs : list of str
             List of additional attributes to push
         """
+        # push basic attrs
         self.params = utils.push(self.params, device)
         self.device = device
         self.freqs = self.freqs.to(device)
         for attr in attrs:
             if hasattr(self, attr):
                 setattr(self, attr, getattr(self, attr).to(device))
+        # push response
         self.R.push(device)
+        # push starting p0
         if self.p0 is not None:
             self.p0 = self.p0.to(device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
     def freq_interp(self, freqs, kind='linear'):
         """

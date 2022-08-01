@@ -173,6 +173,13 @@ class PixelBeam(utils.Module):
         self.device = device
         if self.p0 is not None:
             self.p0 = self.p0.to(device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
     def gen_beam(self, zen, az, prior_cache=None):
         """

@@ -525,6 +525,13 @@ class JonesModel(utils.Module, IndexCache):
         self.R.push(device)
         if self.p0 is not None:
             self.p0 = self.p0.to(device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
     def to_CalData(self, pol=None, flags=None, cov=None, cov_axis=None,
                    telescope=None, antpos=None, history='', **kwargs):
@@ -868,6 +875,13 @@ class RedVisModel(utils.Module, IndexCache):
         self.params = utils.push(self.params, device)
         for h in self.cache_bidx:
             self.cache_bidx[h] = self.cache_bidx[h].to(device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
 
 class VisModel(utils.Module, IndexCache):
@@ -979,6 +993,13 @@ class VisModel(utils.Module, IndexCache):
         """
         self.device = device
         self.params = utils.push(self.params, device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
 
 class VisModelResponse(BaseResponse):
@@ -1142,6 +1163,13 @@ class VisCoupling(utils.Module):
         """
         self.device = device
         self.params = utils.push(self.params, device)
+        # push prior functions
+        if self.priors_inp_params is not None:
+            for pr in self.priors_inp_params:
+                pr.push(device)
+        if self.priors_out_params is not None:
+            for pr in self.priors_out_params:
+                pr.push(device)
 
 
 def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
