@@ -58,7 +58,7 @@ class BaseLogPrior:
         for attr in self.attrs:
             if hasattr(self, attr):
                 a = getattr(self, attr)
-                setattr(self, a, a.to(device))
+                setattr(self, attr, a.to(device))
 
 
 class LogUniformPrior(BaseLogPrior):
