@@ -18,7 +18,7 @@ class BaseLogPrior:
     A base LogPrior object with universal
     functionality for all priors
     """
-    def __init__(self, index=None, func=None, fkwargs=None):
+    def __init__(self, index=None, func=None, fkwargs=None, attrs=None):
         """
         Parameters
         ----------
@@ -31,10 +31,14 @@ class BaseLogPrior:
             This occurs after indexing.
         fkwargs : dict, optional
             keyword arguments for func if needed
+        attrs : list, optional
+            List of self.attribute names attached to push
+            to device when using push() e.g. ['lower_bound', ...]
         """
         self.index = index
         self.func = func
         self.fkwargs = fkwargs if fkwargs is not None else {}
+        self.attrs = attrs if attrs is not None else []
 
     def _index_func(self, params):
         if self.index is not None:
@@ -49,6 +53,12 @@ class BaseLogPrior:
 
     def __call__(self, params):
         return self.forward(params)
+
+    def push(self, device):
+        for attr in self.attrs:
+            if hasattr(self, attr):
+                a = getattr(self, attr)
+                setattr(self, a, a.to(device))
 
 
 class LogUniformPrior(BaseLogPrior):
@@ -72,7 +82,8 @@ class LogUniformPrior(BaseLogPrior):
         fkwargs : dict, optional
             optional kwargs for func
         """
-        super().__init__(index, func, fkwargs)
+        super().__init__(index, func, fkwargs,
+                         attrs=['lower_bound', 'upper_bound'])
         self.lower_bound = torch.as_tensor(lower_bound)
         self.upper_bound = torch.as_tensor(upper_bound)
         self.norm = torch.sum(torch.log(1/(self.upper_bound - self.lower_bound)))
@@ -149,7 +160,8 @@ class LogTaperedUniformPrior(BaseLogPrior):
         fkwargs : dict, optional
             optional kwargs for func
         """
-        super().__init__(index, func, fkwargs)
+        super().__init__(index, func, fkwargs,
+                         attrs=['coeff', 'lower_bound', 'upper_bound'])
         assert lower_bound is not None or upper_bound is not None
         self.lower_bound, self.upper_bound = lower_bound, upper_bound
         if self.lower_bound is not None:
@@ -227,7 +239,8 @@ class LogGaussPrior(BaseLogPrior):
         fkwargs : dict, optional
             optional kwargs for func
         """
-        super().__init__(index, func, fkwargs)
+        super().__init__(index, func, fkwargs,
+                         attrs=['mean', 'icov'])
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.cov = torch.atleast_1d(torch.as_tensor(cov))
         self.sparse_cov = sparse_cov
@@ -310,7 +323,8 @@ class LogLaplacePrior(BaseLogPrior):
         fkwargs : dict, optional
             optional kwargs for func
         """
-        super().__init__(index, func, fkwargs)
+        super().__init__(index, func, fkwargs,
+                         attrs=['mean', 'scale'])
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.scale = torch.atleast_1d(torch.as_tensor(scale))
         self.norm = torch.sum(torch.log(2*self.scale))
