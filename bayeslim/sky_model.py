@@ -458,13 +458,13 @@ class PixelSky(SkyBase):
             p = params
 
         # pass through response
-        sky = self.R(params) * self.px_area
+        sky = self.R(p)
 
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         name = getattr(self, 'name', None)
-        return dict(kind=self.kind, sky=sky, angs=self.angs, name=name)
+        return dict(kind=self.kind, sky=sky * px_area, angs=self.angs, name=name)
 
 
 class PixelSkyResponse:
@@ -1060,7 +1060,7 @@ class Stokes2Coherency(utils.Module):
         ----------
         sky_comp : tensor or dict
             Of shape (4, 1, ...) or (2, 2, ...)
-            holding IQUV or [[I, Q], [U, V]] respectively.
+            holding [IQUV] or [[I, Q], [U, V]] respectively.
             Can also be a sky_component dictionary, which will
             index sky_comp['sky'] as the sky tensor
 
@@ -1150,6 +1150,39 @@ class Stokes2Coherency(utils.Module):
         self.eval_prior(prior_cache, inp_params=frac_pol)
 
         return B
+
+    def eval_prior(self, prior_cache, inp_params=None, out_params=None):
+        """
+        Prior evalution function specific to Stokes2Coherency class.
+        See utils.Module for details
+
+        Parameters
+        ----------
+        prior_cache : dict
+            Dictionary to hold computed prior, assigned as self.name
+        inp_params, out_params : tensor, optional
+            self.params and self.R(self.params), respectively
+        """
+        # append to cache
+        if prior_cache is not None and self.name not in prior_cache:
+            # start starting log prior value
+            prior_value = torch.as_tensor(0.0)
+
+            # try to get inp_params
+            if inp_params is None:
+                if hasattr(self, 'params'):
+                    inp_params = self.params
+
+            # look for prior on inp_params
+            if self.priors_inp_params is not None and inp_params is not None:
+                for prior in self.priors_inp_params:
+                    if prior is not None:
+                        prior_value = prior_value + prior(inp_params)
+
+            # no prior on out_params for now...
+
+            # append prior value
+            prior_cache[self.name] = prior_value
 
 
 def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None):

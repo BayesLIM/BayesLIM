@@ -231,7 +231,7 @@ class PixelBeam(utils.Module):
         beam = self.R(p, new_zen, new_az, self.freqs)
 
         # evaluate prior
-        self._eval_prior(prior_cache)
+        self.eval_prior(prior_cache)
 
         return beam, cut, zen, az
 
@@ -390,29 +390,48 @@ class PixelBeam(utils.Module):
 
         return sky_comp
 
-    def _eval_prior(self, prior_cache, inp_params=None, out_params=None):
+    def eval_prior(self, prior_cache, inp_params=None, out_params=None):
         """
-        Evaluate prior on params (not params + p0) and R(params + p0)
+        Evaluate prior on params (not params + p0) and R(params + p0).
+        This overloads Module.eval_prior given non-standard API of
+        PixelBeam. See utils.Module.eval_prior for more details.
 
         Parameters
         ----------
         prior_cache : dict
             Dictionary to hold computed prior, assigned as self.name
         inp_params, out_params : tensor, optional
-            self.params and self.R(self.params), respectively
+            self.params and self.R(self.params+self.p0), respectively
         """
+        # append to cache
         if prior_cache is not None and self.name not in prior_cache:
-            # configure inp_params if needed
-            if self.priors_inp_params is not None and inp_params is None: 
-                inp_params = self.params
-            # configure out_params if needed
-            if self.priors_out_params is not None and out_params is None:
-                out_params = None
+            # start starting log prior value
+            prior_value = torch.as_tensor(0.0)
+
+            # try to get inp_params
+            if inp_params is None:
+                if hasattr(self, 'params'):
+                    inp_params = self.params
+
+            # look for prior on inp_params
+            if self.priors_inp_params is not None and inp_params is not None:
+                for prior in self.priors_inp_params:
+                    if prior is not None:
+                        prior_value = prior_value + prior(inp_params)
+
+            # try to get out_params
+            if out_params is None:
                 # we can evaluate prior on PixelResponse beam if mode is interpolate
                 if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
                     out_params = self.R.beam_cache
 
-            self.eval_prior(prior_cache, inp_params, out_params)
+            # look for prior on out_params
+            if self.priors_out_params is not None and out_params is not None:
+                for prior in self.priors_out_params:
+                    if prior is not None:
+                        prior_value = prior_value + prior(out_params)
+
+            prior_cache[self.name] = prior_value
 
     def freq_interp(self, freqs, kind='linear'):
         """

@@ -2158,7 +2158,7 @@ def setup_bipoly_interp(degree, dx, dy, xnew, ynew):
     # get design matrix
     A, _ = setup_polynomial(X, degree, feature_degree=True, basis='direct')
     # get inverse
-    AtAinvAt = np.linalg.pinv(A.T @ A) @ A.T
+    AtAinvAt = np.linalg.pinv(A.T @ A, hermitian=True) @ A.T
     
     # get new design matrix
     X = np.array([xnew * dx, ynew * dy]).T
@@ -2196,7 +2196,7 @@ class Module(torch.nn.Module):
         """
         The forward operator. Should have a kwarg for
         starting input to the model (inp) and a cache
-        dictionary for holding the output of eval_prior
+        dictionary for holding the result of eval_prior
 
         Parameters
         ----------
@@ -2204,7 +2204,6 @@ class Module(torch.nn.Module):
             Starting input for model
         prior_cache : dict, optional
             Cache for storing computed prior
-            from self.cache_prior
         """
         raise NotImplementedError
 
@@ -2289,31 +2288,50 @@ class Module(torch.nn.Module):
         Evaluate prior and insert into prior_cache.
         Will use self.name (default) or __class__.__name__ as key.
         If the key already exists, the prior will not be computed or stored.
-        This is needed when minibatching.
+        This override is needed when minibatching.
+
+        If inp_params is None, will try self.params.
+        If out_params is None, will try self.R(self.params + self.p0).
+        For special classes with non-standard API (like PixelBeam) this
+        function needs to be overloaded.
 
         Parameters
         ----------
         prior_cache : dict
             Dictionary to hold computed prior, assigned as self.name
         inp_params, out_params : tensor, optional
-            self.params and self.R(self.params), respectively
+            self.params and self.R(self.params+self.p0), respectively
         """
         # append to cache
         if prior_cache is not None and self.name not in prior_cache:
+            # start starting log prior value
             prior_value = torch.as_tensor(0.0)
-            if (hasattr(self, 'priors_inp_params') and
-                inp_params is not None and
-                self.priors_inp_params is not None):
+
+            # try to get inp_params
+            if inp_params is None:
+                if hasattr(self, 'params'):
+                    inp_params = self.params
+
+            # look for prior on inp_params
+            if self.priors_inp_params is not None and inp_params is not None:
                 for prior in self.priors_inp_params:
                     if prior is not None:
-                        prior_value = prior_value + prior(inp_params).to('cpu')
+                        prior_value = prior_value + prior(inp_params)
 
-            if (hasattr(self, 'priors_out_params') and
-                out_params is not None and
-                self.priors_out_params is not None):
+            # try to get out_params
+            if out_params is None:
+                if hasattr(self, 'params'):
+                    p = self.params
+                if hasattr(self, 'p0') and self.p0 is not None:
+                    p = p + self.p0
+                if hasattr(self, 'R'):
+                    out_params = self.R(p)
+
+            # look for prior on out_params
+            if self.priors_out_params is not None and out_params is not None:
                 for prior in self.priors_out_params:
                     if prior is not None:
-                        prior_value = prior_value + prior(out_params).to('cpu')
+                        prior_value = prior_value + prior(out_params)
 
             prior_cache[self.name] = prior_value
 
@@ -2733,7 +2751,7 @@ def get_zeros(x, y):
             nn = np.argsort(np.abs(y)[start:i+3])[:3] + start
             roots.append(fit_zero(x[nn], y[nn]))
             prev = curr
-            
+
     return roots
 
 
@@ -2794,7 +2812,7 @@ def split_into_groups(arr, Nelem=10):
     return sublist
 
 
-def smi(name, fname='nvidia_mem.txt'):
+def smi(name, fname='nvidia_mem.txt', verbose=True):
     os.system("nvidia-smi -f {}".format(fname))
     with open(fname) as f: lines = f.readlines()
     date = lines[0].strip()
@@ -2809,7 +2827,8 @@ def smi(name, fname='nvidia_mem.txt'):
             total = "{:>6} MiB".format("{:,}".format(int(mems[1].strip()[:-3])))
             mem = "{} / {}".format(alloc, total)
             output.append("| GPU {} | {} |".format(gpu, mem))
-    print('\n'.join([date] + ['o' + '-'*33 + 'o'] + output + ['o' + '-'*33 + 'o']))
+    if verbose:
+        print('\n'.join([date] + ['o' + '-'*33 + 'o'] + output + ['o' + '-'*33 + 'o']))
 
     return usage
 

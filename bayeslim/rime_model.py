@@ -577,7 +577,7 @@ class VisMapper:
 
         # compute diagonal of A^t w A
         # note that abs(A) means fringe term is just 1.0, so this really
-        # only accounts for factors of the beam
+        # only accounts for factors of the beam and the number of visibilities
         if norm_sqbeam:
             # normalize by two factors of beam (standard least squares)
             self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(clip)
