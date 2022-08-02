@@ -813,7 +813,11 @@ class VisData(TensorData):
         
         # get all new baselines
         new_bls = array.get_bls(min_len=min_len, max_len=max_len)
-        _bls = [self.bls[redinds.index(array.bl2red[bl])] for bl in new_bls]
+        _bls = []
+        for bl in new_bls:
+            redidx = array.bl2red[bl]
+            if redidx in redinds:
+                _bls.append(self.bls[redinds.index(redidx)])
         
         # expand data across redundant baselines
         data = self.get_data(bl=_bls, squeeze=False)
