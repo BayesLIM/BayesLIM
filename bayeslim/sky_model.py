@@ -464,7 +464,7 @@ class PixelSky(SkyBase):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         name = getattr(self, 'name', None)
-        return dict(kind=self.kind, sky=sky * px_area, angs=self.angs, name=name)
+        return dict(kind=self.kind, sky=sky * self.px_area, angs=self.angs, name=name)
 
 
 class PixelSkyResponse:
