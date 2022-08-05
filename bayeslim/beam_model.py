@@ -171,6 +171,7 @@ class PixelBeam(utils.Module):
         self.params = utils.push(self.params, device)
         self.R.push(device)
         self.device = device
+        self.freqs = self.freqs.to(device)
         if self.p0 is not None:
             self.p0 = self.p0.to(device)
         # push prior functions
@@ -844,6 +845,9 @@ class AiryResponse:
         if isinstance(az, torch.Tensor):
             if utils.device(params.device) != utils.device(az.device):
                 az = az.to(params.device)
+        if isinstance(zen, torch.Tensor):
+            if utils.device(params.device) != utils.device(zen.device):
+                zen = zen.to(params.device)
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
                          square=self.powerbeam, brute_force=self.brute_force,
                          Ntau=self.Ntau)
@@ -1320,7 +1324,8 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0,
     """
     # determine if ndarray or tensor
     mod = np if isinstance(zen, np.ndarray) else torch
-    # move to numpy
+
+    # copy
     zen = copy.deepcopy(zen)
 
     # set supra horizon to horizon value
