@@ -841,6 +841,7 @@ class AiryResponse:
         # get azimuth dependent sigma
         Dew = params[..., 0:1]
         Dns = params[..., 1:2] if params.shape[-1] > 1 else None
+        az = az.push(params.device)
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
                          square=self.powerbeam, brute_force=self.brute_force,
                          Ntau=self.Ntau)
