@@ -525,7 +525,7 @@ def j1(x, Ntau=100, brute_force=True):
     """
     if brute_force:
         # evaluate bessel integrand at fixed grid
-        t = torch.linspace(0, np.pi, Ntau)
+        t = torch.linspace(0, np.pi, Ntau, device=x.device)
         diff = (t[1] - t[0])
         t = t.reshape((-1, ) + tuple(1 for i in range(x.ndim)))
         integrand = _bessel_integrand(x, t, n=1)
