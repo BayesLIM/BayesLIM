@@ -1250,6 +1250,7 @@ class YlmResponse(PixelResponse):
                 beam = self.forward(params, self.theta, self.phi, freqs)
                 # now cache it for future calls
                 self.beam_cache = beam
+                self.beam_cache.retain_grad()
 
             # interpolate the beam at the desired sky locations
             beam = self.interp(self.beam_cache, zen, az)
