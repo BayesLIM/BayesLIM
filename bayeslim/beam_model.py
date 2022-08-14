@@ -725,12 +725,12 @@ class PixelResponse(utils.PixInterp):
         -------
         tensor
         """
-        raise NotImplementedError
         # need to fix order of operations
         # either apply to beam_cache then interpolate
         # or interpolate then apply Rchi functional on theta, phi
         if self.Rchi is None:
             return beam
+        raise NotImplementedError
         assert self.Rchi.shape[-1] == beam.shape[-1]
         assert beam.shape[1] == 2, "Nvec must be 2"
         return torch.einsum("ij...l,jkl->ik...l", beam, self.Rchi)
