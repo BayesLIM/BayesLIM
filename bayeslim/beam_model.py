@@ -1278,7 +1278,7 @@ class YlmResponse(PixelResponse):
         """
         # forward params at theta/phi and set beam cache
         self.beam_cache = self.forward(params, self.theta, self.phi)
-        if self.beam_norm is not None:
+        if hasattr(self, 'beam_norm') and self.beam_norm is not None:
             norm = self.beam_cache[..., self.beam_norm:self.beam_norm+1]
             self.beam_cache = self.beam_cache / torch.abs(norm)
 
