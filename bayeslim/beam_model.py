@@ -409,25 +409,26 @@ class PixelBeam(utils.Module):
             # start starting log prior value
             prior_value = torch.as_tensor(0.0)
 
-            # try to get inp_params
-            if inp_params is None:
-                if hasattr(self, 'params'):
-                    inp_params = self.params
-
             # look for prior on inp_params
-            if self.priors_inp_params is not None and inp_params is not None:
+            if self.priors_inp_params is not None:
+                # try to get inp_params if not provided
+                if inp_params is None:
+                    if hasattr(self, 'params'):
+                        inp_params = self.params
+                # iterate over priors
                 for prior in self.priors_inp_params:
                     if prior is not None:
                         prior_value = prior_value + prior(inp_params)
 
-            # try to get out_params
-            if out_params is None:
-                # we can evaluate prior on PixelResponse beam if mode is interpolate
-                if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
-                    out_params = self.R.beam_cache
-
             # look for prior on out_params
-            if self.priors_out_params is not None and out_params is not None:
+            if self.priors_out_params is not None:
+                if out_params is None:
+                    # we can evaluate prior on PixelResponse beam if mode is interpolate
+                    if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
+                        p = self.params if self.p0 is None else self.params + self.p0
+                        self.R.set_beam_cache(p)
+                        out_params = self.R.beam_cache
+                # iterate over priors
                 for prior in self.priors_out_params:
                     if prior is not None:
                         prior_value = prior_value + prior(out_params)
@@ -541,7 +542,7 @@ class PixelResponse(utils.PixInterp):
     given the zen and az arrays.
 
     Warning: if mode = 'interpolate' and parameter = True,
-    you need to clear_beam() after every backwards call,
+    you need to clear_beam_cache() after every backwards call,
     otherwise the graph of the cached beam is freed
     and you get a RunTimeError.
 
@@ -634,7 +635,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_mode = freq_mode
         self.freq_ax = 3
         self.Rchi = Rchi
-        self.clear_beam()
+        self.clear_beam_cache()
 
         freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self._setup(**freq_kwargs)
@@ -663,6 +664,13 @@ class PixelResponse(utils.PixInterp):
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
 
+    def forward(self, params):
+        """forward pixelized beam through frequency response"""
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+        # pass through frequency response
+        return self.freq_LM(params)
+
     def __call__(self, params, zen, az, *args):
         # cast to complex if needed
         if self.comp_params:
@@ -670,16 +678,7 @@ class PixelResponse(utils.PixInterp):
 
         # set beam cache if it doesn't exist
         if self.beam_cache is None:
-            # pass to device
-            if utils.device(params.device) != utils.device(self.device):
-                params = params.to(self.device)
-
-            # pass through frequency response
-            if self.freq_mode == 'linear':
-                params = self.freq_LM(params)
-
-            # now cache it for future calls
-            self.beam_cache = params
+            self.set_beam_cache(params)
 
         # interpolate at sky values
         b = self.interp(self.beam_cache, zen, az)
@@ -699,8 +698,16 @@ class PixelResponse(utils.PixInterp):
 
         return b
 
-    def clear_beam(self):
+    def clear_beam_cache(self):
         self.beam_cache = None
+
+    def set_beam_cache(self, params):
+        """
+        Forward params through frequency response
+        and set beam_cache
+        """
+        # forward params and set beam cache
+        self.beam_cache = self.forward(params)
 
     def apply_Rchi(self, beam):
         """
@@ -718,6 +725,10 @@ class PixelResponse(utils.PixInterp):
         -------
         tensor
         """
+        raise NotImplementedError
+        # need to fix order of operations
+        # either apply to beam_cache then interpolate
+        # or interpolate then apply Rchi functional on theta, phi
         if self.Rchi is None:
             return beam
         assert self.Rchi.shape[-1] == beam.shape[-1]
@@ -897,7 +908,7 @@ class YlmResponse(PixelResponse):
         beam = R(params, zen, az, freqs)
 
     Warning: if mode = 'interpolate' and parameter = True,
-    you need to clear_beam() after every back-propagation,
+    you need to clear_beam_cache() after every back-propagation,
     otherwise the graph of the cached beam is stale
     and you get a RunTimeError. Note this is performed
     automatically when using the rime_model.RIME object.
@@ -906,7 +917,8 @@ class YlmResponse(PixelResponse):
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False):
+                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
+                 beam_norm=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -957,6 +969,11 @@ class YlmResponse(PixelResponse):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
+        beam_norm : int, optional
+            When mode='interpolate' and theta, phi are passed,
+            this indexes the theta/phi axis of the forwarded
+            beam and divides by its value when calling
+            set_beam_cache()
 
         Notes
         -----
@@ -982,6 +999,7 @@ class YlmResponse(PixelResponse):
         self.Ylm_kwargs = Ylm_kwargs if Ylm_kwargs is not None else {}
         self.device = device
         self.log = log
+        self.beam_norm = beam_norm
 
         # default is no mapping across l
         self.lm_poly_setup()
@@ -1177,7 +1195,7 @@ class YlmResponse(PixelResponse):
         self.Ylm_cache[h] = (Ylm, alm_mult)
         self.ang_cache[h] = (zen, az)
 
-    def forward(self, params, zen, az, freqs):
+    def forward(self, params, zen, az, *args):
         """
         Perform the mapping from a_lm to pixel
         space, in addition to possible transformation
@@ -1189,8 +1207,6 @@ class YlmResponse(PixelResponse):
             Ylm coefficients of shape (Npol, Nvec, Nmodel, Ndeg, Ncoeff)
         zen, az : ndarrays
             zenith and azimuth angles [deg]
-        freqs : ndarray
-            frequency bins [Hz]
 
         Returns
         -------
@@ -1234,28 +1250,36 @@ class YlmResponse(PixelResponse):
 
         return beam
 
-    def __call__(self, params, zen, az, freqs):
+    def __call__(self, params, zen, az, *args):
         # cast to complex if needed
         if self.comp_params and torch.is_complex(params) is False:
             params = utils.viewcomp(params)
 
         # for generate mode, forward model the beam exactly at zen, az
         if self.mode == 'generate':
-            beam = self.forward(params, zen, az, freqs)
+            beam = self.forward(params, zen, az)
 
         # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
-                # beam must first be forwarded at theta and phi
-                beam = self.forward(params, self.theta, self.phi, freqs)
-                # now cache it for future calls
-                self.beam_cache = beam
-                self.beam_cache.retain_grad()
+                # forward beam at pre-designated points before interpolating
+                self.set_beam_cache(params)
 
             # interpolate the beam at the desired sky locations
             beam = self.interp(self.beam_cache, zen, az)
 
         return beam
+
+    def set_beam_cache(self, params):
+        """
+        Forward beam at pre-designated theta, phi
+        values and store as self.beam_cache.
+        Used for mode = 'interpolate'
+        """
+        # forward params at theta/phi and set beam cache
+        self.beam_cache = self.forward(params, self.theta, self.phi)
+        if self.beam_norm is not None:
+            self.beam_cache /= torch.abs(self.beam_cache[..., self.beam_norm:self.beam_norm+1])
 
     def push(self, device):
         """push attrs to device"""

@@ -296,9 +296,9 @@ class RIME(utils.Module):
         vis = torch.zeros((Npol, Npol, self.Ndata_bls, self.Ntimes, self.Nfreqs),
                           dtype=_cfloat(), device=self.device)
 
-        # clear pre-computed beam for YlmResponse type
-        if hasattr(self.beam.R, 'clear_beam'):
-            self.beam.R.clear_beam()
+        # clear pre-computed beam for YlmResponse type if needed
+        if hasattr(self.beam.R, 'clear_beam_cache'):
+            self.beam.R.clear_beam_cache()
 
         # iterate over sky components
         start = datetime.now().timestamp()
