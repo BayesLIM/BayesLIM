@@ -1394,7 +1394,7 @@ class LinearModel:
         tensor
         """
         from bayeslim.linalg import least_squares
-        return least_squares(self.A, y, **kwargs)
+        return least_squares(self.A, y, dim=self.dim, **kwargs)
 
     def generate_A(self, x, **interp1d_kwargs):
         """
