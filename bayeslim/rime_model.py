@@ -427,7 +427,7 @@ class RIME(utils.Module):
             if self.Nbatch == 1:
                 vis_bls.append(vis)
             # if you've reached the end of the time minibatch axis, concatenate
-            if i != 0 and self.time_group_id == self.Ntime_groups-1:
+            elif self.time_group_id == self.Ntime_groups-1:
                 if concat:
                     vis = dataset.concat_VisData(vis_times, 'time')
                     vis_bls.append(vis)
