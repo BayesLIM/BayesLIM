@@ -669,7 +669,12 @@ class PixelResponse(utils.PixInterp):
         if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
         # pass through frequency response
-        return self.freq_LM(params)
+        if self.freq_mode == 'channel':
+            p = params
+        elif self.freq_mode == 'linear':
+            p = self.freq_LM(params)
+
+        return p
 
     def __call__(self, params, zen, az, *args):
         # cast to complex if needed
