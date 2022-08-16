@@ -380,14 +380,14 @@ class RIME(utils.Module):
         obs_ind : int
             Time index along Ntimes axis of vis
         """
+        # first apply beam to sky: psky shape (Npol, Npol, Nbls, Nfreqs, Nsources)
+        psky = self.beam.apply_beam(beam, bl, cut_sky)
+
         # generate fringe: (Nbls, Nfreqs, Npix)
         fringe = self.array.gen_fringe(bl, zen, az)
 
-        # apply fringe to sky
-        psky = self.array.apply_fringe(fringe, cut_sky, kind)
-
-        # apply beam to fringe-sky: psky shape (Npol, Npol, Nbls, Nfreqs, Nsources)
-        psky = self.beam.apply_beam(beam, bl, psky)
+        # apply fringe to psky
+        psky = self.array.apply_fringe(fringe, psky, kind)
 
         # LEGACY: this seems to consume more memory...
         #beam1 = self.array.apply_fringe(fringe, beam1, kind)
