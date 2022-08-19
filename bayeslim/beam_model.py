@@ -1678,12 +1678,13 @@ def beam_edge_taper(zen, alpha=0.1, fov=180, device=None):
     -------
     tensor
     """
-    zen = torch.as_tensor(zen, device=device)
+    zen = utils.tensor2numpy(zen, clone=False)
     # theta mask: 5000 yields ang. resolution < nside 512
     th_arr = np.linspace(-fov/2, fov/2, 5000, endpoint=True)
     mask = utils.windows.tukey(5000, alpha=alpha)
     intp = utils.interp1d(th_arr, mask, fill_value=0, bounds_error=False, kind='linear')
+    out = intp(zen)
 
-    return intp(zen)
+    return torch.as_tensor(out, device=device)
 
 
