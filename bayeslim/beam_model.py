@@ -690,7 +690,7 @@ class PixelResponse(utils.PixInterp):
             p = self.freq_LM(params)
 
         # apply mask if necessary
-        if self.edge_alpha is not None:
+        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
             p *= beam_edge_taper(zen,
                                  alpha=self.edge_alpha,
                                  fov=self.edge_fov,
@@ -901,7 +901,7 @@ class AiryResponse:
         beam = torch.as_tensor(beam, device=params.device)
 
         # apply mask if necessary
-        if self.edge_alpha is not None:
+        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
             beam *= beam_edge_taper(zen,
                                     alpha=self.edge_alpha,
                                     fov=self.edge_fov,
@@ -929,7 +929,7 @@ class UniformResponse:
                           dtype=utils._float(), device=self.device)
 
         # apply mask if necessary
-        if self.edge_alpha is not None:
+        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
             out *= beam_edge_taper(zen,
                                    alpha=self.edge_alpha,
                                    fov=self.edge_fov,
@@ -1180,7 +1180,7 @@ class YlmResponse(PixelResponse):
             beam = torch.real(beam)
 
         # apply edge mask if necessary
-        if self.edge_alpha is not None:
+        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
             beam *= beam_edge_taper(zen,
                                     alpha=self.edge_alpha,
                                     fov=self.edge_fov,
