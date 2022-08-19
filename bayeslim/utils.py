@@ -4,7 +4,6 @@ Utility module
 import numpy as np
 import torch
 from scipy.special import voigt_profile
-from scipy.integrate import quad
 from scipy.signal import windows
 from scipy.interpolate import interp1d
 import copy
@@ -1774,8 +1773,12 @@ class PixInterp:
         ----------
         pixtype : str
             Pixelization type. options are ['healpix', 'rect']
+            For healpix, pixel ordering is RING.
+            For rect, pixel ordering should be
+            x, y = meshgrid(phi_grid, theta_grid)
+            x, y = x.ravel(), y.ravel()
         nside : int, optional
-            nside of healpix map if pixtype == 'healpix'
+            nside of healpix map if pixtype is'healpix'
         interp_mode : str, optional
             Spatial interpolation method.
             'nearest' : nearest neighbor interpolation
@@ -1787,8 +1790,7 @@ class PixInterp:
         theta_grid, phi_grid : array_like
             1D zen and azimuth arrays [deg] if pixtype is 'rect'
             defining the grid to be interpolated against. These
-            should mark the pixel centers (i.e. theta_grid should
-            generally not start at 0).
+            should mark the pixel centers.
         device : str, optional
             Device to place object on
         gpu : bool, optional

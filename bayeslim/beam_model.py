@@ -575,9 +575,9 @@ class PixelResponse(utils.PixInterp):
     BayesLIM Memo 1.
     """
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
-                 theta_grid=None, phi_grid=None, freq_mode='channel', nside=None,
-                 device=None, log=False, freq_kwargs=None, powerbeam=True, Rchi=None,
-                 interp_gpu=False):
+                 theta=None, phi=None, theta_grid=None, phi_grid=None,
+                 freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
+                 powerbeam=True, Rchi=None, interp_gpu=False, edge_alpha=None, edge_fov=180):
         """
         Parameters
         ----------
@@ -585,16 +585,22 @@ class PixelResponse(utils.PixInterp):
             frequency array of params [Hz]
         pixtype : str
             Pixelization type. options = ['healpix', 'rect'].
-            For healpix, pixel ordering is RING. For rect,
-            pixel ordering should be
+            For healpix, pixel ordering is RING.
+            For rect, pixel ordering should be
             x, y = meshgrid(phi_grid, theta_grid)
             x, y = x.ravel(), y.ravel()
         comp_params : bool, optional
             If True, cast params to complex via utils.viewcomp
         interp_mode : str, optional
             Spatial interpolation method for 'rect' pixtype.
-            ['nearest', 'linear', 'quadratic', 'linear,quadratic']
+            e.g. ['nearest', 'linear', 'quadratic', 'linear,quadratic']
             where mixed mode is for 'az,zen' respectively
+        theta, phi : array_like, optional
+            This is the (zen, az) [deg] of the beam
+            See pixtype above for theta/phi ordering given 'rect' or 'healpix'.
+            Note, this can contain additional points not specified by rect or healpix,
+            (e.g. theta=0) but these additional points must come after the points
+            required by the pixtype. 
         theta_grid, phi_grid : array_like, optional
             For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
             in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
@@ -622,10 +628,18 @@ class PixelResponse(utils.PixInterp):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
+        edge_alpha : float, optional
+            If not None, this is the alpha parameter of a tukey mask
+            for tapering the edge of the beam out to fov / 2 zenith angle.
+            Default (None) is no tapering.
+        edge_fov : float, optional
+            This is the fov parameter for the beam object in degrees,
+            i.e. the diameter of the observable hemisphere
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
                          gpu=interp_gpu)
+        self.theta, self.phi = theta, phi
         self.powerbeam = powerbeam
         self.freqs = freqs
         self.comp_params = comp_params
@@ -636,6 +650,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_ax = 3
         self.Rchi = Rchi
         self.clear_beam_cache()
+        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
 
         freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self._setup(**freq_kwargs)
@@ -673,6 +688,13 @@ class PixelResponse(utils.PixInterp):
             p = params
         elif self.freq_mode == 'linear':
             p = self.freq_LM(params)
+
+        # apply mask if necessary
+        if self.edge_alpha is not None:
+            p *= beam_edge_taper(zen,
+                                 alpha=self.edge_alpha,
+                                 fov=self.edge_fov,
+                                 device=p.device)
 
         return p
 
@@ -780,7 +802,7 @@ class GaussResponse:
         pass
 
     def __call__(self, params, zen, az, freqs):
-        # get azimuth dependent sigma
+        # get azimuth dependent sigma: azimuth is East of North (clockwise)
         zen_rad, az_rad = zen * D2R, az * D2R
         srad = np.sin(zen_rad)
         srad[zen_rad > np.pi/2] = 1.0  # ensure sine_zen doesn't wrap around back to zero below horizon
@@ -814,7 +836,8 @@ class AiryResponse:
 
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
     """
-    def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=True, Ntau=100):
+    def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=True, Ntau=100,
+                 edge_alpha=None, edge_fov=180):
         """
         .. math::
 
@@ -833,6 +856,13 @@ class AiryResponse:
             See airy_disk() for details.
         Ntau : int, optional
             Integral pixelization, see airy_disk() for details
+        edge_alpha : float, optional
+            If not None, this is the alpha parameter of a tukey mask
+            for tapering the edge of the beam out to fov / 2 zenith angle.
+            Default (None) is no tapering.
+        edge_fov : float, optional
+            This is the fov parameter for the beam object in degrees,
+            i.e. the diameter of the observable hemisphere
         """
         self.freq_ratio = freq_ratio
         self.freq_mode = 'other'
@@ -840,6 +870,7 @@ class AiryResponse:
         self.powerbeam = powerbeam
         self.brute_force = brute_force
         self.Ntau = Ntau
+        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
 
     def _setup(self):
         pass
@@ -868,6 +899,14 @@ class AiryResponse:
                          square=self.powerbeam, brute_force=self.brute_force,
                          Ntau=self.Ntau)
         beam = torch.as_tensor(beam, device=params.device)
+
+        # apply mask if necessary
+        if self.edge_alpha is not None:
+            beam *= beam_edge_taper(zen,
+                                    alpha=self.edge_alpha,
+                                    fov=self.edge_fov,
+                                    device=beam.device)
+
         return beam
   
     def push(self, device):
@@ -878,7 +917,8 @@ class UniformResponse:
     """
     A uniform beam response
     """
-    def __init__(self, device=None):
+    def __init__(self, edge_alpha=None, edge_fov=180, device=None):
+        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
         self.device = device
 
     def _setup(self):
@@ -887,6 +927,13 @@ class UniformResponse:
     def __call__(self, params, zen, az, freqs):
         out = torch.ones(params.shape[:3] + (len(freqs), len(zen)),
                           dtype=utils._float(), device=self.device)
+
+        # apply mask if necessary
+        if self.edge_alpha is not None:
+            out *= beam_edge_taper(zen,
+                                   alpha=self.edge_alpha,
+                                   fov=self.edge_fov,
+                                   device=out.device)
         return out
 
     def push(self, device):
@@ -923,7 +970,7 @@ class YlmResponse(PixelResponse):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
-                 beam_norm=None):
+                 edge_alpha=None, edge_fov=180):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -936,7 +983,12 @@ class YlmResponse(PixelResponse):
         freqs : tensor
             frequency array [Hz]
         pixtype : str, optional
-            Beam pixelization type, ['healpix', 'other']
+            Beam pixelization type, ['healpix', 'rect']. Only needed
+            for 'interpolate' mode.
+            For healpix, pixel ordering is RING. For rect,
+            pixel ordering should be
+            x, y = meshgrid(phi_grid, theta_grid)
+            x, y = x.ravel(), y.ravel()
         comp_params : bool, optional
             Cast params to compelx if True.
         mode : str, options=['generate', 'interpolate']
@@ -946,10 +998,13 @@ class YlmResponse(PixelResponse):
         interp_mode : str, optional
             If mode is interpolate, this is the kind (see utils.PixInterp)
         theta, phi : array_like, optional
-            This is the initial (zen, az) [deg] to evaluate the Y_lm(zen, az) * a_lm
-            transformation, which is then set on the object and interpolated for future
-            calls. Only needed if mode is 'interpolate'. For interp_mode == 'rect', this
-            does not necessarily have to be limited only to theta_grid & phi_grid.
+            Only needed if mode is 'interpolate'. This is the initial (zen, az) [deg]
+            to evaluate the Y_lm(zen, az) * a_lm transformation, which is then set on
+            the object and interpolated for future calls. 
+            See pixtype above for theta/phi ordering given 'rect' or 'healpix'.
+            Note, this can contain additional points not specified by rect or healpix,
+            (e.g. theta=0) but these additional points must come after the points
+            required by the pixtype. 
         theta_grid, phi_grid : array_like, optional
             For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
             in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
@@ -974,11 +1029,13 @@ class YlmResponse(PixelResponse):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
-        beam_norm : int, optional
-            When mode='interpolate' and theta, phi are passed,
-            this indexes the theta/phi axis of the forwarded
-            beam and divides by its value when calling
-            set_beam_cache()
+        edge_alpha : float, optional
+            If not None, this is the alpha parameter of a tukey mask
+            for tapering the edge of the beam out to fov / 2 zenith angle.
+            Default (None) is no tapering.
+        edge_fov : float, optional
+            This is the fov parameter for the beam object in degrees,
+            i.e. the diameter of the observable hemisphere
 
         Notes
         -----
@@ -987,12 +1044,11 @@ class YlmResponse(PixelResponse):
         """
         ## TODO: enable pix_type other than healpix
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
-                                          interp_mode=interp_mode,
+                                          interp_mode=interp_mode, theta=theta, phi=phi,
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
                                           theta_grid=theta_grid, phi_grid=phi_grid,
                                           interp_gpu=interp_gpu)
-        self.theta, self.phi = theta, phi
         self.l, self.m = l, m
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
@@ -1004,7 +1060,7 @@ class YlmResponse(PixelResponse):
         self.Ylm_kwargs = Ylm_kwargs if Ylm_kwargs is not None else {}
         self.device = device
         self.log = log
-        self.beam_norm = beam_norm
+        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
 
         # default is no mapping across l
         self.lm_poly_setup()
@@ -1012,6 +1068,178 @@ class YlmResponse(PixelResponse):
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
 
+    def get_Ylm(self, zen, az):
+        """
+        Query cache for Y_lm matrix, otherwise generate it.
+
+        Parameters
+        ----------
+        zen, az : ndarrays
+            Zenith angle (co-latitude) and
+            azimuth (longitude) [deg] (i.e. theta, phi)
+
+        Returns
+        -------
+        Y : tensor
+            Spherical harmonic tensor of shape
+            (Nangle, Ncoeff)
+        alm_mult : tensor
+            Multiplication tensor to alm,
+            if not stored return None
+        """
+        # get hash
+        h = utils.arr_hash(zen)
+        if h in self.Ylm_cache:
+            Ylm = self.Ylm_cache[h]
+            if isinstance(Ylm, (list, tuple)):
+                Ylm, alm_mult = Ylm
+            else:
+                alm_mult = None
+        else:
+            # generate exact Y_lm, may take a while
+            Ylm, norm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R,
+                                                    self.l, self.m,
+                                                    device=self.device,
+                                                    **self.Ylm_kwargs)
+            # store it
+            self.Ylm_cache[h] = (Ylm, alm_mult)
+            self.ang_cache[h] = (zen, az)
+
+        return Ylm, alm_mult
+
+    def set_cache(self, Ylm, angs, alm_mult=None):
+        """
+        Insert a Ylm tensor into Ylm_cache, hashed on the
+        zenith array. We use the forward transform convention
+
+        .. math::
+
+            T = \sum_{lm} a_{lm} Y_{lm}
+
+        Parameters
+        ----------
+        Ylm : tensor
+            Ylm forward model matrix of shape (Nmodes, Npix)
+        angs : tuple
+            sky angles of Ylm pixels of shape (2, Npix)
+            holding (zenith, azimuth) in [deg]
+        alm_mult : tensor, optional
+            multiply this (Nmodes,) tensor into alm tensor
+            before forward pass
+        """
+        assert len(self.l) == len(Ylm)
+        zen, az = angs
+        h = utils.arr_hash(zen)
+        self.Ylm_cache[h] = (Ylm, alm_mult)
+        self.ang_cache[h] = (zen, az)
+
+    def forward(self, params, zen, az, *args):
+        """
+        Perform the mapping from a_lm to pixel
+        space, in addition to possible transformation
+        over frequency.
+
+        Parameters
+        ----------
+        params : tensor
+            Ylm coefficients of shape (Npol, Nvec, Nmodel, Ndeg, Ncoeff)
+        zen, az : ndarrays
+            zenith and azimuth angles [deg]
+
+        Returns
+        -------
+        beam : tensor
+            pixelized beam on the sky
+            of shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
+        """
+        # pass to device
+        if utils.device(params.device) != utils.device(self.device):
+            params = params.to(self.device)
+
+        # first handle frequency axis
+        if self.freq_mode == 'channel':
+            p = params
+        elif self.freq_mode == 'linear':
+            # first do fast dot product along frequency axis
+            p = self.freq_LM(params)
+
+        # transform into a_lm space if using poly lm compression
+        p = self.lm_poly_forward(p)
+
+        # next handle lm axis
+        Ylm, alm_mult = self.get_Ylm(zen, az)
+
+        # multiply alm_mult
+        if alm_mult is not None:
+            p = p * alm_mult
+
+        # next do slower dot product over Ncoeff
+        beam = p @ Ylm
+
+        if torch.is_complex(beam):
+            beam = torch.real(beam)
+
+        # apply edge mask if necessary
+        if self.edge_alpha is not None:
+            beam *= beam_edge_taper(zen,
+                                    alpha=self.edge_alpha,
+                                    fov=self.edge_fov,
+                                    device=beam.device)
+
+        if self.log:
+            beam = torch.exp(beam)
+
+        if self.mode != 'generate':
+            # apply polarization rotation to beam_cache
+            beam = self.apply_Rchi(beam)
+
+        return beam
+
+    def __call__(self, params, zen, az, *args):
+        # cast to complex if needed
+        if self.comp_params and torch.is_complex(params) is False:
+            params = utils.viewcomp(params)
+
+        # for generate mode, forward model the beam exactly at zen, az
+        if self.mode == 'generate':
+            beam = self.forward(params, zen, az)
+
+        # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
+        elif self.mode == 'interpolate':
+            if self.beam_cache is None:
+                # forward beam at pre-designated points before interpolating
+                self.set_beam_cache(params)
+
+            # interpolate the beam at the desired sky locations
+            beam = self.interp(self.beam_cache, zen, az)
+
+        return beam
+
+    def set_beam_cache(self, params):
+        """
+        Forward beam at pre-designated theta, phi
+        values and store as self.beam_cache.
+        Used for mode = 'interpolate'
+        """
+        # forward params at theta/phi and set beam cache
+        self.beam_cache = self.forward(params, self.theta, self.phi)
+
+    def push(self, device):
+        """push attrs to device"""
+        self.device = device
+        super().push(device)
+        for k, Ylm in self.Ylm_cache.items():
+            if isinstance(Ylm, (tuple, list)):
+                self.Ylm_cache[k] = (Ylm[0].to(device), Ylm[1].to(device))
+            else:
+                self.Ylm_cache[k] = Ylm.to(device)
+        if self.beam_cache is not None:
+            self.beam_cache = utils.push(self.beam_cache, device)
+        if self._lm_poly:
+            for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
+                self.lm_poly_A[k] = (lm_inds, p_inds, A.to(device))
+
+    # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):
         """
         Setup polynomial compression along degree l if desired using
@@ -1134,173 +1362,6 @@ class YlmResponse(PixelResponse):
                 out[..., lm_inds] = params[..., p_inds]
 
         return out
-
-    def get_Ylm(self, zen, az):
-        """
-        Query cache for Y_lm matrix, otherwise generate it.
-
-        Parameters
-        ----------
-        zen, az : ndarrays
-            Zenith angle (co-latitude) and
-            azimuth (longitude) [deg] (i.e. theta, phi)
-
-        Returns
-        -------
-        Y : tensor
-            Spherical harmonic tensor of shape
-            (Nangle, Ncoeff)
-        alm_mult : tensor
-            Multiplication tensor to alm,
-            if not stored return None
-        """
-        # get hash
-        h = utils.arr_hash(zen)
-        if h in self.Ylm_cache:
-            Ylm = self.Ylm_cache[h]
-            if isinstance(Ylm, (list, tuple)):
-                Ylm, alm_mult = Ylm
-            else:
-                alm_mult = None
-        else:
-            # generate exact Y_lm, may take a while
-            Ylm, norm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R,
-                                                    self.l, self.m,
-                                                    device=self.device,
-                                                    **self.Ylm_kwargs)
-            # store it
-            self.Ylm_cache[h] = (Ylm, alm_mult)
-            self.ang_cache[h] = (zen, az)
-
-        return Ylm, alm_mult
-
-    def set_cache(self, Ylm, angs, alm_mult=None):
-        """
-        Insert a Ylm tensor into Ylm_cache, hashed on the
-        zenith array. We use the forward transform convention
-
-        .. math::
-
-            T = \sum_{lm} a_{lm} Y_{lm}
-
-        Parameters
-        ----------
-        Ylm : tensor
-            Ylm forward model matrix of shape (Nmodes, Npix)
-        angs : tuple
-            sky angles of Ylm pixels of shape (2, Npix)
-            holding (zenith, azimuth) in [deg]
-        alm_mult : tensor, optional
-            multiply this (Nmodes,) tensor into alm tensor
-            before forward pass
-        """
-        assert len(self.l) == len(Ylm)
-        zen, az = angs
-        h = utils.arr_hash(zen)
-        self.Ylm_cache[h] = (Ylm, alm_mult)
-        self.ang_cache[h] = (zen, az)
-
-    def forward(self, params, zen, az, *args):
-        """
-        Perform the mapping from a_lm to pixel
-        space, in addition to possible transformation
-        over frequency.
-
-        Parameters
-        ----------
-        params : tensor
-            Ylm coefficients of shape (Npol, Nvec, Nmodel, Ndeg, Ncoeff)
-        zen, az : ndarrays
-            zenith and azimuth angles [deg]
-
-        Returns
-        -------
-        beam : tensor
-            pixelized beam on the sky
-            of shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
-        """
-        # pass to device
-        if utils.device(params.device) != utils.device(self.device):
-            params = params.to(self.device)
-
-        # first handle frequency axis
-        if self.freq_mode == 'channel':
-            p = params
-        elif self.freq_mode == 'linear':
-            # first do fast dot product along frequency axis
-            p = self.freq_LM(params)
-
-        # transform into a_lm space if using poly lm compression
-        p = self.lm_poly_forward(p)
-
-        # next handle lm axis
-        Ylm, alm_mult = self.get_Ylm(zen, az)
-
-        # multiply alm_mult
-        if alm_mult is not None:
-            p = p * alm_mult
-
-        # next do slower dot product over Ncoeff
-        beam = p @ Ylm
-
-        if torch.is_complex(beam):
-            beam = torch.real(beam)
-
-        if self.log:
-            beam = torch.exp(beam)
-
-        if self.mode != 'generate':
-            # apply polarization rotation to beam_cache
-            beam = self.apply_Rchi(beam)
-
-        return beam
-
-    def __call__(self, params, zen, az, *args):
-        # cast to complex if needed
-        if self.comp_params and torch.is_complex(params) is False:
-            params = utils.viewcomp(params)
-
-        # for generate mode, forward model the beam exactly at zen, az
-        if self.mode == 'generate':
-            beam = self.forward(params, zen, az)
-
-        # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
-        elif self.mode == 'interpolate':
-            if self.beam_cache is None:
-                # forward beam at pre-designated points before interpolating
-                self.set_beam_cache(params)
-
-            # interpolate the beam at the desired sky locations
-            beam = self.interp(self.beam_cache, zen, az)
-
-        return beam
-
-    def set_beam_cache(self, params):
-        """
-        Forward beam at pre-designated theta, phi
-        values and store as self.beam_cache.
-        Used for mode = 'interpolate'
-        """
-        # forward params at theta/phi and set beam cache
-        self.beam_cache = self.forward(params, self.theta, self.phi)
-        if hasattr(self, 'beam_norm') and self.beam_norm is not None:
-            norm = self.beam_cache[..., self.beam_norm:self.beam_norm+1]
-            self.beam_cache = self.beam_cache / torch.abs(norm)
-
-    def push(self, device):
-        """push attrs to device"""
-        self.device = device
-        super().push(device)
-        for k, Ylm in self.Ylm_cache.items():
-            if isinstance(Ylm, (tuple, list)):
-                self.Ylm_cache[k] = (Ylm[0].to(device), Ylm[1].to(device))
-            else:
-                self.Ylm_cache[k] = Ylm.to(device)
-        if self.beam_cache is not None:
-            self.beam_cache = utils.push(self.beam_cache, device)
-        if self._lm_poly:
-            for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
-                self.lm_poly_A[k] = (lm_inds, p_inds, A.to(device))
 
 
 class AlmBeam(utils.Module):
@@ -1595,3 +1656,34 @@ def cut_sky_fov(sky, cut):
         cut_sky = sky.index_select(-1, cut)
 
     return cut_sky
+
+
+def beam_edge_taper(zen, alpha=0.1, fov=180, device=None):
+    """
+    Create a Tukey window tapering for a beam response
+
+    Parameters
+    ----------
+    zen : ndarray or tensor
+        Zenith angles [deg]
+    alpha : float, optional
+        Alpha parameter for the Tukey mask extending
+        from -fov/2 to fov/2
+    fov : float, optional
+        fov parameter [deg] of the beam
+    device : str, optional
+        Device to create mask
+
+    Returns
+    -------
+    tensor
+    """
+    zen = torch.as_tensor(zen, device=device)
+    # theta mask: 5000 yields ang. resolution < nside 512
+    th_arr = np.linspace(-fov/2, fov/2, 5000, endpoint=True)
+    mask = utils.windows.tukey(5000, alpha=alpha)
+    intp = utils.interp1d(th_arr, mask, fill_value=0, bounds_error=False, kind='linear')
+
+    return intp(zen)
+
+
