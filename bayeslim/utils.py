@@ -2246,6 +2246,10 @@ class Module(torch.nn.Module):
         Unset a Parameter tensor "name"
         as a non-Parameter
         """
+        if isinstance(name, list):
+            for n in name:
+                self.unset_param(n)
+            return
         param = self[name].detach()
         del self[name]
         self[name] = param
@@ -2254,6 +2258,10 @@ class Module(torch.nn.Module):
         """
         Set tensor "name" as a Parameter
         """
+        if isinstance(name, list):
+            for n in name:
+                self.set_param(n)
+            return
         param = self[name]
         if not isinstance(param, torch.nn.Parameter):
             self[name] = torch.nn.Parameter(param)

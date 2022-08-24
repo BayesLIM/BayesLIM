@@ -1278,8 +1278,7 @@ def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
     return icov
 
 
-
-def compute_hessian(prob, params, keep_diag=False, **kwargs):
+def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     """
     Compute Hessian of prob with respect to params.
     Note that this edits params in prob inplace!
@@ -1288,7 +1287,7 @@ def compute_hessian(prob, params, keep_diag=False, **kwargs):
     ----------
     prob : optim.LogProb object
         Log posterior object
-    params : ParamDict object
+    pdict : ParamDict object
         Holding parameters of prob for which to compute hessian,
         and the values at which to compute it
     keep_diag : bool, optional
@@ -1301,11 +1300,18 @@ def compute_hessian(prob, params, keep_diag=False, **kwargs):
     ParamDict object
         Hessian of prob
     """
-    # TODO: enable Hessian between params
+    ### TODO: enable Hessian between params
+    # get all leaf variables on prob
+    named_params = prob.named_params
+
+    # unset all named params
+    prob.unset_param(named_params)
+
+    # iterate over keys in pdict
     hess = paramdict.ParamDict({})
-    for param in params:
+    for param in pdict:
         # setup func
-        inp = params[param]
+        inp = pdict[param]
         shape = inp.shape
         N = shape.numel()
         def func(x):
@@ -1315,6 +1321,12 @@ def compute_hessian(prob, params, keep_diag=False, **kwargs):
         if keep_diag:
             h = h.diag().reshape(shape)
         hess[param] = h
+
+        # unset param
+        prob.unset_param(param)
+
+    # make every key in named_params a leaf variable again
+    prob.set_param(named_params)
 
     return hess
 
