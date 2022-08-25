@@ -1332,7 +1332,7 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
 
 
 def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-10, rm_fill=1e-10,
-                   rm_offdiag=False, rcond=1e-15, hermitian=True):
+                   rm_offdiag=False, rcond=1e-15, hermitian=True, return_hess=False):
     """
     Invert a Hessian (Fisher Information) matrix (H) to get a covariance
     matrix
@@ -1362,6 +1362,8 @@ def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-10, rm_fill=1e-10,
         rcond parameter for pinverse
     hermitian : bool, optional
         Hermitian parameter for torch.pinverse
+    return_hess : bool, optional
+        If True, return downselected Hessian matrix
     
     Returns
     -------
@@ -1381,6 +1383,8 @@ def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-10, rm_fill=1e-10,
         s = hess > rm_thresh
         cov[s] = 1 / hess[s]
         cov[~s] = rm_fill
+        if return_hess:
+            cov = hess
 
         return cov
 
@@ -1409,6 +1413,9 @@ def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-10, rm_fill=1e-10,
 
         # select out indices
         H = H[idx[:, None], idx[None, :]]
+
+        if return_hess:
+            return H
 
         # take inverse to get cov
         C = torch.linalg.pinv(H, rcond=rcond, hermitian=hermitian)
