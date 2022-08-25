@@ -832,7 +832,7 @@ class CompositeModel(utils.Module):
 
     def push(self, device):
         for model in self.models:
-            model.push(device)
+            self[model].push(device)
         self.device = device
 
 
