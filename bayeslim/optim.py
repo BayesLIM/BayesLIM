@@ -545,7 +545,7 @@ class LogProb(utils.Module):
             # this sends main_params back to leaf tensors, making them leaf views
             self.send_main_params()
 
-    def send_main_params(self, inplace=True, main_params=None):
+    def send_main_params(self, inplace=True, main_params=None, fill=None):
         """
         Take existing value of self.main_params and using
         _main_indices, _main_shapes, _main_types,_main_index,
@@ -560,6 +560,10 @@ class LogProb(utils.Module):
         main_params : tensor, optional
             Use this main_params tensor instead of self.main_params
             when sending to sub-params.
+        fill : float, optional
+            If None (default) fill un-indexed elements in params
+            with their existing values. Otherwise, fill them with
+            this value before returning.
         """
         main_params = main_params if main_params is not None else self.main_params
         if main_params is not None:
@@ -572,7 +576,10 @@ class LogProb(utils.Module):
                 value = value.to(self._main_devices[param])
                 idx = self._main_index[param]
                 if not inplace:
-                    out[param] = self.model[param].detach().clone()
+                    if fill is None:
+                        out[param] = self.model[param].detach().clone()
+                    else:
+                        out[param] = torch.ones_like(self.model[param].detach().clone()) * fill
                     out[param][idx] = value
                 else:
                     utils.set_model_attr(self.model, param, value, idx=idx,
