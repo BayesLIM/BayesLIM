@@ -614,10 +614,10 @@ class PixelSkyResponse:
             self.theta, self.phi = spatial_kwargs['theta'], spatial_kwargs['phi']
 
         elif self.spatial_mode == 'linear':
-            skwgs = copy.deepcopy(freq_kwargs)
+            skwgs = copy.deepcopy(spatial_kwargs)
             assert 'linear_mode' in skwgs, "must specify linear_mode"
             linear_mode = skwgs.pop('linear_mode')
-            fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
+            skwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
             self.spat_LM = utils.LinearModel(linear_mode, dim=-1, device=self.device, **skwgs)
 
     def spatial_transform(self, params):
