@@ -475,7 +475,8 @@ class PixelSkyResponse:
 
     options for spatial parameterization include
         - 'pixel' : sky pixel
-        - 'alm' : spherical harmonic
+        - 'linear' : any generic linear model
+        - 'alm' : spherical harmonic model
 
     options for frequency parameterization include
         - 'channel' : frequency channels
@@ -496,7 +497,7 @@ class PixelSkyResponse:
             before passing through self
         spatial_mode : str, optional
             Choose the spatial parameterization (default is pixel)
-            options = ['pixel', 'alm']
+            options = ['pixel', 'linear', 'alm']
         freq_mode : str, optional
             Choose the freq parameterization (default is channel)
             options = ['channel', 'linear', 'powerlaw', 'bessel']
@@ -507,14 +508,20 @@ class PixelSkyResponse:
             1 - frequency then spatial transform
         cosmo : Cosmology object
         spatial_kwargs : dict, optional
-            Kwargs used to generate spatial transform matrix
-            l, m : array, holding l, m vaues
-            theta, phi : array, holds co-latitude and azimuth
-                angles [deg] of pixel model, used for generating
-                Ylm in alm mode
-            alm_mult : array, (Ncoeff,)
-            Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
-                matrix. If None, will compute it given l, m
+            Kwargs used to generate spatial transform matrix.
+            These are required kwargs for each option.
+            'pixel' : None
+            'alm' :
+                l, m : array, holding l, m vaues
+                theta, phi : array, holds co-latitude and azimuth
+                    angles [deg] of pixel model, used for generating
+                    Ylm in alm mode
+                alm_mult : array, (Ncoeff,)
+                Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
+                    matrix. If None, will compute it given l, m
+            'linear' : 
+                kwargs to LinearModel()
+
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
             for 'linear' freq_mode, see utils.gen_linear_A()
@@ -606,6 +613,13 @@ class PixelSkyResponse:
             self.l, self.m = spatial_kwargs['l'], spatial_kwargs['m']
             self.theta, self.phi = spatial_kwargs['theta'], spatial_kwargs['phi']
 
+        elif self.spatial_mode == 'linear':
+            skwgs = copy.deepcopy(freq_kwargs)
+            assert 'linear_mode' in skwgs, "must specify linear_mode"
+            linear_mode = skwgs.pop('linear_mode')
+            fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
+            self.spat_LM = utils.LinearModel(linear_mode, dim=-1, device=self.device, **skwgs)
+
     def spatial_transform(self, params):
         """
         Forward model the sky params tensor
@@ -633,6 +647,9 @@ class PixelSkyResponse:
 
         elif self.spatial_mode == 'alm':
             return (params * self.alm_mult) @ self.Ylm
+
+        elif self.spatial_mode == 'linear':
+            return self.spat_LM(params)
 
     def freq_transform(self, params):
         """
@@ -696,6 +713,8 @@ class PixelSkyResponse:
         if self.spatial_mode == 'alm':
             self.Ylm = self.Ylm.to(device)
             self.alm_mult = self.alm_mult.to(device)
+        elif self.spatial_mode == 'linear':
+            self.spat_LM.push(device)
 
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
