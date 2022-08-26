@@ -1310,7 +1310,8 @@ class LinearModel:
 
         y = Ax
     """
-    def __init__(self, linear_mode, dim=0, **kwargs):
+    def __init__(self, linear_mode, dim=0, coeff=None,
+                 out_dtype=None, **kwargs):
         """
         Parameters
         ----------
@@ -1319,11 +1320,18 @@ class LinearModel:
             See utils.gen_linear_A.
         dim : int, optional
             The dimension of the input params tensor to sum over.
+        coeff : tensor, optional
+            A tensor of params.shape to multiply with params before
+            forward transform (e.g. alm_mult for sph. harm.)
+        out_dtype : dtype, optional
+            Cast output of forward as this dtype if desired
         kwargs : dict
             keyword arguments for utils.gen_linear_A()
         """
         self.linear_mode = linear_mode
         self.dim = dim
+        self.coeff = coeff
+        self.out_dtype = out_dtype
 
         if self.linear_mode != 'custom':
             if kwargs.get('whiten', False):
@@ -1338,29 +1346,38 @@ class LinearModel:
         self.A = gen_linear_A(linear_mode, **kwargs)
         self.device = self.A.device
 
-    def forward(self, params, A=None):
+    def forward(self, params, A=None, coeff=None):
         """
         Forward pass parameter tensor through design matrix
 
         Parameters
         ----------
         params : tensor
+            Parameter tensor to forward model
         A : tensor, optional
             Use this (Nsamples, Nfeatures) design
-            matrix instead of self.A
+            matrix instead of self.A when taking
+            forward model
+        coeff : tensor, optional
+            Use this tensor with params.shape instead
+            of self.coeff and multiply by params before
+            forward transform (e.g. alm_mult for sph. harm.)
 
         Returns
         -------
         tensor
         """
         A = A if A is not None else self.A
+        coeff = coeff if coeff is not None else self.coeff
+        if coeff is not None:
+            params = params * coeff
         ndim = params.ndim
         if self.dim == 0:
             # trivial matmul
-            return A @ params
+            out = A @ params
         elif self.dim == ndim or self.dim == -1:
             # trivial transpose
-            return params @ A.T
+            out = params @ A.T
         else:
             # would involve a transpose,
             # dot, then re-transpose,
@@ -1371,7 +1388,12 @@ class LinearModel:
             t2[self.dim] = 'b'
             t2 = ''.join(t2)
             out = t2.replace('b', 'a')
-            return torch.einsum("{},{}->{}".format(t1, t2, out), A, params)
+            out = torch.einsum("{},{}->{}".format(t1, t2, out), A, params)
+
+        if self.out_dtype is not None:
+            out = out.to(self.out_dtype)
+
+        return out
 
     def __call__(self, params, A=None):
         return self.forward(params, A=A)
@@ -1393,6 +1415,8 @@ class LinearModel:
         tensor
         """
         from bayeslim.linalg import least_squares
+        if y.dtype != self.A.dtype:
+            y = y.to(self.A.dtype)
         return least_squares(self.A, y, dim=self.dim, **kwargs)
 
     def generate_A(self, x, **interp1d_kwargs):
@@ -1433,6 +1457,8 @@ class LinearModel:
         Push items to new device
         """
         self.A = self.A.to(device)
+        if self.coeff is not None:
+            self.coeff = self.coeff.to(device)
         self.device = device
 
 
