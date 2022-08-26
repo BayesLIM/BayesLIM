@@ -1311,7 +1311,7 @@ class LinearModel:
         y = Ax
     """
     def __init__(self, linear_mode, dim=0, coeff=None,
-                 out_dtype=None, **kwargs):
+                 out_dtype=None, meta=None, **kwargs):
         """
         Parameters
         ----------
@@ -1325,6 +1325,8 @@ class LinearModel:
             forward transform (e.g. alm_mult for sph. harm.)
         out_dtype : dtype, optional
             Cast output of forward as this dtype if desired
+        meta : dict, optional
+            Additional metadata to attach to self as self.meta
         kwargs : dict
             keyword arguments for utils.gen_linear_A()
         """
@@ -1332,6 +1334,7 @@ class LinearModel:
         self.dim = dim
         self.coeff = coeff
         self.out_dtype = out_dtype
+        self.meta = meta if meta is not None else {}
 
         if self.linear_mode != 'custom':
             if kwargs.get('whiten', False):
