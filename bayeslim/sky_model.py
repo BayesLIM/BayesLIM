@@ -132,6 +132,12 @@ class SkyBase(utils.Module):
             self.R.freqs = freqs.to(self.device)
             self.R._setup()
 
+    def hook_response_grad(self, value=True):
+        """
+        Store gradient of response output as self.response_grad
+        """
+        self._hook_response_grad = value
+
 
 class DefaultResponse:
     """
@@ -263,11 +269,16 @@ class PointSky(SkyBase):
         # pass through response
         sky = self.R(p)
 
+        # register gradient hook if desired
+        if self._hook_response_grad:
+            sky.register_hook(self.response_grad_hook)
+
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         # pass through response
         name = getattr(self, 'name', None)
+
         return dict(kind=self.kind, sky=sky, angs=self.angs, name=name)
 
 
@@ -460,10 +471,15 @@ class PixelSky(SkyBase):
         # pass through response
         sky = self.R(p)
 
+        # register gradient hook if desired
+        if self._hook_response_grad:
+            sky.register_hook(self.response_grad_hook)
+
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
 
         name = getattr(self, 'name', None)
+
         return dict(kind=self.kind, sky=sky * self.px_area, angs=self.angs, name=name)
 
 

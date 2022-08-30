@@ -2214,6 +2214,7 @@ class Module(torch.nn.Module):
         self.__version__ = version.__version__
         self.set_priors()
         self._name = name
+        self.clear_response_grad()
 
     @property
     def name(self):
@@ -2373,6 +2374,18 @@ class Module(torch.nn.Module):
                         prior_value = prior_value + prior(out_params)
 
             prior_cache[self.name] = prior_value
+
+    def clear_response_grad(self):
+        self.response_grad = None
+        for mod in self.modules():
+            if hasattr(mod, 'clear_response_grad'):
+                mod.response_grad = None
+
+    def response_grad_hook(self, grad):
+        if not hasattr(self, 'response_grad') or self.response_grad is None:
+            self.response_grad = grad.clone()
+        else:
+            self.response_grad += grad
 
 
 class Sequential(Module):
