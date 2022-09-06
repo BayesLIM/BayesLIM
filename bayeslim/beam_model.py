@@ -234,7 +234,8 @@ class PixelBeam(utils.Module):
         # register gradient hook if desired (only works for interpolate mode)
         if self._hook_response_grad:
             if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
-                self.R.beam_cache.register_hook(self.response_grad_hook)
+                if self.R.beam_cache.requires_grad:
+                    self.R.beam_cache.register_hook(self.response_grad_hook)
 
         # evaluate prior
         self.eval_prior(prior_cache)

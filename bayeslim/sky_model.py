@@ -271,7 +271,8 @@ class PointSky(SkyBase):
 
         # register gradient hook if desired
         if self._hook_response_grad:
-            sky.register_hook(self.response_grad_hook)
+            if sky.requires_grad:
+                sky.register_hook(self.response_grad_hook)
 
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
@@ -473,7 +474,8 @@ class PixelSky(SkyBase):
 
         # register gradient hook if desired
         if self._hook_response_grad:
-            sky.register_hook(self.response_grad_hook)
+            if sky.requires_grad:
+                sky.register_hook(self.response_grad_hook)
 
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
