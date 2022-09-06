@@ -731,6 +731,10 @@ class LogProb(utils.Module):
         """
         Compute log prior given state of params tensors
         """
+        # send over main_params if compute = 'prior'
+        if self.compute == 'prior' and self.main_params is not None:
+            self.send_main_params()
+
         # evaluate log prior
         logprior = torch.as_tensor(0.0)
         if self.prior_dict is not None:

@@ -174,6 +174,7 @@ class HMC(SamplerBase):
         """
         super().__init__(x0)
         self.potential_fn = potential_fn
+        self.potential_fn.update(x0)
         self.fn_evals = 0
         self.Nstep = Nstep
         if isinstance(eps, torch.Tensor):
@@ -322,6 +323,7 @@ class HMC(SamplerBase):
             ## to save 1 call to dUdx per iteration
         else:
             self._U = U_start
+            self.potential_fn.update(self.x)
 
         return accept
 
