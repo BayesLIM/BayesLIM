@@ -478,13 +478,13 @@ class ArrayModel(utils.PixInterp, utils.Module):
         max_len : float, Optional
             Sets maximum baseline length [m]
         min_EW : float, optional
-            Sets min East-West length [m]
+            Sets min |East-West length| [m]
         max_EW : float, optional
-            Sets max East-West length [m]
+            Sets max |East-West length| [m]
         min_NS : float, optional
-            Sets min North-South length [m]
+            Sets min |North-South length| [m]
         max_NS : float, optional
-            Sets max North-South length [m]
+            Sets max |North-South length| [m]
         min_deg : float, optional
             Sets min baseline angle (north of east) [deg]
         max_deg : float, optional
@@ -517,13 +517,13 @@ class ArrayModel(utils.PixInterp, utils.Module):
         if max_len is not None:
             keep = keep & (np.array(redlens) <= max_len)
         if min_EW is not None:
-            keep = keep & (np.array(redvecs)[:, 0] >= min_EW)
+            keep = keep & (np.abs(redvecs)[:, 0] >= min_EW)
         if max_EW is not None:
-            keep = keep & (np.array(redvecs)[:, 0] <= max_EW)
+            keep = keep & (np.abs(redvecs)[:, 0] <= max_EW)
         if min_NS is not None:
-            keep = keep & (np.array(redvecs)[:, 1] >= min_NS)
+            keep = keep & (np.abs(redvecs)[:, 1] >= min_NS)
         if max_NS is not None:
-            keep = keep & (np.array(redvecs)[:, 1] <= max_NS)
+            keep = keep & (np.abs(redvecs)[:, 1] <= max_NS)
         if min_deg is not None:
             keep = keep & (np.array(redangs) >= min_deg)
         if max_deg is not None:
