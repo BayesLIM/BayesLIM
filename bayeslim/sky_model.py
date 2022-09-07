@@ -270,7 +270,7 @@ class PointSky(SkyBase):
         sky = self.R(p)
 
         # register gradient hook if desired
-        if self._hook_response_grad:
+        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
             if sky.requires_grad:
                 sky.register_hook(self.response_grad_hook)
 
@@ -473,7 +473,7 @@ class PixelSky(SkyBase):
         sky = self.R(p)
 
         # register gradient hook if desired
-        if self._hook_response_grad:
+        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
             if sky.requires_grad:
                 sky.register_hook(self.response_grad_hook)
 
