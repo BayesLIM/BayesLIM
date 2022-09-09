@@ -1061,6 +1061,7 @@ class MapData(TensorData):
         self.pols = pols
         self.data = data
         self.flags = flags
+        self.norm = norm
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
@@ -1070,9 +1071,9 @@ class MapData(TensorData):
         to a detach and clone. Detach is optional
         """
         md = MapData()
-        md.setup_meta(coords=self.coords)
+        md.setup_meta()
         data = self.data.detach() if detach else self.data
-        md.setup_data(self.freqs, df=self.df, pols=self.pols, data=data.clone(),
+        md.setup_data(self.freqs, df=self.df, pols=self.pols, data=data.clone(), norm=self.norm,
                       angs=self.angs, altaz=self.altaz, flags=self.flags, cov=self.cov,
                       icov=self.icov, cov_axis=self.cov_axis, history=self.history)
         return md
@@ -1138,7 +1139,7 @@ class MapData(TensorData):
         else:
             pol_inds = slice(None)
 
-        inds = [pol_ind, slice(None), freq_inds, ang_inds]
+        inds = [pol_inds, slice(None), freq_inds, ang_inds]
         inds = tuple([utils._list2slice(ind) for ind in inds])
         slice_num = sum([isinstance(ind, slice) for ind in inds])
         assert slice_num > 2, "cannot fancy index more than 1 axis"
@@ -1164,9 +1165,9 @@ class MapData(TensorData):
         angs = torch.as_tensor(angs)
         _angs = self.angs if not altaz else self.altaz
         idx = []
-        for ang in angs:
-            match = np.isclose(ang[0], _angs[0], atol=self.atol, rtol=1e-10) \
-                    & np.isclose(ang[1], _angs[1], atol=self.atol, rtol=1e-10)
+        for ang1, ang2 in zip(*angs):
+            match = np.isclose(ang1, _angs[0], atol=self.atol, rtol=1e-10) \
+                    & np.isclose(ang2, _angs[1], atol=self.atol, rtol=1e-10)
             if match.any():
                 idx.append(np.where(match)[0][0])
 
@@ -1228,7 +1229,7 @@ class MapData(TensorData):
 
         # get indexing
         inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
-                             ang_inds=bl_inds, freq_inds=freq_inds,
+                             ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         data = data[inds]
 
@@ -1256,7 +1257,7 @@ class MapData(TensorData):
 
         # get indexing
         inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
-                             ang_inds=bl_inds, freq_inds=freq_inds,
+                             ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         flags = flags[inds]
 
@@ -1394,6 +1395,8 @@ class MapData(TensorData):
             if freq_inds is not None:
                 freqs = obj.freqs[freq_inds]
                 df = obj.df[freq_inds] if obj.df is not None else None
+            else:
+                df = obj.df[self._freq2ind(freqs)] if obj.df is not None else None
             obj.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
                            altaz=obj.altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
