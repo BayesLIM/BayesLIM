@@ -91,14 +91,16 @@ class TensorData:
                 cov_logdet = torch.slogdet(cov).logabsdet
             else:
                 # cov ndim > 2, but first two axes hold covariances
-                cov_logdet = 0
-                if cov.ndim == 2:
-                    # if cov.ndim == 2 then compute logdet and return
-                    return torch.slogdet(cov).logabsdet
-                else:
-                    # otherwise iterate over last axis and get logdet
-                    for i in range(cov.shape[-1]):
-                        cov_logdet += self.set_cov(cov[..., i], cov_axis)
+                cov_logdet = torch.tensor(0.)
+                def recursive_logdet(cov, cov_logdet):
+                    if cov.ndim > 2:
+                        for i in range(cov.shape[2]):
+                            recursive_logdet(cov[:, :, i], cov_logdet)
+                    else:
+                        cov_logdet += torch.slogdet(cov).logabsdet
+                recursive_logdet(cov, cov_logdet)
+            if torch.is_complex(cov_logdet):
+                cov_logdet = cov_logdet.real
 
         # set covariance
         self.cov = cov
@@ -534,14 +536,14 @@ class VisData(TensorData):
             cov = cov[inds]
         else:
             # cov is not the same shape as data
-            if bl is not None:
+            if bl is not None or bl_inds is not None:
                 if self.cov_axis == 'bl':
                     cov = cov[inds[2]][:, inds[2]]
                 elif self.cov_axis in ['time', 'freq']:
                     cov = cov[:, :, :, :, inds[2]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
-            elif times is not None:
+            elif times is not None or time_inds is not None:
                 if self.cov_axis == 'time':
                     cov = cov[inds[3]][:, inds[3]]
                 elif self.cov_axis == 'bl':
@@ -550,7 +552,7 @@ class VisData(TensorData):
                     cov = cov[:, :, :, :, :, inds[3]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
-            elif freqs is not None:
+            elif freqs is not None or freq_inds is not None:
                 if self.cov_axis == 'freq':
                     cov = cov[inds[4]][:, inds[4]]
                 elif self.cov_axis in ['bl', 'time']:
@@ -568,52 +570,6 @@ class VisData(TensorData):
             cov = cov.squeeze()
 
         return cov
-
-    def set_cov(self, cov, cov_axis, icov=None):
-        """
-        Set the covariance matrix as self.cov and
-        compute covariance properties (ndim and log-det)
-
-        Parameters
-        ----------
-        cov : tensor
-            Covariance of data in a form that conforms
-            to cov_axis specification. See optim.apply_icov
-            for details on shape of cov.
-        cov_axis : str
-            The data axis along which the covariance is modeled.
-            This specifies the type of covariance being supplied.
-            Options are [None, 'bl', 'time', 'freq', 'full'].
-            See optim.apply_icov() for details
-        icov : tensor, optional
-            pre-computed inverse covariance to set.
-            Recommended to first set cov and then call compute_icov()
-        """
-        # set covariance: this is specific to assumed shape of VisData
-        self.cov = cov
-        self.icov = icov
-        self.cov_axis = cov_axis
-        self.cov_ndim, self.cov_logdet = None, None
-
-        if self.cov is not None:
-            # compute covariance properties
-            self.cov_ndim = sum(self.data.shape)
-            if self.cov_axis is None:
-                assert self.cov.shape == self.data.shape
-                self.cov_logdet = torch.sum(torch.log(self.cov))
-            elif self.cov_axis == 'full':
-                assert self.cov.ndim == 2
-                self.cov_logdet = torch.slogdet(self.cov).logabsdet
-            else:
-                assert self.cov.ndim == 6
-                self.cov_logdet = 0
-                for i in range(self.cov.shape[2]):
-                    for j in range(self.cov.shape[3]):
-                        for k in range(self.cov.shape[4]):
-                            for l in range(self.cov.shape[5]):
-                                self.cov_logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
-            if torch.is_complex(self.cov_logdet):
-                self.cov_logdet = self.cov_logdet.real
 
     def get_icov(self, bl=None, icov=None, **kwargs):
         """
@@ -1043,10 +999,527 @@ class VisData(TensorData):
 class MapData(TensorData):
     """
     An object for holding image or map data of shape
-    (Npol, Npol, Nfreqs, Npix)
+    (Npol, 1, Nfreqs, Npix)
     """
     def __init__(self):
-        raise NotImplementedError 
+        self.atol = 1e-10
+
+    def setup_meta(self):
+        """
+        Setup metadata
+        """
+        pass
+
+    def setup_data(self, freqs, df=None, pols=None, data=None, angs=None,
+                   altaz=None, flags=None, cov=None, cov_axis=None, icov=None,
+                   norm=None, history=''):
+        """
+        Setup data
+
+        Parameters
+        ----------
+        freqs : tensor
+            Frequency bins [Hz]
+        df : tensor, optional
+            Channel width of map at each frequency [Hz]
+        pols : list of str, optional
+            Polarizations of data along Npol axis
+        data : tensor, optional
+            Map data of shape (Npol, 1, Nfreqs, Npixels)
+        angs : tensor, optional
+            [RA, Dec] on the sky of the pixel centers in J2000 coords
+            of shape (2, Npix) in degrees.
+        altaz : tensor, optional
+            [Altitude, Azimuth] on the sky of the pixel centers
+            of shape (2, Npix) in degrees in topocentric coords.
+        flags : tensor, optional
+            Flags of bool dtype, shape of data
+        cov : tensor, optional
+            Covariance of maps either shape of data
+            or (Nax, Nax, ...) where Nax is cov_axis
+        cov_axis : str, optional
+            Axis of covariance. If None assume cov is
+            shape of data and is just variance. Otherwise
+            can be ['freq', 'pixel'] and cov is shape
+            (Nax, Nax, ...)
+        icov : tensor, optional
+            Inverse covariance. Same rules apply as cov.
+            Recommended to set cov and then run self.compute_icov
+        norm : tensor, optional
+            Another tensor the shape of the map data holding
+            normalization information (e.g. beam map).
+        history : str, optional
+        """
+        self.freqs = freqs
+        self.df = df
+        self.angs = angs
+        self.altaz = altaz
+        self.Nfreqs = len(freqs)
+        if pols is not None:
+            if isinstance(pols, (torch.Tensor, np.ndarray)):
+                pols = [p.lower() for p in pols.tolist()]
+        self.pols = pols
+        self.data = data
+        self.flags = flags
+        self.set_cov(cov, cov_axis, icov=icov)
+        self.history = history
+
+    def copy(self, detach=True):
+        """
+        Copy and return self. This is equivalent
+        to a detach and clone. Detach is optional
+        """
+        md = MapData()
+        md.setup_meta(coords=self.coords)
+        data = self.data.detach() if detach else self.data
+        md.setup_data(self.freqs, df=self.df, pols=self.pols, data=data.clone(),
+                      angs=self.angs, altaz=self.altaz, flags=self.flags, cov=self.cov,
+                      icov=self.icov, cov_axis=self.cov_axis, history=self.history)
+        return md
+
+    def get_inds(self, angs=None, altaz=None, freqs=None, pols=None,
+                 ang_inds=None, freq_inds=None, pol_inds=None):
+        """
+        Given data selections, return data indexing list
+
+        Parameters
+        ----------
+        angs : tensor, optional
+            J2000 [ra,dec] angles [deg] to index
+        altaz : tensor, optional
+            [alt, az] angles [deg] to index
+        freqs : tensor or float, optional
+            Frequencies to index
+        pols : str or list, optional
+            Polarization(s) to index
+        ang_inds : int or list of int, optional
+            Instead of feeding angs or altaz, can feed a
+            list of indices along the Npix axis
+            to index.
+        freq_inds : int or list of int, optional
+            Instead of feeding freqs, can feed
+            a list of freq indices if these
+            are already known given location
+            in self.freqs.
+        pol_inds : int or list of int, optional
+            Instead of feeding pol str, feed list
+            of pol indices
+
+        Returns
+        -------
+        list
+            A 4-len list holding slices along axes.
+        """
+        if angs is not None:
+            assert ang_inds is None
+            assert altaz is None
+            ang_inds = self._ang2ind(angs, altaz=False)
+        elif altaz is not None:
+            assert ang_inds is None
+            ang_inds = self._ang2ind(altaz, altaz=True)
+        elif ang_inds is not None:
+            pass
+        else:
+            ang_inds = slice(None)
+
+        if freqs is not None:
+            assert freq_inds is None
+            freq_inds = self._freq2ind(freqs)
+        elif freq_inds is not None:
+            pass
+        else:
+            freq_inds = slice(None)
+
+        if pols is not None:
+            assert pol_inds is None
+            pol_inds = self._pol2ind(pols)
+        elif pol_inds is not None:
+            pass
+        else:
+            pol_inds = slice(None)
+
+        inds = [pol_ind, slice(None), freq_inds, ang_inds]
+        inds = tuple([utils._list2slice(ind) for ind in inds])
+        slice_num = sum([isinstance(ind, slice) for ind in inds])
+        assert slice_num > 2, "cannot fancy index more than 1 axis"
+
+        return inds
+
+    def _ang2ind(self, angs, altaz=False):
+        """
+        Pixel angles to index. Note this is slow
+        because we loop over all input angles
+        and do an isclose().
+
+        Parameters
+        ----------
+        angs : tensor
+            Pixel centers in [ra, dec] of degrees to index
+            of shape (2, Nindex). If altaz=True, angs is
+            assumed ot be [alt, az] in degrees.
+        altaz : bool, optional
+            If True, assume angs input is [alt, az] in deg,
+            otherwise assume its [ra, dec] in deg.
+        """
+        angs = torch.as_tensor(angs)
+        _angs = self.angs if not altaz else self.altaz
+        idx = []
+        for ang in angs:
+            match = np.isclose(ang[0], _angs[0], atol=self.atol, rtol=1e-10) \
+                    & np.isclose(ang[1], _angs[1], atol=self.atol, rtol=1e-10)
+            if match.any():
+                idx.append(np.where(match)[0][0])
+
+        return idx
+
+    def _freq2ind(self, freq):
+        """
+        Freq(s) to index
+
+        Parameters
+        ----------
+        freq : float or list of floats
+            frequencies [Hz] to index
+        """
+        iterable = False
+        if isinstance(freq, (list, np.ndarray)):
+            iterable = True
+        elif isinstance(freq, torch.Tensor):
+            if freq.ndim == 1:
+                iterable = True
+        if iterable:
+            return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
+
+        return np.where(np.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
+
+    def _pol2ind(self, pol):
+        iterable = False
+        if isinstance(pol, (list, np.ndarray)):
+            iterable = True
+        elif isinstance(pol, torch.Tensor):
+            if pol.ndim == 1:
+                iterable = True
+        if iterable:
+            return [self._pol2ind(p) for p in pol]
+
+        return self.pols.index(pol.lower())
+
+    def get_data(self, data=None, squeeze=True, angs=None,
+                 altaz=None, freqs=None, pols=None, ang_inds=None,
+                 freq_inds=None, pol_inds=None):
+        """
+        Get map data given selections
+
+        Parameters
+        ----------
+        data : tensor, optional
+            Data tensor to index, default is self.data
+        squeeze : bool, optional
+            If True squeeze output
+        See get_inds for more details
+
+        Returns
+        -------
+        tensor
+        """
+        data = self.data if data is None else data
+        if data is None:
+            return None
+
+        # get indexing
+        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+                             ang_inds=bl_inds, freq_inds=freq_inds,
+                             pol_inds=pol_inds)
+        data = data[inds]
+
+        # squeeze if desired
+        if squeeze:
+            data = data.squeeze()
+
+        return data
+
+    def get_flags(self, flags=None, squeeze=True, angs=None,
+                 altaz=None, freqs=None, pols=None, ang_inds=None,
+                 freq_inds=None, pol_inds=None):
+        """
+        Get flag data given selections
+
+        Parameters
+        ----------
+        flags : tensor, optional
+            Flag tensor to index. Default is self.flags.
+        See self.get_data()
+        """
+        flags = self.flags if flags is None else flags
+        if flags is None:
+            return None
+
+        # get indexing
+        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+                             ang_inds=bl_inds, freq_inds=freq_inds,
+                             pol_inds=pol_inds)
+        flags = flags[inds]
+
+        # squeeze if desired
+        if squeeze:
+            flags = flags.squeeze()
+
+        return flags
+
+    def get_cov(self, cov=None, cov_axis=None, squeeze=True, angs=None,
+                altaz=None, freqs=None, pols=None, ang_inds=None,
+                freq_inds=None, pol_inds=None):
+        """
+        Index covariance given selections
+
+        Parameters
+        ----------
+        cov : tensor, optional
+            Covariance to index. Default is self.cov
+        cov_axis : str, optional
+            Covariance axis of cov. Default is self.cov_axis
+        See get_data() for details
+        """
+        cov = self.cov if cov is None else cov
+        cov_axis = self.cov_axis if cov_axis is None else cov_axis
+        if cov is None:
+            return None
+
+        # get indexing
+        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+                             ang_inds=ang_inds, freq_inds=freq_inds,
+                             pol_inds=pol_inds)
+
+        if cov_axis is None:
+            # cov is same shape as data
+            cov = cov[inds]
+        else:
+            # cov is not the same shape as data
+            if angs is not None or altaz is not None or ang_inds is not None:
+                if cov_axis == 'pix':
+                    cov = cov[inds[3]][:, inds[3]]
+                elif cov_axis in ['freq']:
+                    cov = cov[:, :, :, inds[-1]]
+                elif cov_axis == 'full':
+                    raise NotImplementedError
+            elif freqs is not None or freq_inds is not None:
+                if cov_axis == 'freq':
+                    cov = cov[inds[2]][:, inds[2]]
+                elif cov_axis in ['pix']:
+                    cov = cov[:, :, :, inds[2]]
+                elif cov_axis == 'full':
+                    raise NotImplementedError
+            elif pols is not None or pol_inds is not None:
+                # pol-pol covariance not yet implemented
+                if cov_axis in ['freq', 'pix']
+                    cov = cov[:, :, inds[0]]
+                elif cov_axis == 'full':
+                    raise NotImplementedError
+            else:
+                cov = cov[:]
+
+        # squeeze
+        if squeeze:
+            cov = cov.squeeze()
+
+        return cov
+
+    def get_icov(self, icov=None, **kwargs):
+        """
+        Slice into cached inverse covariance.
+        Same kwargs as get_cov()
+        """
+        if icov is None:
+            icov = self.icov
+        return self.get_cov(cov=icov, **kwargs)
+
+    def select(self, angs=None, altaz=None, freqs=None, pols=None,
+               ang_inds=None, freq_inds=None, pol_inds=None,
+               inplace=True):
+        """
+        Downselect on data tensor.
+
+        Parameters
+        ----------
+        angs : tensor, optional
+            J2000 [ra,dec] angles [deg] to index
+        altaz : tensor, optional
+            [alt, az] angles [deg] to index
+        freqs : tensor or float, optional
+            Frequencies to index
+        pols : str or list, optional
+            Polarization(s) to index
+        ang_inds : int or list of int, optional
+            Instead of feeding angs or altaz, can feed a
+            list of indices along the Npix axis
+            to index.
+        freq_inds : int or list of int, optional
+            Instead of feeding freqs, can feed
+            a list of freq indices if these
+            are already known given location
+            in self.freqs.
+        pol_inds : int or list of int, optional
+            Instead of feeding pol str, feed list
+            of pol indices
+        inplace : bool, optional
+            If True downselect inplace, otherwise return
+            a new VisData object
+        """
+        if inplace:
+            obj = self
+        else:
+            obj = copy.deepcopy(self)
+
+        if angs is not None or altaz is not None or ang_inds is not None:
+            data = obj.get_data(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+            norm = obj.get_data(data=self.norm, angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+            cov = obj.get_cov(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+            icov = obj.get_icov(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+            flags = obj.get_flags(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+            if ang_inds is not None:
+                if self.angs is not None:
+                    angs = self.angs[:, ang_inds]
+                if self.altaz is not None:
+                    altaz = self.altaz[:, ang_inds]
+            obj.setup_data(obj.freqs, df=obj.df, pols=obj.pols, data=data, angs=angs,
+                           altaz=altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           norm=norm, history=obj.history)
+
+        if freqs is not None or freq_inds is not None:
+            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            norm = obj.get_data(data=self.norm, freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            cov = obj.get_cov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            icov = obj.get_icov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            flags = obj.get_flags(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            if freq_inds is not None:
+                freqs = obj.freqs[freq_inds]
+                df = obj.df[freq_inds] if obj.df is not None else None
+            obj.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
+                           altaz=obj.altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           norm=norm, history=obj.history)
+
+        if pols is not None or pol_inds is not None:
+            data = obj.get_data(pols=pols, pol_inds=pol_inds, squeeze=False)
+            norm = obj.get_data(data=self.norm, pols=pols, pol_inds=pol_inds, squeeze=False)
+            cov = obj.get_cov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
+            icov = obj.get_icov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
+            flags = obj.get_flags(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
+            if pol_inds is not None: pols = [obj.pols[i] for i in pol_inds]
+            obj.setup_data(obj.freqs, df=obj.df, pols=pols, data=data, angs=obj.angs,
+                           altaz=obj.altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           norm=norm, history=obj.history)
+
+        if not inplace:
+            return obj
+
+    def write_hdf5(self, fname, overwrite=False):
+        """
+        Write MapData to hdf5 file.
+
+        Parameters
+        ----------
+        fname : str
+            Output hdf5 filename
+        overwrite : bool, optional
+            If fname exists, overwrite it
+        """
+        import h5py
+        from bayeslim import utils
+        if not os.path.exists(fname) or overwrite:
+            with h5py.File(fname, 'w') as f:
+                # write data and metadata
+                f.create_dataset('data', data=utils.tensor2numpy(self.data))
+                if self.norm is not None:
+                    f.create_dataset('norm', data=self.norm)
+                if self.flags is not None:
+                    f.create_dataset('flags', data=self.flags)
+                if self.cov is not None:
+                    f.create_dataset('cov', data=self.cov)
+                if self.cov_axis is not None:
+                    f.attr['cov_axis'] = self.cov_axis
+                if self.icov is not None:
+                    f.create_dataset('icov', data=self.icov)
+                if self.angs is not None:
+                    f.create_dataset('angs', data=self.angs)
+                if self.altaz is not None:
+                    f.create_dataset('altaz', data=self.altaz)
+                f.create_dataset('freqs', data=self.freqs)
+                if self.df is not None:
+                    f.create_dataset('df', data=self.df)
+                if self.pols is not None:
+                    f.attrs['pols'] = self.pols
+                f.attrs['history'] = self.history
+                f.attrs['obj'] = 'MapData'
+                f.attrs['version'] = version.__version__
+        else:
+            print("{} exists, not overwriting...".format(fname))
+
+    def read_hdf5(self, fname, read_data=True, suppress_nonessential=False, **kwargs):
+        """
+        Read HDF5 VisData object
+
+        Parameters
+        ----------
+        fname : str
+            File to read
+        read_data : bool, optional
+            If True, read data arrays as well as metadata
+        suppress_nonessential : bool, optional
+            If True, suppress reading-in flags, cov and norm, as only data and icov
+            are essential for inference.
+        kwargs : dict
+            Additional select kwargs upon read-in
+        """
+        import h5py
+        from bayeslim import telescope_model
+        with h5py.File(fname, 'r') as f:
+            # load metadata
+            assert str(f.attrs['obj']) == 'MapData', "not a MapData object"
+            _freqs = torch.as_tensor(f['freqs'][:])
+            _df = torch.as_tensor(f['df'][:]) if 'df' in f else None
+            _pols = f.attrs['pols'] if 'pols' in f.attrs else None
+            _angs = f['angs'] if 'angs' in f else None
+            _altaz = f['altaz'] if 'altaz' in f else None
+            cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
+            history = f.attrs['history'] if 'history' in f.attrs else ''
+
+            # setup just full-size metadata
+            self.setup_data(_freqs, df=_df, angs=_angs, altaz=_altaz, pols=_pols)
+
+            # read-in data if needed
+            data, norm, flags, cov, icov = None, None, None, None, None
+            if read_data:
+                data = self.get_data(data=f['data'], squeeze=False, **kwargs)
+                data = torch.as_tensor(data)
+                if 'flags' in f and not suppress_nonessential:
+                    flags = self.get_flags(flags=f['flags'], squeeze=False, **kwargs)
+                    flags = torch.as_tensor(flags)
+                else:
+                    flags = None
+                if 'cov' in f and not suppress_nonessential:
+                    cov = self.get_cov(cov=f['cov'], squeeze=False, **kwargs)
+                    cov = torch.as_tensor(cov)
+                else:
+                    cov = None
+                if 'icov' in f:
+                    icov = self.get_icov(icov=f['icov'], squeeze=False, **kwargs)
+                    icov = torch.as_tensor(icov)
+                else:
+                    icov = None
+                if 'norm' in f and not suppress_nonessential:
+                    norm = self.get_data(data=f['norm'], squeeze=False, **kwargs)
+                    norm = torch.as_tensor(norm)
+                else:
+                    norm = None
+
+            # downselect metadata to selection
+            self.select(**kwargs)
+
+            # setup downselected metadata and data
+            self.setup_meta()
+            self.setup_data(self.freqs, df=self.df, angs=self.angs, altaz=self.altaz,
+                            pols=self.pols, data=data, flags=flags, cov=cov, norm=norm,
+                            cov_axis=cov_axis, icov=icov, history=history)
 
 
 class CalData(TensorData):
@@ -1459,52 +1932,6 @@ class CalData(TensorData):
             cov = cov.squeeze()
 
         return cov
-
-    def set_cov(self, cov, cov_axis, icov=None):
-        """
-        Set the covariance matrix as self.cov and
-        compute covariance properties (ndim and log-det)
-
-        Parameters
-        ----------
-        cov : tensor
-            Covariance of data in a form that conforms
-            to cov_axis specification. See optim.apply_icov
-            for details on shape of cov.
-        cov_axis : str
-            The data axis along which the covariance is modeled.
-            This specifies the type of covariance being supplied.
-            Options are [None, 'ant', 'time', 'freq', 'full'].
-            See optim.apply_icov() for details
-        icov : tensor, optional
-            pre-computed inverse covariance to set.
-            Recommended to first set cov and then call compute_icov()
-        """
-        # set covariance: this is specific to assumed shape of VisData
-        self.cov = cov
-        self.icov = icov
-        self.cov_axis = cov_axis
-        self.cov_ndim, self.cov_logdet = None, None
-
-        if self.cov is not None:
-            # compute covariance properties
-            self.cov_ndim = sum(self.data.shape)
-            if self.cov_axis is None:
-                assert self.cov.shape == self.data.shape
-                self.cov_logdet = torch.sum(torch.log(self.cov))
-            elif self.cov_axis == 'full':
-                assert self.cov.ndim == 2
-                self.cov_logdet = torch.slogdet(self.cov).logabsdet
-            else:
-                assert self.cov.ndim == 6
-                self.cov_logdet = 0
-                for i in range(self.cov.shape[2]):
-                    for j in range(self.cov.shape[3]):
-                        for k in range(self.cov.shape[4]):
-                            for l in range(self.cov.shape[5]):
-                                self.cov_logdet += torch.slogdet(self.cov[:, :, i, j, k, l]).logabsdet
-            if torch.is_complex(self.cov_logdet):
-                self.cov_logdet = self.cov_logdet.real
 
     def get_icov(self, ant=None, icov=None, **kwargs):
         """
