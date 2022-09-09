@@ -332,7 +332,7 @@ class RIME(utils.Module):
                 # apply beam and fringe for all bls to sky and sum into vis
                 sim2data_idx = self._sim2data[self.bl_group_id]
                 self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
-                                   kind, zen, az, vis, sim2data_idx, j)
+                                   zen, az, vis, sim2data_idx, j)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope,
@@ -342,7 +342,7 @@ class RIME(utils.Module):
 
         return vd
 
-    def _prod_and_sum(self, beam, cut_sky, bl, kind,
+    def _prod_and_sum(self, beam, cut_sky, bl,
                       zen, az, vis, sim2data_idx, obs_ind):
         """
         Sky product and sum into vis inplace
@@ -357,8 +357,6 @@ class RIME(utils.Module):
         bl : tuple or list of tuple
             Baseline antenna pair e.g. (0, 1) or list
             of such to operate on simultaneously
-        kind : str
-            Kind of sky model ['point', 'pixel', 'alm']
         zen, az : tensor
             Zenith and azimuth angles of sky model [degrees]
         vis : tensor
@@ -378,10 +376,10 @@ class RIME(utils.Module):
         fringe = self.array.gen_fringe(bl, zen, az)
 
         # apply fringe to psky
-        psky = self.array.apply_fringe(fringe, psky, kind)
+        psky = self.array.apply_fringe(fringe, psky)
 
         # LEGACY: this seems to consume more memory...
-        #beam1 = self.array.apply_fringe(fringe, beam1, kind)
+        #beam1 = self.array.apply_fringe(fringe, beam1)
         #psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # sum across sky

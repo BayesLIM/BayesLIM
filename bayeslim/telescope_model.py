@@ -372,10 +372,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
             antennas from self.ants, e.g. (1, 2)
         zen : tensor
             Zenith angle [degrees] of shape (Npix,).
-            Used of kind of 'pixel' or 'point'
         az : tensor
             Azimuth [degrees] of shape (Npix,).
-            Used for kind of 'pixel' or 'point'
         conj : bool, optional
             If True, conjugate complex fringe
 
@@ -402,7 +400,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         return self._fringe(bl, zen, az, conj=conj)
 
-    def apply_fringe(self, fringe, sky, kind):
+    def apply_fringe(self, fringe, sky):
         """
         Apply a fringe matrix to a representation
         of the sky.
