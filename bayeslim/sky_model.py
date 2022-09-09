@@ -6,18 +6,18 @@ import numpy as np
 from scipy import special, interpolate
 import copy
 
-from . import utils, cosmology
+from . import utils, cosmology, dataset
 from .utils import _float, _cfloat
 
 
 class SkyBase(utils.Module):
     """
-    Base class for various sky model representations
+    Base class for various pixelized sky model representations
     """
-    def __init__(self, params, kind, freqs, R=None, name=None,
+    def __init__(self, params, freqs, R=None, name=None,
                  parameter=True, p0=None):
         """
-        Base class for a torch sky model representation.
+        Base class for a pixel sky model representation.
 
         Parameters
         ----------
@@ -25,10 +25,6 @@ class SkyBase(utils.Module):
             A sky model parameterization as a tensor to
             be pushed through the response function R().
             In general this should be (Nstokes, 1, Nfreqs, Nsources)
-        kind : str
-            Kind of sky model. options = ['point', 'pixel', 'alm']
-            for point source model, pixelized model, and spherical
-            harmonic model.
         freqs : tensor
             Frequency array of sky model [Hz]
         R : callable, optional
@@ -53,7 +49,6 @@ class SkyBase(utils.Module):
         self.p0 = p0
         if parameter:
             self.params = torch.nn.Parameter(self.params)
-        self.kind = kind
         if R is None:
             R = DefaultResponse()
         self.R = R
@@ -230,7 +225,7 @@ class PointSky(SkyBase):
             P = bayeslim.sky.PointSky([amps, alpha],
                                       angs, Nfreqs, R=R)
         """
-        super().__init__(params, 'point', freqs, R=R, name=name,
+        super().__init__(params, freqs, R=R, name=name,
                          parameter=parameter, p0=p0)
         self.angs = angs
 
@@ -247,15 +242,7 @@ class PointSky(SkyBase):
 
         Returns
         -------
-        dictionary
-            kind : str
-                Kind of sky model ['point', 'pixel', 'alm']
-            sky : tensor
-                Source brightness at discrete locations
-                (Nstokes, 1, Nfreqs, Nsources)
-            angs : tensor
-                Sky source locations (RA, Dec) [deg]
-                (2, Nsources)
+        MapData object
         """
         # fed params or attr params
         if params is None:
@@ -280,7 +267,11 @@ class PointSky(SkyBase):
         # pass through response
         name = getattr(self, 'name', None)
 
-        return dict(kind=self.kind, sky=sky, angs=self.angs, name=name)
+        skycomp = dataset.MapData()
+        skycomp.setup_meta(name=name)
+        skycomp.setup_data(data=sky, angs=torch.as_tensor(self.angs))
+
+        return skycomp
 
 
 class PointSkyResponse:
@@ -432,7 +423,7 @@ class PixelSky(SkyBase):
             response function. Redefines params as a deviation
             from p0. Must have same shape as params.
         """
-        super().__init__(params, 'pixel', freqs, R=R, name=name,
+        super().__init__(params, freqs, R=R, name=name,
                          parameter=parameter, p0=p0)
         self.angs = angs
         self.px_area = px_area
@@ -450,15 +441,7 @@ class PixelSky(SkyBase):
 
         Returns
         -------
-        dictionary
-            kind : str
-                Kind of sky model ['point', 'pixel', 'alm']
-            amps : tensor
-                Pixel flux density at fixed locations on the sky
-                (Nstokes, 1, Nfreqs, Npix)
-            angs : tensor
-                Sky source locations (RA, Dec) [deg]
-                (2, Npix)
+        MapData object
         """
         # apply fed params or attr params
         if params is None:
@@ -482,7 +465,11 @@ class PixelSky(SkyBase):
 
         name = getattr(self, 'name', None)
 
-        return dict(kind=self.kind, sky=sky * self.px_area, angs=self.angs, name=name)
+        skycomp = dataset.MapData()
+        skycomp.setup_meta(name=name)
+        skycomp.setup_data(data=sky * self.px_area, angs=torch.as_tensor(self.angs))
+
+        return skycomp
 
 
 class PixelSkyResponse:
@@ -823,7 +810,7 @@ class CompositeModel(utils.Module):
         """
         Forward pass sky models and append in a list
         or sum the sky maps and return a sky_component
-        dictionary
+        MapData object (or a list of these)
         """
         # forward each sky model
         sky_components = []
@@ -832,19 +819,17 @@ class CompositeModel(utils.Module):
             sky_components.append(skycomp)
 
         if self.sum_output:
-            # assert only one kind of sky models
-            assert len(set([comp['kind'] for comp in sky_components])) == 1
             # use first sky_component as placeholder
             output = sky_components[0]
-            sky = torch.zeros_like(output['sky'], device=self.device)
+            sky = torch.zeros_like(output.data, device=self.device)
             for comp in sky_components:
-                sky += comp['sky'].to(self.device)
-            output['sky'] = sky
+                sky += comp.data.to(self.device)
+            output.data = sky
             # make sure other keys are on the same device
-            for k in output:
-                if isinstance(output[k], torch.Tensor):
-                    if output[k].device.type != self.device:
-                        output[k] = output[k].to(self.device)
+#            for k in output:
+#                if isinstance(output[k], torch.Tensor):
+#                    if output[k].device.type != self.device:
+#                        output[k] = output[k].to(self.device)
         else:
             output = sky_components
 
@@ -1095,7 +1080,7 @@ class Stokes2Coherency(utils.Module):
 
         Parameters
         ----------
-        sky_comp : tensor or dict
+        sky_comp : tensor or MapData
             Of shape (4, 1, ...) or (2, 2, ...)
             holding [IQUV] or [[I, Q], [U, V]] respectively.
             Can also be a sky_component dictionary, which will
@@ -1103,11 +1088,11 @@ class Stokes2Coherency(utils.Module):
 
         Returns
         -------
-        tensor or dict
+        tensor or MapData
         """
         # check if params is actually a sky_component
-        if isinstance(sky_comp, dict):
-            sky_comp['sky'] = self.forward(sky_comp['sky'], prior_cache=prior_cache)
+        if isinstance(sky_comp, dataset.MapData):
+            sky_comp.data = self.forward(sky_comp.data, prior_cache=prior_cache)
             return sky_comp
 
         # assume sky_comp is a (Nstokes, 1, ...) tensor from here on out

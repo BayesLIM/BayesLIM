@@ -1004,14 +1004,19 @@ class MapData(TensorData):
     def __init__(self):
         self.atol = 1e-10
 
-    def setup_meta(self):
+    def setup_meta(self, name=None):
         """
         Setup metadata
+
+        Parameters
+        ----------
+        name : str
+            Name of map data
         """
-        pass
+        self.name = name
 
     def setup_data(self, freqs, df=None, pols=None, data=None, angs=None,
-                   altaz=None, flags=None, cov=None, cov_axis=None, icov=None,
+                   flags=None, cov=None, cov_axis=None, icov=None,
                    norm=None, history=''):
         """
         Setup data
@@ -1029,9 +1034,6 @@ class MapData(TensorData):
         angs : tensor, optional
             [RA, Dec] on the sky of the pixel centers in J2000 coords
             of shape (2, Npix) in degrees.
-        altaz : tensor, optional
-            [Altitude, Azimuth] on the sky of the pixel centers
-            of shape (2, Npix) in degrees in topocentric coords.
         flags : tensor, optional
             Flags of bool dtype, shape of data
         cov : tensor, optional
@@ -1053,7 +1055,6 @@ class MapData(TensorData):
         self.freqs = freqs
         self.df = df
         self.angs = angs
-        self.altaz = altaz
         self.Nfreqs = len(freqs)
         if pols is not None:
             if isinstance(pols, (torch.Tensor, np.ndarray)):
@@ -1071,14 +1072,14 @@ class MapData(TensorData):
         to a detach and clone. Detach is optional
         """
         md = MapData()
-        md.setup_meta()
+        md.setup_meta(name=self.name)
         data = self.data.detach() if detach else self.data
         md.setup_data(self.freqs, df=self.df, pols=self.pols, data=data.clone(), norm=self.norm,
-                      angs=self.angs, altaz=self.altaz, flags=self.flags, cov=self.cov,
+                      angs=self.angs, flags=self.flags, cov=self.cov,
                       icov=self.icov, cov_axis=self.cov_axis, history=self.history)
         return md
 
-    def get_inds(self, angs=None, altaz=None, freqs=None, pols=None,
+    def get_inds(self, angs=None, freqs=None, pols=None,
                  ang_inds=None, freq_inds=None, pol_inds=None):
         """
         Given data selections, return data indexing list
@@ -1087,14 +1088,12 @@ class MapData(TensorData):
         ----------
         angs : tensor, optional
             J2000 [ra,dec] angles [deg] to index
-        altaz : tensor, optional
-            [alt, az] angles [deg] to index
         freqs : tensor or float, optional
             Frequencies to index
         pols : str or list, optional
             Polarization(s) to index
         ang_inds : int or list of int, optional
-            Instead of feeding angs or altaz, can feed a
+            Instead of feeding angs, can feed a
             list of indices along the Npix axis
             to index.
         freq_inds : int or list of int, optional
@@ -1113,11 +1112,7 @@ class MapData(TensorData):
         """
         if angs is not None:
             assert ang_inds is None
-            assert altaz is None
-            ang_inds = self._ang2ind(angs, altaz=False)
-        elif altaz is not None:
-            assert ang_inds is None
-            ang_inds = self._ang2ind(altaz, altaz=True)
+            ang_inds = self._ang2ind(angs)
         elif ang_inds is not None:
             pass
         else:
@@ -1146,7 +1141,7 @@ class MapData(TensorData):
 
         return inds
 
-    def _ang2ind(self, angs, altaz=False):
+    def _ang2ind(self, angs):
         """
         Pixel angles to index. Note this is slow
         because we loop over all input angles
@@ -1156,14 +1151,10 @@ class MapData(TensorData):
         ----------
         angs : tensor
             Pixel centers in [ra, dec] of degrees to index
-            of shape (2, Nindex). If altaz=True, angs is
-            assumed ot be [alt, az] in degrees.
-        altaz : bool, optional
-            If True, assume angs input is [alt, az] in deg,
-            otherwise assume its [ra, dec] in deg.
+            of shape (2, Nindex).
         """
         angs = torch.as_tensor(angs)
-        _angs = self.angs if not altaz else self.altaz
+        _angs = self.angs
         idx = []
         for ang1, ang2 in zip(*angs):
             match = np.isclose(ang1, _angs[0], atol=self.atol, rtol=1e-10) \
@@ -1206,7 +1197,7 @@ class MapData(TensorData):
         return self.pols.index(pol.lower())
 
     def get_data(self, data=None, squeeze=True, angs=None,
-                 altaz=None, freqs=None, pols=None, ang_inds=None,
+                 freqs=None, pols=None, ang_inds=None,
                  freq_inds=None, pol_inds=None):
         """
         Get map data given selections
@@ -1228,7 +1219,7 @@ class MapData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+        inds = self.get_inds(angs=angs, freqs=freqs, pols=pols,
                              ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         data = data[inds]
@@ -1240,8 +1231,8 @@ class MapData(TensorData):
         return data
 
     def get_flags(self, flags=None, squeeze=True, angs=None,
-                 altaz=None, freqs=None, pols=None, ang_inds=None,
-                 freq_inds=None, pol_inds=None):
+                  freqs=None, pols=None, ang_inds=None,
+                  freq_inds=None, pol_inds=None):
         """
         Get flag data given selections
 
@@ -1256,7 +1247,7 @@ class MapData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+        inds = self.get_inds(angs=angs, freqs=freqs, pols=pols,
                              ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         flags = flags[inds]
@@ -1268,7 +1259,7 @@ class MapData(TensorData):
         return flags
 
     def get_cov(self, cov=None, cov_axis=None, squeeze=True, angs=None,
-                altaz=None, freqs=None, pols=None, ang_inds=None,
+                freqs=None, pols=None, ang_inds=None,
                 freq_inds=None, pol_inds=None):
         """
         Index covariance given selections
@@ -1287,7 +1278,7 @@ class MapData(TensorData):
             return None
 
         # get indexing
-        inds = self.get_inds(angs=angs, altaz=altaz, freqs=freqs, pols=pols,
+        inds = self.get_inds(angs=angs, freqs=freqs, pols=pols,
                              ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
 
@@ -1296,7 +1287,7 @@ class MapData(TensorData):
             cov = cov[inds]
         else:
             # cov is not the same shape as data
-            if angs is not None or altaz is not None or ang_inds is not None:
+            if angs is not None or ang_inds is not None:
                 if cov_axis == 'pix':
                     cov = cov[inds[3]][:, inds[3]]
                 elif cov_axis in ['freq']:
@@ -1334,7 +1325,7 @@ class MapData(TensorData):
             icov = self.icov
         return self.get_cov(cov=icov, **kwargs)
 
-    def select(self, angs=None, altaz=None, freqs=None, pols=None,
+    def select(self, angs=None, freqs=None, pols=None,
                ang_inds=None, freq_inds=None, pol_inds=None,
                inplace=True):
         """
@@ -1344,14 +1335,12 @@ class MapData(TensorData):
         ----------
         angs : tensor, optional
             J2000 [ra,dec] angles [deg] to index
-        altaz : tensor, optional
-            [alt, az] angles [deg] to index
         freqs : tensor or float, optional
             Frequencies to index
         pols : str or list, optional
             Polarization(s) to index
         ang_inds : int or list of int, optional
-            Instead of feeding angs or altaz, can feed a
+            Instead of feeding angs, can feed a
             list of indices along the Npix axis
             to index.
         freq_inds : int or list of int, optional
@@ -1371,19 +1360,17 @@ class MapData(TensorData):
         else:
             obj = copy.deepcopy(self)
 
-        if angs is not None or altaz is not None or ang_inds is not None:
-            data = obj.get_data(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
-            norm = obj.get_data(data=self.norm, angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
-            cov = obj.get_cov(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
-            icov = obj.get_icov(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
-            flags = obj.get_flags(angs=angs, altaz=altaz, ang_inds=ang_inds, squeeze=False)
+        if angs is not None or ang_inds is not None:
+            data = obj.get_data(angs=angs, ang_inds=ang_inds, squeeze=False)
+            norm = obj.get_data(data=self.norm, angs=angs, ang_inds=ang_inds, squeeze=False)
+            cov = obj.get_cov(angs=angs, ang_inds=ang_inds, squeeze=False)
+            icov = obj.get_icov(angs=angs, ang_inds=ang_inds, squeeze=False)
+            flags = obj.get_flags(angs=angs, ang_inds=ang_inds, squeeze=False)
             if ang_inds is not None:
                 if self.angs is not None:
                     angs = self.angs[:, ang_inds]
-                if self.altaz is not None:
-                    altaz = self.altaz[:, ang_inds]
             obj.setup_data(obj.freqs, df=obj.df, pols=obj.pols, data=data, angs=angs,
-                           altaz=altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
         if freqs is not None or freq_inds is not None:
@@ -1398,7 +1385,7 @@ class MapData(TensorData):
             else:
                 df = obj.df[self._freq2ind(freqs)] if obj.df is not None else None
             obj.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
-                           altaz=obj.altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
         if pols is not None or pol_inds is not None:
@@ -1409,7 +1396,7 @@ class MapData(TensorData):
             flags = obj.get_flags(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
             if pol_inds is not None: pols = [obj.pols[i] for i in pol_inds]
             obj.setup_data(obj.freqs, df=obj.df, pols=pols, data=data, angs=obj.angs,
-                           altaz=obj.altaz, flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
+                           flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
         if not inplace:
@@ -1444,8 +1431,6 @@ class MapData(TensorData):
                     f.create_dataset('icov', data=self.icov)
                 if self.angs is not None:
                     f.create_dataset('angs', data=self.angs)
-                if self.altaz is not None:
-                    f.create_dataset('altaz', data=self.altaz)
                 f.create_dataset('freqs', data=self.freqs)
                 if self.df is not None:
                     f.create_dataset('df', data=self.df)
@@ -1482,12 +1467,11 @@ class MapData(TensorData):
             _df = torch.as_tensor(f['df'][:]) if 'df' in f else None
             _pols = f.attrs['pols'] if 'pols' in f.attrs else None
             _angs = f['angs'] if 'angs' in f else None
-            _altaz = f['altaz'] if 'altaz' in f else None
             cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
             history = f.attrs['history'] if 'history' in f.attrs else ''
 
             # setup just full-size metadata
-            self.setup_data(_freqs, df=_df, angs=_angs, altaz=_altaz, pols=_pols)
+            self.setup_data(_freqs, df=_df, angs=_angs, pols=_pols)
 
             # read-in data if needed
             data, norm, flags, cov, icov = None, None, None, None, None
@@ -1519,10 +1503,25 @@ class MapData(TensorData):
             self.select(**kwargs)
 
             # setup downselected metadata and data
-            self.setup_meta()
-            self.setup_data(self.freqs, df=self.df, angs=self.angs, altaz=self.altaz,
+            self.setup_meta(name=self.name)
+            self.setup_data(self.freqs, df=self.df, angs=self.angs,
                             pols=self.pols, data=data, flags=flags, cov=cov, norm=norm,
                             cov_axis=cov_axis, icov=icov, history=history)
+
+    def push(self, device):
+        """
+        Push data, flags, cov and icov to device
+        """
+        if self.data is not None:
+            self.data = self.data.to(device)
+        if self.flags is not None:
+            self.flags = self.flags.to(device)
+        if self.cov is not None:
+            self.cov = self.cov.to(device)
+        if self.icov is not None:
+            self.icov = self.icov.to(device)
+        if self.norm is not None:
+            self.norm = self.norm.to(device)
 
 
 class CalData(TensorData):

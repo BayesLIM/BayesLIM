@@ -263,7 +263,7 @@ class PixelBeam(utils.Module):
         -------
         psky : tensor
             perceived sky, having mutiplied beam with sky, of shape
-            (Npol, Npol, Nmodelpair, Nfreqs, Npix)
+            (Npol, Npol, Nbls, Nfreqs, Npix)
         """
         # get modelpairs from baseline(s)
         if not isinstance(bls, list):
@@ -313,6 +313,7 @@ class PixelBeam(utils.Module):
                 # full stokes
                 assert sky.shape[:2] == (2, 2)
                 psky = torch.einsum("ab...,bc...,dc...->ad...", beam1, sky, beam2.conj())
+
         else:
             # two feed polarizations
             if self.powerbeam:
@@ -345,12 +346,8 @@ class PixelBeam(utils.Module):
 
         Parameters
         ----------
-        sky_comp : dict
-            Output of SkyBase subclass, holding
-            'sky' : tensor, representation of the sky
-            'kind' : str, kind of sky model, e.g. 'point', 'alm'
-            and other keyword arguments specific to the model
-            and expected by the beam response function.
+        sky_comp : MapData object
+            Output of a SkyBase subclass
         telescope : TelescopeModel object
             A model of the telescope location
         time : float
@@ -366,36 +363,32 @@ class PixelBeam(utils.Module):
 
         Returns
         -------
-        psky_comp : dict
-            Same input dictionary but with psky as 'sky' of shape
+        psky : dict
+            Dictionary holding perceived sky data as 'sky' of shape
             (Npol, Npol, Nbls, Nfreqs, Nsources), where
             roughly psky = beam1 * sky * beam2. The FoV cut has
-            been applied to psky as well as the 'angs' key
+            been applied to psky as well as the angs vectors.
+            'angs' holds ra,dec and 'altaz' holds alt,az [deg]
         """
-        sky_comp = dict(sky_comp.items())
-        kind = sky_comp['kind']
-        if kind in ['point', 'pixel']:
-            # get coords
-            alt, az = telescope.eq2top(time, sky_comp['angs'][0], sky_comp['angs'][1],
-                                       store=False)
-            zen = utils.colat2lat(alt, deg=True)
+        # get coords
+        alt, az = telescope.eq2top(time, sky_comp.angs[0], sky_comp.angs[1],
+                                   store=False)
+        zen = utils.colat2lat(alt, deg=True)
 
-            # evaluate beam
-            beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
-            sky = cut_sky_fov(sky_comp['sky'], cut)
-            alt = alt[cut]
+        # evaluate beam
+        beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
+        sky = cut_sky_fov(sky_comp.data, cut)
+        alt = alt[cut]
 
-            # apply beam to sky to get perceived sky
-            psky = self.apply_beam(beam, bls, sky)
+        # apply beam to sky to get perceived sky
+        psky = self.apply_beam(beam, bls, sky)
 
-            sky_comp['sky'] = psky
-            sky_comp['angs'] = sky_comp['angs'][0][cut], sky_comp['angs'][1][cut]
-            sky_comp['altaz'] = torch.vstack([alt, az])
+        out_comp = {}
+        out_comp['sky'] = psky
+        out_comp['angs'] = sky_comp.angs[:, cut]
+        out_comp['altaz'] = torch.vstack([alt, az])
 
-        else:
-            raise NotImplementedError
-
-        return sky_comp
+        return out_comp
 
     def eval_prior(self, prior_cache, inp_params=None, out_params=None):
         """
@@ -1380,7 +1373,6 @@ class AlmBeam(utils.Module):
     """
     A beam model representation in
     spherical harmonic space.
-    This takes sky models of 'alm' kind.
     """
     def __init__(self, freqs, parameter=True, polmode='1pol',
                  powerbeam=False):

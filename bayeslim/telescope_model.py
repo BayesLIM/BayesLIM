@@ -410,35 +410,27 @@ class ArrayModel(utils.PixInterp, utils.Module):
         Parameters
         ----------
         fringe : tensor
-            Holds the fringe response for a given baseline
-            vector across frequency. If kind = 'point'
-            or 'pixel' its shape is (Nbls, Nfreqs, Npix)
+            Holds the fringe response for a set of
+            bls of shape (Nbls, Nfreqs, Npix)
         sky : tensor
             Holds the sky coherency matrix, which generally
-            has a shape of (Nvec, Nvec, Nfreqs, Npix)
-        kind : str
-            Kind of fringe and sky model. 
-            One of either ['point', 'pixel', 'alm']
+            has a shape of (Nvec, Nvec, ..., Nfreqs, Npix)
 
         Returns
         -------
         psky : tensor
             perceived sky, having mutiplied fringe with sky
-            of shape (Npol, Npol, Nbls, Nfreqs, Npix)
+            of shape (Nvec, Nvec, Nbls, Nfreqs, Npix)
         """
         # move sky to fringe device
         sky = sky.to(self.device)
 
-        if kind in ['point', 'pixel']:
-            if sky.ndim == 4:
-                sky = sky[:, :, None]
-            psky = sky * fringe
+        # give sky Nbls dimension if not present
+        if sky.ndim == 4:
+            sky = sky[:, :, None]
 
-        elif kind == 'alm':
-            raise NotImplementedError
-
-        else:
-            raise ValueError("{} not recognized".format(kind))
+        # multiply in fringe
+        psky = sky * fringe
 
         return psky
 

@@ -278,7 +278,7 @@ class RIME(utils.Module):
         VisData
             model visibilities
         """
-        # set sim group given batch index
+        # set sim group given current batch index
         self._set_group()
 
         # get sky components
@@ -303,12 +303,8 @@ class RIME(utils.Module):
         # iterate over sky components
         start = datetime.now().timestamp()
         for i, sky_comp in enumerate(sky_components):
-
-            kind = sky_comp['kind']
-            sky = sky_comp['sky']
-            ra, dec = sky_comp['angs']
-            if 'prior' in sky_comp:
-                out_dict['prior'] = out_dict['prior'] + sky_comp['prior']
+            sky = sky_comp.data
+            ra, dec = sky_comp.angs
 
             # iterate over observation times
             for j, time in enumerate(self.sim_times):
@@ -319,24 +315,19 @@ class RIME(utils.Module):
                                          elapsed_time(start))
                 log(message, verbose=self.verbose, style=1)
 
-                # get beam tensor
-                if kind in ['pixel', 'point']:
-                    # convert sky pixels from ra/dec to alt/az
-                    alt, az = self.telescope.eq2top(time, ra, dec, store=True)
+                # convert sky pixels from ra/dec to alt/az
+                alt, az = self.telescope.eq2top(time, ra, dec, store=True)
 
-                    # evaluate beam response
-                    zen = utils.colat2lat(alt, deg=True)
-                    ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
-                    # cache a version of cut on sky.device: this prevents repeated
-                    # calls to cut.to(sky.device) which can be a bottleneck if beam and
-                    # sky are on different devices
-                    if self.cache_skycut:
-                        self.beam.set_sky_cut(zen, cut, device=sky.device)
-                        cut = self.beam.query_cache(zen)
-                    cut_sky = beam_model.cut_sky_fov(sky, cut)
-
-                elif kind == 'alm':
-                    raise NotImplementedError
+                # evaluate beam response
+                zen = utils.colat2lat(alt, deg=True)
+                ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
+                # cache a version of cut on sky.device: this prevents repeated
+                # calls to cut.to(sky.device) which can be a bottleneck if beam and
+                # sky are on different devices
+                if self.cache_skycut:
+                    self.beam.set_sky_cut(zen, cut, device=sky.device)
+                    cut = self.beam.query_cache(zen)
+                cut_sky = beam_model.cut_sky_fov(sky, cut)
 
                 # apply beam and fringe for all bls to sky and sum into vis
                 sim2data_idx = self._sim2data[self.bl_group_id]
