@@ -1184,7 +1184,7 @@ class Trainer:
         return torch.as_tensor(self._epoch_times)
 
 
-def apply_icov(data, icov, cov_axis):
+def apply_icov(data, icov, cov_axis, mode='vis'):
     """
     Apply inverse covariance to data
 
@@ -1200,8 +1200,16 @@ def apply_icov(data, icov, cov_axis):
         inverse covariance to apply to data
     cov_axis : str
         data axis over which covariance is modeled
-        [None, 'bl', 'time', 'freq', 'full']
+        [None, 'bl', 'time', 'freq', 'full', 'pix']
         See Notes
+    mode : str, optional
+        Either ['vis' (default), 'map'].
+        If 'vis' and cov_axis is not None or full
+        icov is assumed to be ndim = 6 and
+        data of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
+        If 'map' and cov_axis is not None or full
+        icov is assumed to be ndim = 5 and
+        data of shape (Npol, 1, Nfreqs, Npix)
 
     Returns
     -------
@@ -1216,14 +1224,19 @@ def apply_icov(data, icov, cov_axis):
         icov is 2D of shape (data.size, data.size) and
         represents the full inv cov of data.ravel()
     For the following, data is assumed to be of shape
-    (Npol, Npol, Nbls, Ntimes, Nfreqs). See VisData for
-    more details.
+    (Npol, Npol, Nbls, Ntimes, Nfreqs) for mode = 'vis' or
+    (Npol, 1, Nfreqs, Npix) for mode = 'map'
     cov_axis : 'bl'
         icov is shape (Nbl, Nbl, Npol, Npol, Ntimes, Nfreqs)
     cov_axis : 'time'
         icov is shape (Ntimes, Ntimes, Npol, Npol, Nbls, Nfreqs)
     cov_axis : 'freq'
-        icov is shape (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
+        mode = 'vis'
+            icov is shape (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
+        mode = 'map'
+            icov is shape (Nfreqs, Nfreqs, Npol, 1, Npix)
+    cov_axis : 'pix'
+        icov is shape (Npix, Npix, Npol, 1, Nfreqs)
     """
     if cov_axis is None:
         # icov is just diagonal
@@ -1236,16 +1249,19 @@ def apply_icov(data, icov, cov_axis):
         out = data.ravel().conj() @ icov @ data.ravel()
     elif cov_axis == 'bl':
         # icov is along bls
-        d = data.moveaxis(2, 0)
-        out = d.T.conj() @ icov @ d
+        out = torch.einsum("ijklm,kk,ijklm->ijlm", d.conj(), icov, d)
     elif cov_axis == 'time':
         # icov is along times
-        d = data.moveaxis(3, 0)
-        out = d.T.conj() @ icov @ d
+        out = torch.einsum("ijklm,ll,ijklm->ijkm", d.conj(), icov, d)
     elif cov_axis == 'freq':
         # icov is along freqs
-        d = data.moveaxis(4, 0)
-        out = d.T.conj() @ icov @ d
+        if mode == 'vis':
+            out = torch.einsum("ijklm,mm,ijklm->ijkl", d.conj(), icov, d)
+        elif mode == 'map':
+            out = torch.einsum("ijkl,kk,ijkl->ijl", d.conj(), icov, d)
+    elif cov_axis == 'pix':
+        # icov is along Npix of map
+        out = torch.einsum("ijkl,ll,ijkl->ijk", d.conj(), icov, d)
 
     return out
 
@@ -1278,13 +1294,16 @@ def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
         # invert full covariance
         icov = inv(cov)
     else:
-        # cov is 6-dim, only invert first two dims
+        # only invert first two dims of cov
+        def recursive_inv(cov, icov):
+            if cov.ndim > 2:
+                for i in range(cov.shape[-1]):
+                    recursive_inv(cov[:, :, i], icov[:, :, i])
+                return
+            icov[:, :] = inv(cov)
+
         icov = torch.zeros_like(cov)
-        for i in range(cov.shape[2]):
-            for j in range(cov.shape[3]):
-                for k in range(cov.shape[4]):
-                    for l in range(cov.shape[5]):
-                        icov[:, :, i, j, k, l] = inv(cov[:, :, i, j, k, l])
+        recursive_inv(cov, icov)
 
     return icov
 
