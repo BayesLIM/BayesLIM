@@ -269,7 +269,7 @@ class PointSky(SkyBase):
 
         skycomp = dataset.MapData()
         skycomp.setup_meta(name=name)
-        skycomp.setup_data(data=sky, angs=torch.as_tensor(self.angs))
+        skycomp.setup_data(freqs=self.freqs, data=sky, angs=torch.as_tensor(self.angs))
 
         return skycomp
 
@@ -467,7 +467,7 @@ class PixelSky(SkyBase):
 
         skycomp = dataset.MapData()
         skycomp.setup_meta(name=name)
-        skycomp.setup_data(data=sky * self.px_area, angs=torch.as_tensor(self.angs))
+        skycomp.setup_data(freqs=self.freqs, data=sky * self.px_area, angs=torch.as_tensor(self.angs))
 
         return skycomp
 
