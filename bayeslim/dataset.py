@@ -1311,7 +1311,7 @@ class MapData(TensorData):
                     raise NotImplementedError
             elif pols is not None or pol_inds is not None:
                 # pol-pol covariance not yet implemented
-                if cov_axis in ['freq', 'pix']
+                if cov_axis in ['freq', 'pix']:
                     cov = cov[:, :, inds[0]]
                 elif cov_axis == 'full':
                     raise NotImplementedError
