@@ -1178,7 +1178,7 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     return np.asarray(k)
 
 
-def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
+def gen_linear_A(linear_mode, A=None, x=None, logx=False, whiten=True, x0=None, dx=None,
                  Ndeg=None, basis='direct', device=None, dtype=None, **kwargs):
     """
     Generate a linear mapping design matrix A
@@ -1191,6 +1191,9 @@ def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
         (mode='custom') Linear mapping of shape (Nsamples, Nfeatures)
     x : tensor, optional
         (mode='poly') sample values
+    logx : bool, optional
+        If True, take logarithm of x before generating
+        A matrix (mode='poly')
     whiten : bool, optional
         (mode='poly') whiten samples
     x0 : float, optional
@@ -1213,15 +1216,15 @@ def gen_linear_A(linear_mode, A=None, x=None, whiten=True, x0=None, dx=None,
     """
     dtype = dtype if dtype is not None else _float()
     if linear_mode == 'poly':
-        A = gen_poly_A(x, Ndeg, basis=basis, whiten=whiten, x0=x0, dx=dx)
+        A = gen_poly_A(x, Ndeg, basis=basis, logx=logx, whiten=whiten, x0=x0, dx=dx)
     elif linear_mode == 'custom':
         A = torch.as_tensor(A)
 
     return A.to(dtype).to(device)
 
 
-def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
-               x0=None, dx=None):
+def gen_poly_A(x, Ndeg, device=None, basis='direct', logx=False,
+               whiten=True, x0=None, dx=None):
     """
     Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
@@ -1241,6 +1244,8 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
         Polynomial basis to use. See emupy.linear.setup_polynomial
         ['direct', 'legendre', 'chebyshevt', 'chebyshevu']
         direct (default) is a standard polynomial (x^0 + x^1 + ...)
+    logx : bool, optional
+        If True, take log of x before generating A matrix or whitening.
     whiten : bool, optional
         If True, center (i.e. subtract mean) and scale (i.e. range of -1, 1) x.
         Useful when using orthogonal polynomial bases
@@ -1254,6 +1259,10 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', whiten=True,
     A : tensor
         Polynomial design matrix (Nx, Ndeg)
     """
+    # logx if desired
+    if logx:
+        x = torch.log(x)
+
     # whiten the input if desired
     if whiten:
         x, x0, dx = whiten_xarr(x, x0, dx)
@@ -1272,12 +1281,12 @@ def whiten_xarr(x, x0=None, dx=None):
     vector x to have a range of [-1, 1]
     for optimal polynomial orthogonality.
     For uniformly increasing x, the whitened
-    range is [-1+dx/2, 1-dx/2].
+    range is [-1+dx/2, 1-dx/2] if dx is None.
 
     Parameters
     ----------
     x : tensor
-        Monotonically increasing, but no
+        Monotonically increasing, but not
         necessarily uniform.
     x0 : float, optional
         mean to use in centering x
@@ -1298,7 +1307,7 @@ def whiten_xarr(x, x0=None, dx=None):
     x = x - x0
 
     if dx is None:
-        dx = x.max() + (x[1] - x[0]) / 2
+        dx = x.max() + (x[-1] - x[0]) / (len(x) - 1) / 2
     x = x / dx
 
     return x, x0, dx
@@ -1339,6 +1348,8 @@ class LinearModel:
         if self.linear_mode != 'custom':
             if kwargs.get('whiten', False):
                 x = kwargs.get('x')
+                if kwargs.get('logx', False):
+                    x = torch.log(x)
                 _, x0, dx = whiten_xarr(x)
                 if 'x0' not in kwargs:
                     kwargs['x0'] = x0
