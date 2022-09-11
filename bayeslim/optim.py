@@ -252,7 +252,7 @@ class LogGaussPrior(BaseLogPrior):
             self.ndim = sum(self.cov.shape)
         else:
             self.icov = torch.linalg.pinv(self.cov)
-            self.logdet = torch.slogdet(self.cov)
+            self.logdet = torch.slogdet(self.cov).logabsdet
             self.ndim = len(self.cov)
         self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
 
