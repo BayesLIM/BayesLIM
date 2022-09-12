@@ -1178,8 +1178,9 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     return np.asarray(k)
 
 
-def gen_linear_A(linear_mode, A=None, x=None, logx=False, whiten=True, x0=None, dx=None,
-                 Ndeg=None, basis='direct', device=None, dtype=None, **kwargs):
+def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
+                 whiten=True, x0=None, dx=None, Ndeg=None, basis='direct',
+                 device=None, dtype=None, **kwargs):
     """
     Generate a linear mapping design matrix A
 
@@ -1191,6 +1192,9 @@ def gen_linear_A(linear_mode, A=None, x=None, logx=False, whiten=True, x0=None, 
         (mode='custom') Linear mapping of shape (Nsamples, Nfeatures)
     x : tensor, optional
         (mode='poly') sample values
+    d0 : float, optional
+        (mode='poly') divide x by d0 before any other operation
+        if provided
     logx : bool, optional
         If True, take logarithm of x before generating
         A matrix (mode='poly')
@@ -1216,15 +1220,15 @@ def gen_linear_A(linear_mode, A=None, x=None, logx=False, whiten=True, x0=None, 
     """
     dtype = dtype if dtype is not None else _float()
     if linear_mode == 'poly':
-        A = gen_poly_A(x, Ndeg, basis=basis, logx=logx, whiten=whiten, x0=x0, dx=dx)
+        A = gen_poly_A(x, Ndeg, basis=basis, d0=d0, logx=logx, whiten=whiten, x0=x0, dx=dx)
     elif linear_mode == 'custom':
         A = torch.as_tensor(A)
 
     return A.to(dtype).to(device)
 
 
-def gen_poly_A(x, Ndeg, device=None, basis='direct', logx=False,
-               whiten=True, x0=None, dx=None):
+def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
+               logx=False, whiten=True, x0=None, dx=None):
     """
     Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
@@ -1244,6 +1248,8 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', logx=False,
         Polynomial basis to use. See emupy.linear.setup_polynomial
         ['direct', 'legendre', 'chebyshevt', 'chebyshevu']
         direct (default) is a standard polynomial (x^0 + x^1 + ...)
+    d0 : float, optional
+        Divide x by x0 before any other operation if provided
     logx : bool, optional
         If True, take log of x before generating A matrix or whitening.
     whiten : bool, optional
@@ -1259,13 +1265,7 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', logx=False,
     A : tensor
         Polynomial design matrix (Nx, Ndeg)
     """
-    # logx if desired
-    if logx:
-        x = torch.log(x)
-
-    # whiten the input if desired
-    if whiten:
-        x, x0, dx = whiten_xarr(x, x0, dx)
+    x, _, _ = prep_xarr(x, d0=d0, logx=logx, whiten=whiten, x0=x0, dx=dx)
 
     # setup the polynomial
     from emupy.linear import setup_polynomial
@@ -1273,6 +1273,50 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', logx=False,
     A = torch.as_tensor(A, dtype=_float(), device=device)
 
     return A
+
+
+def prep_xarr(x, d0=None, logx=False,  whiten=False, x0=None, dx=None):
+    """
+    Prepare input x tensor for anchoring, log, and/or whitening
+
+    Parameters
+    ----------
+    x : tensor
+        Independent x tensor of shape (Nsample,).
+        monotonically increasing but not necc. uniform
+    d0 : float, optional
+        Divide x by d0 before any other operation if provided
+    logx : bool, optional
+        Take log of x before whitening
+    whiten : bool, optional
+        Center and scale x to be from [-1, 1].
+        Default w/ uniform sampling in x returns
+        range of [-1+dx/2, 1-dx/2]
+    x0 : float, optional
+        Center x by this value
+    dx : float, optional
+        Scale the centered x by this value
+
+    Returns
+    -------
+    x : New x tensor
+    x0 : x0 value
+    dx : dx value
+    """
+    # anchor by d0 if desired
+    if d0:
+        x = x / d0
+
+    # logx if desired
+    if logx:
+        x = torch.log(x)
+
+    # whiten the input if desired
+    # solve for x0 and dx if passed as None
+    if whiten:
+        x, x0, dx = whiten_xarr(x, x0, dx)
+
+    return x, x0, dx
 
 
 def whiten_xarr(x, x0=None, dx=None):
@@ -1345,15 +1389,20 @@ class LinearModel:
         self.out_dtype = out_dtype
         self.meta = meta if meta is not None else {}
 
-        if self.linear_mode != 'custom':
+        if self.linear_mode in ['poly']:
             if kwargs.get('whiten', False):
-                x = kwargs.get('x')
-                if kwargs.get('logx', False):
-                    x = torch.log(x)
-                _, x0, dx = whiten_xarr(x)
-                if 'x0' not in kwargs:
+                # if using whiten, get x0, dx parameters now
+                # and store in kwargs for later
+                _, x0, dx = prep_xarr(kwargs.get('x'),
+                                      d0=kwargs.get('d0', None),
+                                      logx=kwargs.get('logx', False),
+                                      whiten=kwargs.get('whiten', False),
+                                      x0=kwargs.get('x0', None),
+                                      dx=kwargs.get('dx', None))
+
+                if not kwargs.get('x0', None):
                     kwargs['x0'] = x0
-                if 'dx' not in kwargs:
+                if not kwargs.get('dx', None):
                     kwargs['dx'] = dx
 
         self.kwargs = kwargs
