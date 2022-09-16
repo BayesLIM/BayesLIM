@@ -1519,10 +1519,11 @@ class LinearModel:
         """
         Push items to new device
         """
-        self.A = self.A.to(device)
+        dtype = isinstance(device, torch.dtype)
+        self.A = utils.push(self.A, device)
         if self.coeff is not None:
-            self.coeff = self.coeff.to(device)
-        self.device = device
+            self.coeff = utils.push(self.coeff, device)
+        if not dtype: self.device = device
 
 
 def voigt_beam(nside, sigma, gamma):
@@ -2021,11 +2022,12 @@ class PixInterp:
         """
         Push cache onto a new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         for k in self.interp_cache:
             cache = self.interp_cache[k]
             self.interp_cache[k] = (cache[0].to(device),
-                                    cache[1].to(device))
+                                    utils.push(cache[1], device))
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,
@@ -2766,7 +2768,7 @@ def arr_hash(arr):
 
 def push(tensor, device, parameter=False):
     """
-    Push a tensor to a new device. If the tensor
+    Push a tensor to a new device or dtype. If the tensor
     is a parameter, it instantiates the parameter
     class on device.
 
@@ -2775,7 +2777,10 @@ def push(tensor, device, parameter=False):
     tensor : tensor
         A pytorch tensor, optionally a pytorch Parameter
     device : str
-        The device to push it to
+        The device to push it to, either str or device object.
+        Can also be a dtype, in which case tensor will
+        be cast as dtype. If complex, tensor stay complex.
+        e.g. complex128 -> complex64 for dtype of float32.
     parameter : bool, optional
         Make new tensor a parameter. This is done
         by default if input is a Parameter
@@ -2783,8 +2788,15 @@ def push(tensor, device, parameter=False):
     Returns
     -------
     tensor
-        The tensor on device
+        The tensor on device (or as new dtype)
     """
+    dtype = isinstance(device, torch.dtype)
+    if dtype and torch.is_complex(tensor) and not device.is_complex:
+        if device == torch.float16: device = torch.complex32
+        elif device == torch.float32: device = torch.complex64
+        elif device == torch.float64: device = torch.complex128
+        else: raise ValueError("tensor is complex but output dtype is not float or complex")
+
     if parameter or isinstance(tensor, torch.nn.Parameter):
         return torch.nn.Parameter(tensor.to(device))
     else:

@@ -168,12 +168,13 @@ class PixelBeam(utils.Module):
         device : str
             Device to push to
         """
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
-        self.device = device
         self.freqs = self.freqs.to(device)
         if self.p0 is not None:
-            self.p0 = self.p0.to(device)
+            self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
@@ -942,7 +943,9 @@ class UniformResponse:
         return out
 
     def push(self, device):
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.device = device
 
 
 class YlmResponse(PixelResponse):
@@ -1231,18 +1234,19 @@ class YlmResponse(PixelResponse):
 
     def push(self, device):
         """push attrs to device"""
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         super().push(device)
         for k, Ylm in self.Ylm_cache.items():
             if isinstance(Ylm, (tuple, list)):
-                self.Ylm_cache[k] = (Ylm[0].to(device), Ylm[1].to(device))
+                self.Ylm_cache[k] = (utils.push(Ylm[0], device), Ylm[1].to(device))
             else:
-                self.Ylm_cache[k] = Ylm.to(device)
+                self.Ylm_cache[k] = utils.push(Ylm, device)
         if self.beam_cache is not None:
             self.beam_cache = utils.push(self.beam_cache, device)
         if self._lm_poly:
             for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
-                self.lm_poly_A[k] = (lm_inds, p_inds, A.to(device))
+                self.lm_poly_A[k] = (lm_inds, p_inds, utils.push(A, device))
 
     # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):

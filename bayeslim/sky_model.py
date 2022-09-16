@@ -71,12 +71,14 @@ class SkyBase(utils.Module):
         ----------
         device : str
             Device to push to, e.g. 'cpu', 'cuda:0'
+            Can also be a dtype.
         attrs : list of str
             List of additional attributes to push
         """
+        dtype = isinstance(device, torch.dtype)
         # push basic attrs
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        self.device = device
         self.freqs = self.freqs.to(device)
         for attr in attrs:
             if hasattr(self, attr):
@@ -85,7 +87,7 @@ class SkyBase(utils.Module):
         self.R.push(device)
         # push starting p0
         if self.p0 is not None:
-            self.p0 = self.p0.to(device)
+            self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
@@ -363,7 +365,8 @@ class PointSkyResponse:
         return params
 
     def push(self, device):
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.freqs = self.freqs.to(device)
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
@@ -723,8 +726,9 @@ class PixelSkyResponse:
         return params
 
     def push(self, device):
+        dtype = isinstance(device, torch.dtype)
         if self.spatial_mode == 'alm':
-            self.Ylm = self.Ylm.to(device)
+            self.Ylm = utils.push(self.Ylm, device)
             self.alm_mult = self.alm_mult.to(device)
         elif self.spatial_mode == 'linear':
             self.spat_LM.push(device)
@@ -736,7 +740,7 @@ class PixelSkyResponse:
                 self.gln[k] = self.gln[k].to(device)
 
         self.freqs = self.freqs.to(device)
-        self.device = device
+        if not dtype: self.device = device
 
 
 class SphHarmSky(SkyBase):
@@ -861,9 +865,10 @@ class CompositeModel(utils.Module):
             model.freq_interp(freqs, kind)
 
     def push(self, device):
+        dtype = isinstance(device, torch.dtype)
         for model in self.models:
             self[model].push(device)
-        self.device = device
+        if not dtype: self.device = device
 
 
 def read_catalogue(catfile, freqs=None, device=None,

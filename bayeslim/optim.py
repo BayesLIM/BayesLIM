@@ -55,10 +55,11 @@ class BaseLogPrior:
         return self.forward(params)
 
     def push(self, device):
+        dtype = isinstance(device, torch.dtype)
         for attr in self.attrs:
             if hasattr(self, attr):
                 a = getattr(self, attr)
-                setattr(self, attr, a.to(device))
+                setattr(self, attr, utils.push(a, device))
 
 
 class LogUniformPrior(BaseLogPrior):
@@ -929,7 +930,8 @@ class LogProb(utils.Module):
         """
         Transfer target data to device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         for d in self.target.data:
             d.push(device)
 

@@ -123,8 +123,10 @@ class TelescopeModel:
 
     def push(self, device):
         """push cache to device"""
-        for key, angs in self.conv_cache.items():
-            self.conv_cache[key] = angs.to(device)
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            for key, angs in self.conv_cache.items():
+                self.conv_cache[key] = angs.to(device)
 
 
 class ArrayModel(utils.PixInterp, utils.Module):
@@ -433,18 +435,22 @@ class ArrayModel(utils.PixInterp, utils.Module):
         return psky
 
     def push(self, device):
-        """push model to a new device"""
+        """push model to a new device or dtype"""
         # setting antpos like this ensures it stays a Parameter
         # if it is to begin with
+        dtype = isinstance(device, torch.dtype)
+        if dtype:
+            self.antpos = utils.push(self.antpos, device)
         if utils.device(device) != utils.device('cpu'):
             self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)
         self.freqs = self.freqs.to(device)
-        self.device = device
+        if not dtype: self.device = device
         # push fringe cache
         for k in self.cache:
-            self.cache[k] = self.cache[k].to(device)
+            if isinstance(self.cache[k], torch.Tensor):
+                self.cache[k] = utils.push(self.cache[k], device)
 
     def get_bls(self, uniq_bls=False, keep_autos=True,
                 min_len=None, max_len=None,

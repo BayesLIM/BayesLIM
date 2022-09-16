@@ -51,14 +51,16 @@ class TensorData:
         """
         Push data, flags, cov and icov to device
         """
+        dtype = isinstance(device, torch.dtype)
         if self.data is not None:
-            self.data = self.data.to(device)
+            self.data = utils.push(self.data, device)
         if self.flags is not None:
-            self.flags = self.flags.to(device)
+            if not dtype:
+                self.flags = self.flags.to(device)
         if self.cov is not None:
-            self.cov = self.cov.to(device)
+            self.cov = utils.push(self.cov, device)
         if self.icov is not None:
-            self.icov = self.icov.to(device)
+            self.icov = utils.push(self.icov, device)
 
     def set_cov(self, cov, cov_axis, icov=None):
         """
@@ -1512,16 +1514,18 @@ class MapData(TensorData):
         """
         Push data, flags, cov and icov to device
         """
+        dtype = isinstance(device, torch.dtype)
         if self.data is not None:
-            self.data = self.data.to(device)
+            self.data = utils.push(self.data, device)
         if self.flags is not None:
-            self.flags = self.flags.to(device)
+            if not dtype:
+                self.flags = self.flags.to(device)
         if self.cov is not None:
-            self.cov = self.cov.to(device)
+            self.cov = utils.push(self.cov, device)
         if self.icov is not None:
-            self.icov = self.icov.to(device)
+            self.icov = utils.push(self.icov, device)
         if self.norm is not None:
-            self.norm = self.norm.to(device)
+            self.norm = utils.push(self.norm, device)
 
 
 class CalData(TensorData):

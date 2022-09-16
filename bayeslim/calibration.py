@@ -173,7 +173,8 @@ class BaseResponse:
         """
         Push class attrs to new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
         if self.time_mode == 'linear':
@@ -525,11 +526,12 @@ class JonesModel(utils.Module, IndexCache):
         """
         Push params and other attrs to new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
-        if self.p0 is not None:
-            self.p0 = self.p0.to(device)
+        if self.p0:
+            self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
@@ -864,6 +866,7 @@ class RedVisModel(utils.Module, IndexCache):
             index = torch.as_tensor(
                 [self.bl2red[bl] for bl in bls],
                 device=self.device)
+            self.cache_bidx[h] = index
         else:
             index = self.cache_bidx[h]
 
@@ -881,10 +884,14 @@ class RedVisModel(utils.Module, IndexCache):
         """
         Push to a new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        for h in self.cache_bidx:
-            self.cache_bidx[h] = self.cache_bidx[h].to(device)
+        if self.p0:
+            self.p0 = utils.push(self.p0, device)
+        if not dtype:
+            for h in self.cache_bidx:
+                self.cache_bidx[h] = self.cache_bidx[h].to(device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
@@ -1006,8 +1013,11 @@ class VisModel(utils.Module, IndexCache):
         """
         Push to a new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
+        if self.p0:
+            self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
@@ -1181,8 +1191,11 @@ class VisCoupling(utils.Module):
         """
         Push to a new device
         """
-        self.device = device
+        dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         self.params = utils.push(self.params, device)
+        if self.p0:
+            self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
