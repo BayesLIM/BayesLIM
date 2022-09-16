@@ -1520,9 +1520,9 @@ class LinearModel:
         Push items to new device
         """
         dtype = isinstance(device, torch.dtype)
-        self.A = utils.push(self.A, device)
+        self.A = push(self.A, device)
         if self.coeff is not None:
-            self.coeff = utils.push(self.coeff, device)
+            self.coeff = push(self.coeff, device)
         if not dtype: self.device = device
 
 
@@ -2027,7 +2027,7 @@ class PixInterp:
         for k in self.interp_cache:
             cache = self.interp_cache[k]
             self.interp_cache[k] = (cache[0].to(device),
-                                    utils.push(cache[1], device))
+                                    push(cache[1], device))
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,

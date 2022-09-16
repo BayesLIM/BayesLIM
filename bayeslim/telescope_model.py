@@ -441,8 +441,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
         dtype = isinstance(device, torch.dtype)
         if dtype:
             self.antpos = utils.push(self.antpos, device)
-        if utils.device(device) != utils.device('cpu'):
-            self['antpos'] = self.antpos.pin_memory()
+        else:
+            if utils.device(device) != utils.device('cpu'):
+                self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)
         self.freqs = self.freqs.to(device)
