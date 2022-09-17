@@ -489,9 +489,9 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
             else:
                 D = torch.inverse(Dinv)
 
-            # apply D to un-normalized xhat
-            xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
-                            D.to(xhat.dtype), xhat)
+        # apply D to un-normalized xhat
+        xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
+                        D.to(xhat.dtype), xhat)
 
     elif norm == 'diag':
         if D is None:
