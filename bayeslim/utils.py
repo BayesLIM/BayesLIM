@@ -665,9 +665,9 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
     return H
 
 
-def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
-              theta_min=None, theta_max=None, phi_max=None,
-              history='', overwrite=False):
+def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None,
+              alm_mult=None, theta_min=None, theta_max=None,
+              phi_max=None, history='', overwrite=False):
     """
     Write a Ylm basis to HDF5 file
 
@@ -685,6 +685,10 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
         Ylm degree l and order m of len Ncoeff
     norm : array, optional
         Normalization (Ncoeff,) divisor for each Ylm mode
+        when computing them (see normalize_Ylm)
+    D : array, optional
+        pre-computed least squares normalization matrix
+        of shape (Ncoeff, Ncoeff), where D = (A.T Ninv A)^-1
     alm_mult : array, optional
         alm coefficient multiplicative factor when
         taking forward transform of shape (Ncoeff,)
@@ -705,6 +709,8 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, alm_mult=None,
             f.create_dataset('angs', data=np.array(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
+            if D is not None:
+                f.create_dataset('D', data=D)
             if norm is not None:
                 f.create_dataset('norm', data=norm)
             if alm_mult is not None:
@@ -814,8 +820,13 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             norm = norm[keep]
         if read_data:
             Ylm = f['Ylm'][keep, :]
+            if 'D' in f:
+                D = f['D'][keep, :][:, keep]
+            else:
+                D = None
         else:
             Ylm = None
+            D = None
 
         if alm_mult is not None:
             info['alm_mult'] = torch.as_tensor(alm_mult)
@@ -862,9 +873,14 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             info['alm_mult'][:] = 1.0
 
     if read_data:
-        Ylm = torch.tensor(Ylm, device=device)
+        Ylm = torch.as_tensor(Ylm, device=device)
+        if D is not None:
+            D = torch.as_tensor(D, device=device)
         if cast is not None:
             Ylm = Ylm.to(cast)
+            D = D.to(cast)
+
+    info['D'] = D
 
     return Ylm, angs, l, m, info
 

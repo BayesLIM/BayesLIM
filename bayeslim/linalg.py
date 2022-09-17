@@ -363,7 +363,7 @@ def cmatmul(a, b):
 
 
 def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
-                  eps=0, rcond=1e-15, hermitian=True):
+                  eps=0, rcond=1e-15, hermitian=True, D=None, preconj=False):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -415,6 +415,18 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         rcond parameter for taking pseudo-inverse
     hermitian : bool, optional
         Hermitian parameter for pseudo-inverse
+    D : tensor, optional
+        Normalization matrix to use instead of
+        the one created internally, dictated by
+        choice of norm. D must still conform
+        to expected shape given norm.
+    preconj : bool, optional
+        Assume A has already been pre-conjugated,
+        in which case Aconj = A and A = A.conj().
+        This is only helpful when pre-computing
+        D (such that A.T.conj() A is not needed)
+        and passing a large A on the GPU where
+        both A and A.conj() cannot fit in memory.
 
     Returns
     -------
@@ -444,51 +456,69 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
             y = Ninv.reshape(shape) * y
 
     # get A.T y: un-normalized hat(x)
+    if preconj:
+        Aconj = A
+    else:
+        Aconj = A.conj()
     xhat = torch.einsum("{},{}->{}".format(A_ein, y_ein, y_ein.replace('i', 'j')),
-                        A.conj(), y)
+                        Aconj, y)
 
     # compute normalization matrix: (A.T Ninv A)^-1, multiply it into xhat
     if norm == 'inv':
-        # full invert to get D
-        if Ninv is None:
-            Dinv = torch.einsum("ij,ik->jk", A.conj(), A)
-        else:
-            if Ninv.ndim == 2:
-                # Ninv is a matrix
-                Dinv = torch.einsum("ij,il,lk->jk", A.conj(), Ninv, A)
+        if D is None:
+            if preconj:
+                A = A.conj()
+            # full invert to get D
+            if Ninv is None:
+                Dinv = torch.einsum("ij,ik->jk", Aconj, A)
             else:
-                # Ninv is diagonal
-                Dinv = torch.einsum("ij,i,ik->jk", A.conj(), Ninv, A)
-        # add regularization if desired
-        if eps > 0:
-            Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
-        if torch.is_complex(Dinv):
-            Dinv = Dinv.real
-        # invert
-        if pinv:
-            D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
-        else:
-            D = torch.inverse(Dinv)
-        xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
+                if Ninv.ndim == 2:
+                    # Ninv is a matrix
+                    Dinv = torch.einsum("ij,il,lk->jk", Aconj, Ninv, A)
+                else:
+                    # Ninv is diagonal
+                    Dinv = torch.einsum("ij,i,ik->jk", Aconj, Ninv, A)
+            # add regularization if desired
+            if eps > 0:
+                Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
+            if torch.is_complex(Dinv):
+                Dinv = Dinv.real
+            # invert
+            if pinv:
+                D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
+            else:
+                D = torch.inverse(Dinv)
+
+            # apply D to un-normalized xhat
+            xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
                             D.to(xhat.dtype), xhat)
+
     elif norm == 'diag':
-        # just invert diagonal to get D
-        if Ninv is None:
-            Dinv = (torch.abs(A)**2).sum(dim=0)
-        else:
-            if Ninv.ndim == 2:
-                # Ninv is a matrix
-                Dinv = torch.einsum("ij,il,lk->jk", A.conj(), Ninv, A)
-                Dinv = torch.diag(Dinv)
+        if D is None:
+            if preconj:
+                A = A.conj()
+            # just invert diagonal to get D
+            if Ninv is None:
+                Dinv = (torch.abs(A)**2).sum(dim=0)
             else:
-                # Ninv is diagonal
-                Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0)
-        if torch.is_complex(Dinv):
-            Dinv = Dinv.real
-        D = 1 / Dinv
-        shape = [1 for i in range(xhat.ndim)]
-        shape[dim] = len(D)
-        xhat = D.reshape(shape) * xhat
+                if Ninv.ndim == 2:
+                    # Ninv is a matrix
+                    Dinv = torch.einsum("ij,il,lk->jk", Aconj, Ninv, A)
+                    Dinv = torch.diag(Dinv)
+                else:
+                    # Ninv is diagonal
+                    Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0)
+            if torch.is_complex(Dinv):
+                Dinv = Dinv.real
+            D = 1 / Dinv
+
+        # apply D to un-normalized xhat
+        if D.ndim == 1:
+            shape = [1 for i in range(xhat.ndim)]
+            shape[dim] = len(D)
+            D = D.reshape(shape)
+        xhat = D * xhat
+
     else:
         # no normalization
         D = torch.ones(A.shape[1])
