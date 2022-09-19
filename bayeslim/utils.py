@@ -665,7 +665,7 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
     return H
 
 
-def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None,
+def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
               alm_mult=None, theta_min=None, theta_max=None,
               phi_max=None, history='', overwrite=False):
     """
@@ -689,6 +689,9 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None,
     D : array, optional
         pre-computed least squares normalization matrix
         of shape (Ncoeff, Ncoeff), where D = (A.T Ninv A)^-1
+    Dinv : array, optional
+        This is the inner product of Ylm of shape (Ncoeff, Ncoeff),
+        optionally weighted by Ninv.
     alm_mult : array, optional
         alm coefficient multiplicative factor when
         taking forward transform of shape (Ncoeff,)
@@ -711,6 +714,8 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None,
             f.create_dataset('m', data=m)
             if D is not None:
                 f.create_dataset('D', data=D)
+            if Dinv is not None:
+                f.create_dataset('Dinv', data=Dinv)
             if norm is not None:
                 f.create_dataset('norm', data=norm)
             if alm_mult is not None:
@@ -824,9 +829,14 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
                 D = f['D'][keep, :][:, keep]
             else:
                 D = None
+            if 'Dinv' in f:
+                Dinv = f['Dinv'][keep, :][:, keep]
+            else:
+                Dinv = None
         else:
             Ylm = None
             D = None
+            Dinv = None
 
         if alm_mult is not None:
             info['alm_mult'] = torch.as_tensor(alm_mult)
@@ -876,11 +886,15 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         Ylm = torch.as_tensor(Ylm, device=device)
         if D is not None:
             D = torch.as_tensor(D, device=device)
+        if Dinv is not None:
+            Dinv = torch.as_tensor(Dinv, device=device)
         if cast is not None:
             Ylm = Ylm.to(cast)
             D = D.to(cast)
+            Dinv = Dinv.to(cast)
 
     info['D'] = D
+    info['Dinv'] = Dinv
 
     return Ylm, angs, l, m, info
 
