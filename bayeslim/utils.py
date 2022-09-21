@@ -338,7 +338,11 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
 def _gen_sph2pix_multiproc(job):
     (l, m), args, kwargs = job
     Y, norm, alm_mult = gen_sph2pix(*args, **kwargs)
-    Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
+    if isinstance(Y, tuple):
+        # this is separate_variables
+        Ydict = {(_l, _m): (Y[0][i], Y[1][i]) for i, (_l, _m) in enumerate(zip(l, m))}        
+    else:
+        Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
     return Ydict, norm, alm_mult
 
 
@@ -392,9 +396,6 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
     theta_crit : float, optional
         For method == 'stripe' or 'cap', this is a theta
         boundary [radians] of the mask.
-    real_field : bool, optional
-        If True, treat sky as real-valued
-        so truncate negative m values (used for lmax).
     Nproc : int, optional
         If not None, this starts multiprocessing mode, and
         specifies the number of independent processes.
@@ -484,12 +485,17 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
         else:
             T = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
             P = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+            Y = (T, P)
         norm, alm_mult = [], []
         for (Ydict, nm, am) in output:
             for k in Ydict:
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
-                Y[index] = Ydict[k].to(device)
+                if separate_variables:
+                    Y[0][index] = Ydict[k][0].to(device)
+                    Y[1][index] = Ydict[k][1].to(device)
+                else:
+                    Y[index] = Ydict[k].to(device)
             alm_mult.extend(am.numpy())
             norm.extend(nm.numpy())
         alm_mult = torch.as_tensor(alm_mult, dtype=_float())
@@ -1618,6 +1624,7 @@ class AlmModel:
             if separate_variables = False.
             Otherwise, compute the full Ylm and perform both
             transforms simultaneously.
+        comp_params
         """
         self.l, self.m = l, m
         self.Ncoeff = len(l)
@@ -1686,6 +1693,15 @@ class AlmModel:
         return self.forward(params)
 
     def forward(self, params):
+        # convert params to complex if needed
+        if self.separate_variables:
+            if torch.is_complex(self.Phi) and not torch.is_complex(params):
+                params = viewcomp(params)
+        else:
+            if torch.is_complex(self.Ylm) and not torch.is_complex(params):
+                params = viewcomp(params)
+
+        # multiply by alm_mult if needed
         if self.alm_mult is not None:
             params = params * self.alm_mult
 
