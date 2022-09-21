@@ -342,7 +342,8 @@ def _gen_sph2pix_multiproc(job):
     return Ydict, norm, alm_mult
 
 
-def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
+def gen_sph2pix(theta, phi, l, m, separate_variables=False,
+                method='sphere', theta_crit=None,
                 Nproc=None, Ntask=10, device=None, high_prec=True,
                 bc_type=2, real=False, m_phasor=False,
                 renorm=False, **norm_kwargs):
@@ -379,6 +380,11 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
         Integer or float array of spherical harmonic l modes
     m : array_like
         Integer array of spherical harmonic m modes
+    separate_variables : bool, optional
+        If True, separate polar and azimuthal transforms
+        into Theta and Phi matrices. Note orthonorm is 
+        put into Theta. Otherwise, compute one single Ylm
+        transform matrix that performs both simultaneously.
     method : str, optional
         Spherical harmonic mode ['sphere', 'stripe', 'cap']
         For 'sphere', l modes are integer
@@ -429,7 +435,10 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
     -------
     Ylm : tensor
         An (Ncoeff, Npix) tensor encoding a spherical
-        harmonic transform from a_lm -> map
+        harmonic transform from a_lm -> map.
+        If separate_variables, this is actually a tuple
+        holding (Theta, Phi), each of which are of shape
+        (Ncoeff, Npix)
     norm : tensor
         Normalization (Ncoeff,) divisor for each Ylm mode
     alm_mult : tensor
@@ -454,7 +463,8 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
             args = (theta, phi, _l, _m)
-            kwgs = dict(method=method, theta_crit=theta_crit,
+            kwgs = dict(separate_variables=separate_variables,
+                        method=method, theta_crit=theta_crit,
                         high_prec=high_prec, m_phasor=m_phasor,
                         renorm=renorm, bc_type=bc_type, real=real)
             kwgs.update(norm_kwargs)
@@ -469,7 +479,11 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
             pool.join()
 
         # combine
-        Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+        if separate_variables:
+            Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+        else:
+            T = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+            P = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
         norm, alm_mult = [], []
         for (Ydict, nm, am) in output:
             for k in Ydict:
@@ -512,25 +526,28 @@ def gen_sph2pix(theta, phi, l, m, method='sphere', theta_crit=None,
     # compute azimuthal fourier term
     Phi = np.exp(1j * m * phi)
 
-    # combine into spherical harmonic
-    Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
-
     # apply additional m phasor
     if m_phasor:
-        Y *= np.exp(1j * phi)
+        Phi *= np.exp(1j * phi)
 
     # transform to real if needed
     if real:
-        Y = Y.real
+        Phi = Phi.real
+
+    if separate_variables:
+        Y = (H, Phi)
+    else:
+        # combine into spherical harmonic
+        Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
 
     if renorm:
         norm_kwargs['theta'] = theta
         Y, norm = normalize_Ylm(Y, **norm_kwargs)
     else:
-        norm = torch.ones(len(Y))
+        norm = torch.ones(len(l))
 
     # get alm mult
-    alm_mult = torch.ones(len(Y), dtype=_float())
+    alm_mult = torch.ones(len(l), dtype=_float())
     if not np.any(m < 0) and not real:
         alm_mult[m.ravel() > 0] *= 2
     if m_phasor and not real:
@@ -550,7 +567,9 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
     ----------
     Ylm : tensor
         Forward model tensor of shape (Ncoeff, Npix)
-        encoding transfrom from a_lm -> map
+        encoding transfrom from a_lm -> map.
+        Can also be a tuple of two tensors (Theta, Phi)
+        if generated with separate_variables = True.
     norm : tensor, optional
         (Ncoeff,) shaped tensor. Divide Ylm by norm along
         its 0th axis. Supercedes all other kwargs.
@@ -580,20 +599,29 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
         Computed normalization (divisor of input Ylm)
     """
     if norm is None:
+        if isinstance(Ylm, (list, tuple)):
+            Y = Ylm[0] * Ylm[1]
+        else:
+            Y = Ylm
         if renorm_idx is None:
             renorm_idx = slice(None)
         if pxarea is None:
             pxarea = 1.0
         if hpix:
-            pxarea = torch.as_tensor([pxarea], device=Ylm.device)[None, :]
+            pxarea = torch.as_tensor([pxarea], device=Y.device)[None, :]
         else:
             if theta is None or dtheta is None or dphi is None:
-                pxarea = torch.as_tensor([1.0], device=Ylm.device)[None, :]
+                pxarea = torch.as_tensor([1.0], device=Y.device)[None, :]
             else:
-                pxarea = torch.as_tensor(np.sin(theta) * dtheta * dphi, device=Ylm.device)[None, :]
-        norm = torch.sqrt(torch.sum((torch.abs(Ylm)**2 * pxarea)[:, renorm_idx], axis=1))
+                pxarea = torch.as_tensor(np.sin(theta) * dtheta * dphi, device=Y.device)[None, :]
+        norm = torch.sqrt(torch.sum((torch.abs(Y)**2 * pxarea)[:, renorm_idx], axis=1))
 
-    return Ylm / norm[:, None], norm
+    if isinstance(Ylm, (list, tuple)):
+        Ylm = (Ylm[0] / norm[:, None], Ylm[1])
+    else:
+        Ylm = Ylm / norm[:, None]
+
+    return Ylm, norm
 
 
 def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv=False):
@@ -660,7 +688,6 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
 
     else:
         H = P
-
 
     return H
 
@@ -1553,6 +1580,188 @@ class LinearModel:
         self.A = push(self.A, device)
         if self.coeff is not None:
             self.coeff = push(self.coeff, device)
+        if not dtype: self.device = device
+
+
+class AlmModel:
+    """
+    A general purpose spherical harmonic forward model
+
+    f(theta, phi) = Sum_lm Y_lm(theta, phi) * a_lm
+
+    The forward call takes a params tensor of shape
+    (..., Ncoeff) and returns a map tensor of shape (..., Npix)
+    """
+    def __init__(self, l, m, theta, phi, separate_variables=False):
+        """
+        Parameters
+        ----------
+        l : array
+            holds float "L" degrees of shape (Ncoeff,)
+        m : array
+            holds float "M" orders of shape (Ncoeff,)
+        theta : array
+            Polar (co-latitude) angles in radians
+            of shape (Npix,)
+        phi : array
+            Azimuthal (longitude) angles in radians
+            of shape (Npix,), with a start convention
+            of North of East.
+        separate_variables : bool, optional
+            If True, assume that theta and phi are sampled on a
+            uniform rectangular grid, in which case theta and phi
+            represent the unique, monotonically increasing grid values,
+            stored as self.theta_grid and self.phi_grid, and theta and phi
+            are converted to their full array shape
+            as np.meshgrid(phi, theta).ravel().
+            This can reduce memory overhead by over OOM.
+            if separate_variables = False.
+            Otherwise, compute the full Ylm and perform both
+            transforms simultaneously.
+        """
+        self.l, self.m = l, m
+        self.Ncoeff = len(l)
+        self.separate_variables = separate_variables
+        self.theta, self.phi = theta, phi
+        self.Npix = len(theta)
+        self.device = None
+        if separate_variables:
+            phi_arr, theta_arr = np.meshgrid(phi, theta)
+            self.phi = phi_arr.ravel()
+            self.theta = theta_arr.ravel()
+            self.phi_grid = phi
+            self.theta_grid = theta
+            self.Nphi, self.Ntheta = len(phi), len(theta)
+            self.Npix = len(self.theta)
+
+    def setup_forward(self, Theta=None, Phi=None, Ylm=None,
+                      alm_mult=None, **kwargs):
+        """
+        Setup forward transform matrices.
+        Sets self.Theta, self.Phi, self.Ylm, self.alm_mult
+
+        Parameters
+        ----------
+        Theta : tensor, optional
+            Polar function (associated Legendre poly)
+            to use if self.separate_variables.
+            Default is to generate this given kwargs.
+        Phi : tensor, optional
+            Azimuthal function (complex exponential)
+            to use if self.separate_variables.
+            Default is to generate this given kwargs.
+        Ylm : tensor, optional
+            Full polar and azimuthal transform matrix
+            if not self.separate_variables.
+            Default is to generate this given kwargs.
+        alm_mult : tensor, optional
+            Multiply parameter tensor by these coefficients
+            before taking forward transform.
+        kwargs : dict, optional
+            Kwargs to pass to gen_sph2pix()
+        """
+        if self.separate_variables:
+            # generate polar and azimuthal transforms if needed
+            if Theta is None or Phi is None:
+                Ylm, norm, alm_mult = gen_sph2pix(self.theta_grid, self.phi_grid,
+                                                  self.l, self.m,
+                                                  separate_variables=True,
+                                                  device=self.device,
+                                                  **kwargs)
+            self.Theta = Ylm[0] if Theta is None else Theta
+            self.Phi = Ylm[1] if Phi is None else Phi
+            self.alm_mult = alm_mult
+
+        else:
+            # generate full forward transform if needed
+            if Ylm is None:
+                Ylm, norm, alm_mult = gen_sph2pix(self.theta, self.phi,
+                                                  self.l, self.m,
+                                                  device=self.device,
+                                                  **kwargs)
+            self.Ylm = Ylm
+            self.alm_mult = alm_mult
+
+    def __call__(self, params):
+        return self.forward(params)
+
+    def forward(self, params):
+        if self.alm_mult is not None:
+            params = params * self.alm_mult
+
+        if self.separate_variables:
+            # assume Theta and Phi are separable: (..., Ncoeff)
+            # first broadcast self.Theta -> (..., Ncoeff, Ntheta)
+            params = torch.einsum("ct,...c->...ct", self.Theta, params)
+            # dot product into Phi --> (..., Nphi, Ntheta)
+            params = torch.einsum("cp,...ct->...pt", self.Phi, params)
+            # unravel to (..., Npix)
+            shape = params.shape[:-2] + [self.Nphi, self.Ntheta]
+            return params.reshape(shape)
+
+        else:
+            # full transform
+            return torch.einsum("...i,ij->...j", params, self.Ylm)
+
+    def least_squares(self, y, cache_D=False, **kwargs):
+        """
+        Compute a least squares estimate of the params
+        tensor given observations of shape (..., Npix).
+        
+        If self.separate_variables, will take outer-product
+        of self.Theta and self.Phi to form the full Ylm
+        matrix in order to compute its inverse,
+        which can be memory intensive.
+
+        Parameters
+        ----------
+        y : tensor
+            Map tensor of shape (..., Npix)
+        cache_D : bool, optional
+            If True, store the normalization D matrix
+            as self._D to be used in future least_squares
+            calls.
+        kwargs : dict
+            kwargs to pass to linalg.least_squares
+
+        Returns
+        -------
+        tensor
+        """
+        from bayeslim.linalg import least_squares
+        if self.separate_variables:
+            # take outer product to form Ylm
+            Ylm = torch.einsum("cp,ct->cpt", self.Phi, self.Theta)
+            Ylm = Ylm.view(-1, self.Npix)
+        else:
+            Ylm = self.Ylm
+
+        # get D if cached
+        if hasattr(self, '_D') and 'D' not in kwargs:
+            kwargs['D'] = self._D
+
+        # compute least squares
+        params, D = least_squares(Ylm, y, dim=-1, pretran=True, **kwargs)
+
+        # store D
+        if cache_D:
+            self._D = D
+
+        return params
+
+    def push(self, device):
+        """
+        Push items to new device
+        """
+        dtype = isinstance(device, torch.dtype)
+        if hasattr(self, 'Ylm'):
+            self.Ylm = push(self.Ylm, device)
+        if hasattr(self, 'Theta'):
+            self.Theta = push(self.Theta, device)
+        if hasattr(self, 'Phi'):
+            self.Phi = push(self.Phi, device)
+        if hasattr(self, 'alm_mult'):
+            self.alm_mult = push(self.alm_mult, device)
         if not dtype: self.device = device
 
 
