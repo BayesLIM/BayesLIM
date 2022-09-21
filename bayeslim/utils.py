@@ -1692,9 +1692,9 @@ class AlmModel:
         if self.separate_variables:
             # assume Theta and Phi are separable: (..., Ncoeff)
             # first broadcast self.Theta -> (..., Ncoeff, Ntheta)
-            params = torch.einsum("ct,...c->...ct", self.Theta, params)
+            params = torch.einsum("ct,...c->...tc", self.Theta, params)
             # dot product into Phi --> (..., Nphi, Ntheta)
-            params = torch.einsum("cp,...ct->...pt", self.Phi, params)
+            params = torch.einsum("...tc,cp->...tp", params, self.Phi)
             # unravel to (..., Npix)
             shape = params.shape[:-2] + (self.Npix,)
             return params.reshape(shape)
