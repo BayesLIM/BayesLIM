@@ -721,7 +721,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     import h5py
     with h5py.File(fname, 'r') as f:
         # load angles and all modes
-        angs = f['angs'][()]`
+        angs = f['angs'][()]
         l, m = f['l'][()], f['m'][()]
         if 'norm' in f:
             norm = f['norm'][()]
@@ -1227,35 +1227,49 @@ class AlmModel:
             self.Ylm = Ylm
             self.alm_mult = alm_mult
 
-    def __call__(self, params):
-        return self.forward(params)
+    def __call__(self, params, **kwargs):
+        return self.forward(params, **kwargs)
 
-    def forward(self, params):
+    def forward(self, params, Theta=None, Phi=None, Ylm=None, alm_mult=None):
+        """
+        Perform forward model from a_lm -> f(theta, phi)
+
+        Will use transform matrices if passed, otherwise will
+        use matrices attached to self.
+        """
+        # get relevant transform matrices
+        alm_mult = self.alm_mult if alm_mult is None else alm_mult
+        if self.separate_variables:
+            Theta = self.Theta if Theta is None else Theta
+            Phi = self.Phi if Phi is None else Phi
+        else:
+            Ylm = self.Ylm if Ylm is None else Ylm
+
         # convert params to complex if needed
         if self.separate_variables:
-            if torch.is_complex(self.Phi) and not torch.is_complex(params):
+            if torch.is_complex(Phi) and not torch.is_complex(params):
                 params = utils.viewcomp(params)
         else:
-            if torch.is_complex(self.Ylm) and not torch.is_complex(params):
+            if torch.is_complex(Ylm) and not torch.is_complex(params):
                 params = utils.viewcomp(params)
 
         # multiply by alm_mult if needed
-        if self.alm_mult is not None:
-            params = params * self.alm_mult
+        if alm_mult is not None:
+            params = params * alm_mult
 
         if self.separate_variables:
             # assume Theta and Phi are separable: (..., Ncoeff)
             # first broadcast self.Theta -> (..., Ncoeff, Ntheta)
-            params = torch.einsum("ct,...c->...tc", self.Theta, params)
+            params = torch.einsum("ct,...c->...tc", Theta, params)
             # dot product into Phi --> (..., Nphi, Ntheta)
-            params = torch.einsum("...tc,cp->...tp", params, self.Phi)
+            params = torch.einsum("...tc,cp->...tp", params, Phi)
             # unravel to (..., Npix)
-            shape = params.shape[:-2] + (self.Npix,)
+            shape = params.shape[:-2] + (Theta.shape[1] * Phi.shape[1],)
             return params.reshape(shape)
 
         else:
             # full transform
-            return torch.einsum("...i,ij->...j", params, self.Ylm)
+            return torch.einsum("...i,ij->...j", params, Ylm)
 
     def least_squares(self, y, cache_D=False, **kwargs):
         """
