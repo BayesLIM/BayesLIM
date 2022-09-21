@@ -8,7 +8,7 @@ import warnings
 from scipy import interpolate
 import copy
 
-from . import utils, linalg, special
+from . import utils, linalg, special, sph_harm
 
 
 D2R = utils.D2R
@@ -1105,10 +1105,10 @@ class YlmResponse(PixelResponse):
                 alm_mult = None
         else:
             # generate exact Y_lm, may take a while
-            Ylm, norm, alm_mult = utils.gen_sph2pix(zen * D2R, az * D2R,
-                                                    self.l, self.m,
-                                                    device=self.device,
-                                                    **self.Ylm_kwargs)
+            Ylm, norm, alm_mult = sph_harm.gen_sph2pix(zen * D2R, az * D2R,
+                                                       self.l, self.m,
+                                                       device=self.device,
+                                                       **self.Ylm_kwargs)
             # store it
             self.Ylm_cache[h] = (Ylm, alm_mult)
             self.ang_cache[h] = (zen, az)

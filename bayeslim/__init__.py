@@ -17,6 +17,7 @@ from . import io
 from . import linalg
 from . import paramdict
 from . import fft
+from . import sph_harm
 
 from .paramdict import ParamDict
 from .dataset import VisData, Dataset

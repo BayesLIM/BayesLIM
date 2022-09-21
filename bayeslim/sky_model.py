@@ -6,7 +6,7 @@ import numpy as np
 from scipy import special, interpolate
 import copy
 
-from . import utils, cosmology, dataset
+from . import utils, cosmology, dataset, sph_harm
 from .utils import _float, _cfloat
 
 
@@ -598,7 +598,7 @@ class PixelSkyResponse:
                 self.kbins = freq_kwargs['kbins']
 
             else:
-                gln, kbins = utils.gen_bessel2freq(freq_kwargs['l'],
+                gln, kbins = sph_harm.gen_bessel2freq(freq_kwargs['l'],
                                                   utils.tensor2numpy(self.freqs), self.cosmo,
                                                   kmax=freq_kwargs.get('kmax'),
                                                   decimate=freq_kwargs.get('decimate', True),
@@ -621,7 +621,7 @@ class PixelSkyResponse:
             elif not hasattr(self, 'Ylm'):
                 # if Ylm is not already defined and not in dict, create it
                 # warning: this can be *VERY* slow for large ang_pix and l,m arrays
-                self.Ylm, _, self.alm_mult = utils.gen_sph2pix(spatial_kwargs['theta'] * D2R,
+                self.Ylm, _, self.alm_mult = sph_harm.gen_sph2pix(spatial_kwargs['theta'] * D2R,
                                              spatial_kwargs['phi'] * D2R,
                                              spatial_kwargs['l'],
                                              spatial_kwargs['m'],
