@@ -1668,8 +1668,8 @@ class AlmModel:
                                                   separate_variables=True,
                                                   device=self.device,
                                                   **kwargs)
-            self.Theta = Ylm[0] if Theta is None else Theta
-            self.Phi = Ylm[1] if Phi is None else Phi
+            self.Theta = Ylm[0] if Theta is None else torch.as_tensor(Theta)
+            self.Phi = Ylm[1] if Phi is None else torch.as_tensor(Phi)
             self.alm_mult = alm_mult
 
         else:
@@ -1696,7 +1696,7 @@ class AlmModel:
             # dot product into Phi --> (..., Nphi, Ntheta)
             params = torch.einsum("cp,...ct->...pt", self.Phi, params)
             # unravel to (..., Npix)
-            shape = params.shape[:-2] + [self.Nphi, self.Ntheta]
+            shape = params.shape[:-2] + (self.Nphi, self.Ntheta)
             return params.reshape(shape)
 
         else:
@@ -1760,7 +1760,7 @@ class AlmModel:
             self.Theta = push(self.Theta, device)
         if hasattr(self, 'Phi'):
             self.Phi = push(self.Phi, device)
-        if hasattr(self, 'alm_mult'):
+        if hasattr(self, 'alm_mult') and self.alm_mult is not None:
             self.alm_mult = push(self.alm_mult, device)
         if not dtype: self.device = device
 
