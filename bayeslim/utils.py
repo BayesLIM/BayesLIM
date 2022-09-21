@@ -1696,7 +1696,7 @@ class AlmModel:
             # dot product into Phi --> (..., Nphi, Ntheta)
             params = torch.einsum("cp,...ct->...pt", self.Phi, params)
             # unravel to (..., Npix)
-            shape = params.shape[:-2] + (self.Nphi, self.Ntheta)
+            shape = params.shape[:-2] + (self.Npix,)
             return params.reshape(shape)
 
         else:
