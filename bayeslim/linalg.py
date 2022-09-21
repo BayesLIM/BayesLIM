@@ -363,7 +363,8 @@ def cmatmul(a, b):
 
 
 def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
-                  eps=0, rcond=1e-15, hermitian=True, D=None, preconj=False):
+                  eps=0, rcond=1e-15, hermitian=True, D=None,
+                  preconj=False, pretran=False):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -427,6 +428,10 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         D (such that A.T.conj() A is not needed)
         and passing a large A on the GPU where
         both A and A.conj() cannot fit in memory.
+    pretran : bool, optional
+        Assume A has been pre-transposed,
+        i.e. instead of shape (Nsamples. Nvariables)
+        it is (Nvariables, Nsamples).
 
     Returns
     -------
@@ -438,7 +443,8 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
     """
     assert y.ndim <= 8
     # sum over 'i' for y tensor
-    A_ein = 'ij'
+    A_ein = 'ij' if not pretran else 'ji'
+    A_ein2 = A_ein.replace('j', 'k')
     y_ein = ['a','b','c','d','e','f','g','h'][:y.ndim]
     y_ein[dim] = 'i'
     y_ein = ''.join(y_ein)
@@ -470,14 +476,17 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                 A = A.conj()
             # full invert to get D
             if Ninv is None:
-                Dinv = torch.einsum("ij,ik->jk", Aconj, A)
+                Dinv = torch.einsum("{},{}->jk".format(A_ein, A_ein2),
+                                    Aconj, A)
             else:
                 if Ninv.ndim == 2:
                     # Ninv is a matrix
-                    Dinv = torch.einsum("ij,il,lk->jk", Aconj, Ninv, A)
+                    Dinv = torch.einsum("{},il,{}->jk".format(A_ein, A_ein2.replace('i', 'l')),
+                                        Aconj, Ninv, A)
                 else:
                     # Ninv is diagonal
-                    Dinv = torch.einsum("ij,i,ik->jk", Aconj, Ninv, A)
+                    Dinv = torch.einsum("{},i,{}->jk".format(A_ein, A_ein2),
+                                        Aconj, Ninv, A)
             # add regularization if desired
             if eps > 0:
                 Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
@@ -499,15 +508,16 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                 A = A.conj()
             # just invert diagonal to get D
             if Ninv is None:
-                Dinv = (torch.abs(A)**2).sum(dim=0)
+                Dinv = (torch.abs(A)**2).sum(dim=0 if not pretran else 1)
             else:
                 if Ninv.ndim == 2:
                     # Ninv is a matrix
-                    Dinv = torch.einsum("ij,il,lk->jk", Aconj, Ninv, A)
+                    Dinv = torch.einsum("{},il,{}->jk".format(A_ein, A_ein2.replace('i', 'l')),
+                                        Aconj, Ninv, A)
                     Dinv = torch.diag(Dinv)
                 else:
                     # Ninv is diagonal
-                    Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0)
+                    Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0 if not pretran else 1)
             if torch.is_complex(Dinv):
                 Dinv = Dinv.real
             D = 1 / Dinv
@@ -521,7 +531,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
 
     else:
         # no normalization
-        D = torch.ones(A.shape[1])
+        D = torch.ones(A.shape[1 if not pretran else 0])
 
     ### LEGACY
     # Note that we actually solve the transpose of x
