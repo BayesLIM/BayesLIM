@@ -1200,7 +1200,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # PixelResponse push
         super(YlmResponse, self).push(device)
         # AlmModel push
-        super(utils.PixelResponse, self).push(device)
+        super(utils.PixInterp, self).push(device)
 
     # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):
