@@ -417,23 +417,23 @@ class RIME(utils.Module):
         for i in range(self.Nbatch):
             self.set_batch_idx(i)
             vis = self.forward(i)
-            vis_times.append(vis)
+            vis_bls.append(vis)
             if self.Nbatch == 1:
-                vis_bls.append(vis)
-            # if you've reached the end of the time minibatch axis, concatenate
-            elif self.time_group_id == self.Ntime_groups-1:
+                vis_times.append(vis)
+            # if you've reached the end of this bl minibatch axis, concatenate
+            elif self.bl_group_id == self.Nbl_groups-1:
                 if concat:
-                    vis = dataset.concat_VisData(vis_times, 'time')
-                    vis_bls.append(vis)
+                    vis = dataset.concat_VisData(vis_times, 'bl')
+                    vis_times.append(vis)
                 else:
-                    vis_bls.extend(vis_times)
-                vis_times = []
+                    vis_times.extend(vis_bls)
+                vis_bls = []
 
         # concatenate over baselines
         if concat:
-            vis = dataset.concat_VisData(vis_bls, 'bl')
+            vis = dataset.concat_VisData(vis_bls, 'time')
         else:
-            vis = vis_bls
+            vis = vis_times
 
         self.set_batch_idx(0)
 
