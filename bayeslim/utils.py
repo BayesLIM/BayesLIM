@@ -882,11 +882,7 @@ class PixInterp:
         if depth is None:
             self.interp_cache = {}
         else:
-            cache_len = len(self.interp_cache)
-            if cache_len > depth:
-                keys = list(self.interp_cache.keys())
-                for k in keys[:cache_len - depth]:
-                    del self.interp_cache[k]
+            clear_cache_depth(self.interp_cache, depth)
 
     def get_interp(self, zen, az):
         """
@@ -1016,6 +1012,27 @@ class PixInterp:
             cache = self.interp_cache[k]
             self.interp_cache[k] = (cache[0].to(device),
                                     push(cache[1], device))
+
+
+def clear_cache_depth(cache, depth):
+    """
+    Use FIFO to clear a provided cache (must be ordered dictionary)
+    down to depth. Operates inplace.
+
+    Parameters
+    ----------
+    cache : dict
+        An ordered dict to clear
+    depth : int
+        Number of entries to keep
+    """
+    if depth is None:
+        return
+    cache_len = len(cache)
+    if cache_len > depth:
+        keys = list(cache.keys())
+        for k in keys[:cache_len - depth]:
+            del cache[k]
 
 
 def freq_interp(params, param_freqs, freqs, kind, axis,
