@@ -528,16 +528,18 @@ class PixelSkyResponse:
             These are required kwargs for each option.
             'pixel' : None
             'alm' :
+                'Alm' : AlmModel object, holding all metadata
+                or
+                See kwargs to AlmModel.__init__() and setup_Ylm():
                 l, m : array, holding l, m vaues
                 theta, phi : array, holds co-latitude and azimuth
                     angles [deg] of pixel model, used for generating
-                    Ylm in alm mode
+                    Ylm in alm mode. See AlmModel for details.
                 alm_mult : array, (Ncoeff,)
                 Ylm : tensor, holds (Ncoeff, Npix) Ylm transform
                     matrix. If None, will compute it given l, m
             'linear' : 
                 kwargs to LinearModel()
-
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
             for 'linear' freq_mode, see utils.gen_linear_A()
@@ -613,21 +615,20 @@ class PixelSkyResponse:
 
     def _spatial_setup(self, spatial_kwargs={}):        
         # spatial setup
+        sk = spatial_kwargs
         if self.spatial_mode == 'alm':
-            if 'Ylm' in spatial_kwargs:
-                # assign Ylm to self if present
-                self.Ylm = spatial_kwargs['Ylm']
-                self.alm_mult = spatial_kwargs['alm_mult']
-            elif not hasattr(self, 'Ylm'):
-                # if Ylm is not already defined and not in dict, create it
-                # warning: this can be *VERY* slow for large ang_pix and l,m arrays
-                self.Ylm, _, self.alm_mult = sph_harm.gen_sph2pix(spatial_kwargs['theta'] * D2R,
-                                             spatial_kwargs['phi'] * D2R,
-                                             spatial_kwargs['l'],
-                                             spatial_kwargs['m'],
-                                             device=self.device)
-            self.l, self.m = spatial_kwargs['l'], spatial_kwargs['m']
-            self.theta, self.phi = spatial_kwargs['theta'], spatial_kwargs['phi']
+            if 'Alm' in spatial_kwargs:
+                # check for pre-built Alm
+                self.Alm = spatial_kwargs['Alm']
+            else:
+                # built it now
+                self.Alm = sph_harm.AlmModel(sk['l'], sk['m'],
+                                             separate_variables=sk.get('separate_variables', False),
+                                             default_kw=sk.get('default_kwargs', None))
+                # this attaches self.Alm.Ylm and self.Alm.alm_mult
+                self.Alm.setup_Ylm(sk['theta'], sk['phi'],
+                                   Ylm=sk.get('Ylm', None), alm_mult=sk.get('alm_mult', None),
+                                   cache=False)
 
         elif self.spatial_mode == 'linear':
             skwgs = copy.deepcopy(spatial_kwargs)
@@ -654,15 +655,14 @@ class PixelSkyResponse:
             Sky model of shape (Nstokes, 1, Ndeg, Npix)
         """
         # detect if params needs to be casted into complex
-        if self.comp_params:
-            if not torch.is_complex(params):
-                params = utils.viewcomp(params)
+        if self.comp_params and not torch.is_complex(params):
+            params = utils.viewcomp(params)
 
         if self.spatial_mode == 'pixel':
             return params
 
         elif self.spatial_mode == 'alm':
-            return (params * self.alm_mult) @ self.Ylm
+            return self.Alm(params)
 
         elif self.spatial_mode == 'linear':
             return self.spat_LM(params)
@@ -728,8 +728,7 @@ class PixelSkyResponse:
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
         if self.spatial_mode == 'alm':
-            self.Ylm = utils.push(self.Ylm, device)
-            self.alm_mult = self.alm_mult.to(device)
+            self.Alm.push(device)
         elif self.spatial_mode == 'linear':
             self.spat_LM.push(device)
 

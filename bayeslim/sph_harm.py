@@ -1217,7 +1217,8 @@ class AlmModel:
             # full transform
             return torch.einsum("...i,ij->...j", params, Ylm)
 
-    def setup_angs(self, theta, phi):
+    @staticmethod
+    def setup_angs(theta, phi):
         """
         If separate_variables, takes theta & phi grid points
         and meshes and flattens them. Otherwise return as is.
