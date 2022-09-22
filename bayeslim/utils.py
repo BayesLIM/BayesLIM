@@ -1437,6 +1437,14 @@ class Module(torch.nn.Module):
         else:
             self.response_grad += grad
 
+    def clear_graph_tensors(self):
+        """
+        If any graph tensors are attached to self, use
+        this function to clear them, i.e. del them
+        or set them to None
+        """
+        pass
+
 
 class Sequential(Module):
     """

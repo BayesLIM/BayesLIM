@@ -424,7 +424,10 @@ class PixelBeam(utils.Module):
             if self.priors_out_params is not None:
                 if out_params is None:
                     # we can evaluate prior on PixelResponse beam if mode is interpolate
-                    if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
+                    if hasattr(self.R, 'beam_cache') and self.R.beam_cache is None:
+                        # note that clear_graph_tensors() upon likelhood and prior
+                        # forward calls in optim ensures that beam_cache is not stale
+                        # and also not overwritten for compute = 'post'
                         p = self.params if self.p0 is None else self.params + self.p0
                         self.R.set_beam_cache(p)
                         out_params = self.R.beam_cache
@@ -434,6 +437,15 @@ class PixelBeam(utils.Module):
                         prior_value = prior_value + prior(out_params)
 
             prior_cache[self.name] = prior_value
+
+    def clear_graph_tensors(self):
+        """
+        If any graph tensors are attached to self, use
+        this function to clear them, i.e. del them
+        or set them to None
+        """
+        if hasattr(self.R, 'clear_beam_cache'):
+            self.R.clear_beam_cache()
 
     def freq_interp(self, freqs, kind='linear'):
         """

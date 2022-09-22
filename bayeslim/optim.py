@@ -790,6 +790,14 @@ class LogProb(utils.Module):
 
         # evalute and add prior
         if self.compute in ['post', 'prior']:
+            if self.compute == 'prior':
+                # if compute is prior, clear any attached graph tensors
+                # in all modules such they are regenerated during this
+                # forward call (e.g. beam.R.beam_cache)
+                for mod in self.modules:
+                    mod.clear_graph_tensors()
+
+            # evaluate prior
             prob = prob + self.forward_prior(**kwargs)
 
         self.clear_prior_cache()
