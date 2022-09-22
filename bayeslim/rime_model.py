@@ -41,16 +41,21 @@ class RIME(utils.Module):
                  times, freqs, data_bls=None, device=None, name=None,
                  cache_skycut=True, verbose=False):
         """
-        RIME object. Takes a model
-        of the sky brightness, passes it through
-        a primary beam model (optional) and a
-        fringe model, and then sums
-        across the sky to produce the visibilities.
+        RIME object. Takes a model of the sky brightness,
+        passes it through a primary beam model (optional) and a
+        fringe model, and then sums across the sky to produce
+        the visibilities.
 
         If this is being used only for a forward model (i.e. no gradient
         calculation) you can reduce the memory load by either
         ensuring all params have parameter=False, or by running
         the forward() call in a torch.no_grad() context.
+        You can also save memory for large sky Npixel runs
+        by setting interp_cache_depth = 1 for the beam.
+
+        This can also minibatch across times and bls, with batch order
+        [(time1, bl1), (time1, bl2), (time1, bl3), ...,
+         (time2, bl1), (time2, bl2), (time2, bl3), ...]
 
         Parameters
         ----------
@@ -235,7 +240,7 @@ class RIME(utils.Module):
     def batch_idx(self):
         """Get the current batch index: time_group_id + bl_group_id"""
         if hasattr(self, 'bl_group_id') and hasattr(self, 'time_group_id'):
-            return self.time_group_id + self.bl_group_id * len(self.sim_time_groups)
+            return self.time_group_id * len(self.sim_bl_groups) + self.bl_group_id
         else:
             return None
 
@@ -249,8 +254,8 @@ class RIME(utils.Module):
             Index of current batch from 0 to Nbatch-1
         """
         assert idx < self.Nbatch and idx >= 0
-        self.bl_group_id = int(np.floor(idx / len(self.sim_time_groups)))
-        self.time_group_id = idx % len(self.sim_time_groups)
+        self.time_group_id = int(np.floor(idx / len(self.sim_bl_groups)))
+        self.bl_group_id = idx % len(self.sim_bl_groups)
         self._set_group()
 
     def _set_group(self):
