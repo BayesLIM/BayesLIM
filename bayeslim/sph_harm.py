@@ -1240,7 +1240,7 @@ class AlmModel:
         theta, phi : array
             Samples for each pixel on the sky
         """
-        if separate_variables:
+        if self.separate_variables:
             phi_arr, theta_arr = np.meshgrid(phi, theta)
             phi = phi_arr.ravel()
             theta = theta_arr.ravel()
@@ -1283,7 +1283,7 @@ class AlmModel:
         """
         # set angles
         self.theta, self.phi = theta, phi
-        if separate_variables:
+        if self.separate_variables:
             self.theta_grid, self.phi_grid = theta, phi
             self.theta, phi = self.setup_angs(theta, phi)
 
@@ -1291,7 +1291,7 @@ class AlmModel:
         if Ylm is None:
             kw = copy.deepcopy(self.default_kw)
             kw.update(kwargs)
-            if separate_variables:
+            if self.separate_variables:
                 th, ph = self.theta_grid, self.phi_grid
             else:
                 th, ph = self.theta, self.phi
