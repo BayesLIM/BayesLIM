@@ -583,7 +583,8 @@ class PixelResponse(utils.PixInterp):
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
-                 powerbeam=True, Rchi=None, interp_gpu=False, edge_alpha=None, edge_fov=180):
+                 powerbeam=True, Rchi=None, interp_gpu=False, interp_cache_depth=None,
+                 edge_alpha=None, edge_fov=180):
         """
         Parameters
         ----------
@@ -634,6 +635,8 @@ class PixelResponse(utils.PixInterp):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
+        interp_cache_depth : int, optional
+            Depth of interpolation cache, following FIFO (PixInterp)
         edge_alpha : float, optional
             If not None, this is the alpha parameter of a tukey mask
             for tapering the edge of the beam out to fov / 2 zenith angle.
@@ -644,7 +647,7 @@ class PixelResponse(utils.PixInterp):
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
-                         gpu=interp_gpu)
+                         gpu=interp_gpu, interp_cache_depth=interp_cache_depth)
         self.theta, self.phi = theta, phi
         self.powerbeam = powerbeam
         self.freqs = freqs
