@@ -1065,8 +1065,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(PixInterp, self).__init__(l, m, separate_variables=separate_variables,
-                                        default_kw=Ylm_kwargs)
+        super(utils.PixInterp, self).__init__(l, m, separate_variables=separate_variables,
+                                              default_kw=Ylm_kwargs)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
         self.mode = mode
@@ -1185,8 +1185,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         if self._lm_poly:
             for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
                 self.lm_poly_A[k] = (lm_inds, p_inds, utils.push(A, device))
+        # PixelResponse push
         super(YlmResponse, self).push(device)
-        super(PixelResponse, self).push(device)
+        # AlmModel push
+        super(utils.PixelResponse, self).push(device)
 
     # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):
