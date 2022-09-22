@@ -423,7 +423,7 @@ class RIME(utils.Module):
             # if you've reached the end of this bl minibatch axis, concatenate
             elif self.bl_group_id == self.Nbl_groups-1:
                 if concat:
-                    vis = dataset.concat_VisData(vis_times, 'bl')
+                    vis = dataset.concat_VisData(vis_bls, 'bl')
                     vis_times.append(vis)
                 else:
                     vis_times.extend(vis_bls)
@@ -431,7 +431,7 @@ class RIME(utils.Module):
 
         # concatenate over baselines
         if concat:
-            vis = dataset.concat_VisData(vis_bls, 'time')
+            vis = dataset.concat_VisData(vis_times, 'time')
         else:
             vis = vis_times
 
