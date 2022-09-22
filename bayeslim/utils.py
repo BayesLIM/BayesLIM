@@ -823,7 +823,7 @@ class PixInterp:
     """
     def __init__(self, pixtype, nside=None, interp_mode='nearest',
                  theta_grid=None, phi_grid=None, device=None,
-                 gpu=False, downcast=False):
+                 gpu=False, downcast=False, interp_cache_depth=None):
         """
         Interpolation is a weighted average of nearest neighbors.
         If pixtype is 'healpix', this is bilinear interpolation.
@@ -860,6 +860,9 @@ class PixInterp:
             If True and using gpu, downcast grids to float32
             before sending to GPU for further speedup (with
             slight loss of accuracy)
+        interp_cache_depth : int, optional
+            The number of caches in the interp_cache allowed.
+            Follows first-in, first-out rule. Default is no limit.
         """
         self.pixtype = pixtype
         self.nside = nside
@@ -870,10 +873,20 @@ class PixInterp:
         self.device = device
         self.gpu = gpu
         self.downcast = downcast
+        self.interp_cache_depth = interp_cache_depth
 
-    def clear_cache(self):
-        """Clears interpolation cache"""
-        self.interp_cache = {}
+    def clear_cache(self, depth=None):
+        """Clears interpolation cache.
+        If depth is specified, then use FIFO to
+        clear until depth is reached."""
+        if depth is None:
+            self.interp_cache = {}
+        else:
+            cache_len = len(self.interp_cache)
+            if cache_len > depth:
+                keys = list(self.interp_cache.keys())
+                for k in keys[:cache_len - depth]:
+                    del self.interp_cache[k]
 
     def get_interp(self, zen, az):
         """
@@ -890,7 +903,7 @@ class PixInterp:
             for each entry in zen, az for interpolation
         """
         # get hash
-        h = arr_hash(zen), arr_hash(az)
+        h = (arr_hash(zen), arr_hash(az))
         if h in self.interp_cache:
             # retrieve interpolation if cached
             interp = self.interp_cache[h]
@@ -933,10 +946,15 @@ class PixInterp:
                 Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
                 wgts = Anew @ Ainv
 
-            # store it
-            interp = (torch.as_tensor(inds, device=self.device),
-                      torch.as_tensor(wgts, dtype=_float(), device=self.device))
-            self.interp_cache[h] = interp
+            # store it in the cache
+            if self.interp_cache_depth is None or self.interp_cache_depth > 0:
+                interp = (torch.as_tensor(inds, device=self.device),
+                          torch.as_tensor(wgts, dtype=_float(), device=self.device))
+                self.interp_cache[h] = interp
+
+                # clear cache if needed
+                if self.interp_cache_depth is not None:
+                    self.clear_cache(depth=self.interp_cache_depth)
 
         return interp
 

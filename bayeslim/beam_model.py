@@ -948,7 +948,7 @@ class UniformResponse:
             self.device = device
 
 
-class YlmResponse(PixelResponse):
+class YlmResponse(PixelResponse, AlmModel):
     """
     A spherical harmonic representation for PixelBeam,
     mapping params to pixel space. Adopts a linear
@@ -978,6 +978,7 @@ class YlmResponse(PixelResponse):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
+                 separate_variables=False, interp_cache_depth=None,
                  edge_alpha=None, edge_fov=180):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -1037,6 +1038,13 @@ class YlmResponse(PixelResponse):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
+        separate_variables : bool, optional
+            If True, separate theta and phi transformation in spherical harmonic
+            forward model. This requires rectangular grid sampling of theta and phi
+            via theta_grid & phi_grid, with no additional samples in theta & phi.
+        interp_cache_depth : int, optional
+            The number of entries in the interp_cache allowed.
+            Follows first-in, first-out rule. Default is no limit.
         edge_alpha : float, optional
             If not None, this is the alpha parameter of a tukey mask
             for tapering the edge of the beam out to fov / 2 zenith angle.
@@ -1044,28 +1052,23 @@ class YlmResponse(PixelResponse):
         edge_fov : float, optional
             This is the fov parameter for the beam object in degrees,
             i.e. the diameter of the observable hemisphere
-
-        Notes
-        -----
-        Y_cache : a cache for Y_lm matrices (Npix, Ncoeff)
-        ang_cache : a cache for (zen, az) arrays [deg]
         """
-        ## TODO: enable pix_type other than healpix
+        # init PixelResponse
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
                                           interp_mode=interp_mode, theta=theta, phi=phi,
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
                                           theta_grid=theta_grid, phi_grid=phi_grid,
-                                          interp_gpu=interp_gpu)
-        self.l, self.m = l, m
+                                          interp_gpu=interp_gpu,
+                                          interp_cache_depth=interp_cache_depth)
+        # init AlmModel
+        super(PixelResponse, self).__init__(l, m, separate_variables=separate_variables,
+                                            default_kw=Ylm_kwargs)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
-        self.Ylm_cache = {}
-        self.ang_cache = {}
         self.mode = mode
         self.beam_cache = None
         self.freq_ax = 3
-        self.Ylm_kwargs = Ylm_kwargs if Ylm_kwargs is not None else {}
         self.device = device
         self.log = log
         self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
@@ -1075,71 +1078,6 @@ class YlmResponse(PixelResponse):
 
         # construct _args for str repr
         self._args = dict(mode=mode, interp_mode=interp_mode, freq_mode=freq_mode)
-
-    def get_Ylm(self, zen, az):
-        """
-        Query cache for Y_lm matrix, otherwise generate it.
-
-        Parameters
-        ----------
-        zen, az : ndarrays
-            Zenith angle (co-latitude) and
-            azimuth (longitude) [deg] (i.e. theta, phi)
-
-        Returns
-        -------
-        Y : tensor
-            Spherical harmonic tensor of shape
-            (Nangle, Ncoeff)
-        alm_mult : tensor
-            Multiplication tensor to alm,
-            if not stored return None
-        """
-        # get hash
-        h = utils.arr_hash(zen)
-        if h in self.Ylm_cache:
-            Ylm = self.Ylm_cache[h]
-            if isinstance(Ylm, (list, tuple)):
-                Ylm, alm_mult = Ylm
-            else:
-                alm_mult = None
-        else:
-            # generate exact Y_lm, may take a while
-            Ylm, norm, alm_mult = sph_harm.gen_sph2pix(zen * D2R, az * D2R,
-                                                       self.l, self.m,
-                                                       device=self.device,
-                                                       **self.Ylm_kwargs)
-            # store it
-            self.Ylm_cache[h] = (Ylm, alm_mult)
-            self.ang_cache[h] = (zen, az)
-
-        return Ylm, alm_mult
-
-    def set_cache(self, Ylm, angs, alm_mult=None):
-        """
-        Insert a Ylm tensor into Ylm_cache, hashed on the
-        zenith array. We use the forward transform convention
-
-        .. math::
-
-            T = \sum_{lm} a_{lm} Y_{lm}
-
-        Parameters
-        ----------
-        Ylm : tensor
-            Ylm forward model matrix of shape (Nmodes, Npix)
-        angs : tuple
-            sky angles of Ylm pixels of shape (2, Npix)
-            holding (zenith, azimuth) in [deg]
-        alm_mult : tensor, optional
-            multiply this (Nmodes,) tensor into alm tensor
-            before forward pass
-        """
-        assert len(self.l) == len(Ylm)
-        zen, az = angs
-        h = utils.arr_hash(zen)
-        self.Ylm_cache[h] = (Ylm, alm_mult)
-        self.ang_cache[h] = (zen, az)
 
     def forward(self, params, zen, az, *args):
         """
@@ -1160,6 +1098,10 @@ class YlmResponse(PixelResponse):
             pixelized beam on the sky
             of shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
         """
+        # cast to complex if needed
+        if self.comp_params and not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
         # pass to device
         if utils.device(params.device) != utils.device(self.device):
             params = params.to(self.device)
@@ -1174,15 +1116,11 @@ class YlmResponse(PixelResponse):
         # transform into a_lm space if using poly lm compression
         p = self.lm_poly_forward(p)
 
-        # next handle lm axis
+        # get Ylms
         Ylm, alm_mult = self.get_Ylm(zen, az)
 
-        # multiply alm_mult
-        if alm_mult is not None:
-            p = p * alm_mult
-
-        # next do slower dot product over Ncoeff
-        beam = p @ Ylm
+        # next forward to pixel space via slower dot product over Ncoeff
+        beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult)
 
         if torch.is_complex(beam):
             beam = torch.real(beam)
@@ -1205,7 +1143,7 @@ class YlmResponse(PixelResponse):
 
     def __call__(self, params, zen, az, *args):
         # cast to complex if needed
-        if self.comp_params and torch.is_complex(params) is False:
+        if self.comp_params and not torch.is_complex(params):
             params = utils.viewcomp(params)
 
         # for generate mode, forward model the beam exactly at zen, az
@@ -1230,23 +1168,22 @@ class YlmResponse(PixelResponse):
         Used for mode = 'interpolate'
         """
         # forward params at theta/phi and set beam cache
-        self.beam_cache = self.forward(params, self.theta, self.phi)
+        if self.separate_variables:
+            self.beam_cache = self.forward(params, self.theta_grid, self.phi_grid)
+        else:
+            self.beam_cache = self.forward(params, self.theta, self.phi)
 
     def push(self, device):
         """push attrs to device"""
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
-        super().push(device)
-        for k, Ylm in self.Ylm_cache.items():
-            if isinstance(Ylm, (tuple, list)):
-                self.Ylm_cache[k] = (utils.push(Ylm[0], device), Ylm[1].to(device))
-            else:
-                self.Ylm_cache[k] = utils.push(Ylm, device)
         if self.beam_cache is not None:
             self.beam_cache = utils.push(self.beam_cache, device)
         if self._lm_poly:
             for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
                 self.lm_poly_A[k] = (lm_inds, p_inds, utils.push(A, device))
+        super(YlmResponse, self).push(device)
+        super(PixelResponse, self).push(device)
 
     # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):
