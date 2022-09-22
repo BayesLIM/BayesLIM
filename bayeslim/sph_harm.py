@@ -382,10 +382,10 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
 
         # combine
         if separate_variables:
-            Y = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+            Y = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
         else:
-            T = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
-            P = torch.zeros((len(l), len(theta)), dtype=_cfloat(), device=device)
+            T = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
+            P = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
             Y = (T, P)
         norm, alm_mult = [], []
         for (Ydict, nm, am) in output:
@@ -399,8 +399,8 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
                     Y[index] = Ydict[k].to(device)
             alm_mult.extend(am.numpy())
             norm.extend(nm.numpy())
-        alm_mult = torch.as_tensor(alm_mult, dtype=_float())
-        norm = torch.as_tensor(norm, dtype=_float())
+        alm_mult = torch.as_tensor(alm_mult, dtype=utils._float())
+        norm = torch.as_tensor(norm, dtype=utils._float())
 
         return Y, norm, alm_mult
 
@@ -446,7 +446,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
              torch.as_tensor(Phi, device=device))
     else:
         # combine into spherical harmonic
-        Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
+        Y = torch.as_tensor(H * Phi, dtype=utils._cfloat(), device=device)
 
     if renorm:
         norm_kwargs['theta'] = theta
@@ -455,7 +455,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
         norm = torch.ones(len(l))
 
     # get alm mult
-    alm_mult = torch.ones(len(l), dtype=_float())
+    alm_mult = torch.ones(len(l), dtype=utils._float())
     if not np.any(m < 0) and not real:
         alm_mult[m.ravel() > 0] *= 2
     if m_phasor and not real:
@@ -982,8 +982,8 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
                              renorm=renorm, device=device, r_crit=r_crit)
         # form transform matrix: sqrt(2/pi) k g_l
-        rt = torch.as_tensor(r, device=device, dtype=_float())
-        kt = torch.as_tensor(k, device=device, dtype=_float())
+        rt = torch.as_tensor(r, device=device, dtype=utils._float())
+        kt = torch.as_tensor(k, device=device, dtype=utils._float())
         gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-3) * gl
         kln[_l] = k
 
@@ -1031,7 +1031,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
     if method == 'shell':
         assert r_crit is not None
 
-    j = torch.zeros(Nk, len(r), dtype=_float(), device=device)
+    j = torch.zeros(Nk, len(r), dtype=utils._float(), device=device)
     # loop over kbins and fill j matrix
     for i, _k in enumerate(k):
         if method == 'ball':
@@ -1051,11 +1051,11 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
         else:
             raise ValueError("didn't recognize method {}".format(method))
 
-        j[i] = torch.as_tensor(j_i, dtype=_float(), device=device)
+        j[i] = torch.as_tensor(j_i, dtype=utils._float(), device=device)
 
     # renormalize
     if renorm:
-        rt = torch.as_tensor(r, device=device, dtype=_float())
+        rt = torch.as_tensor(r, device=device, dtype=utils._float())
         j *= torch.sqrt(np.pi/2 * k.clip(1e-3)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
 
     return j
