@@ -383,7 +383,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
         # combine
         if separate_variables:
             T = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
-            P = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
+            P = torch.zeros((len(l), len(phi)), dtype=utils._cfloat(), device=device)
             Y = (T, P)
         else:
             Y = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
