@@ -38,9 +38,11 @@ def gen_lm(lmax, real_field=True):
             lms.append([l, m]) 
     return np.array(lms).T
 
+
 def _compute_lm_multiproc(job):
     args, kwargs = job
     return compute_lm(*args, **kwargs)
+
 
 def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
@@ -440,7 +442,8 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
         Phi = Phi.real
 
     if separate_variables:
-        Y = (H, Phi)
+        Y = (torch.as_tensor(H, device=device),
+             torch.as_tensor(Phi, device=device))
     else:
         # combine into spherical harmonic
         Y = torch.as_tensor(H * Phi, dtype=_cfloat(), device=device)
@@ -1366,7 +1369,9 @@ class AlmModel:
             and (Nmodes, Nphi) if separate_variables
         angs : tuple
             sky angles of Ylm pixels of shape (2, Npix)
-            holding (zenith, azimuth) in [deg]
+            holding (zenith, azimuth) in [deg].
+            If separate_variables, this should be passed as
+            (theta_grid, phi_grid).
         alm_mult : tensor, optional
             multiply this (Nmodes,) tensor into alm tensor
             before forward pass
@@ -1430,7 +1435,10 @@ class AlmModel:
 
     def push(self, device):
         """
-        Push items to new device
+        Push items to new device.
+        Note if self.Ylm exists in cache, this
+        separates the pointers between self.Ylm and
+        its corresponding value in self.Ylm_cache.
         """
         dtype = isinstance(device, torch.dtype)
         if hasattr(self, 'Ylm'):
@@ -1447,7 +1455,7 @@ class AlmModel:
             Ylm = self.Ylm_cache[k]['Ylm']
             if isinstance(Ylm, tuple):
                 self.Ylm_cache[k]['Ylm'] = (utils.push(Ylm[0], device),
-                                        utils.push(Ylm[1], device))
+                                            utils.push(Ylm[1], device))
             else:
                 self.Ylm_cache[k]['Ylm'] = utils.push(Ylm, device)
             am = self.Ylm_cache[k]['alm_mult']
