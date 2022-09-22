@@ -948,7 +948,7 @@ class UniformResponse:
             self.device = device
 
 
-class YlmResponse(PixelResponse, AlmModel):
+class YlmResponse(PixelResponse, sph_harm.AlmModel):
     """
     A spherical harmonic representation for PixelBeam,
     mapping params to pixel space. Adopts a linear
