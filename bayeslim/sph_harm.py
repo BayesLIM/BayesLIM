@@ -514,6 +514,8 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
             # take dot product
             Y = torch.einsum("ct,cp->ctp", T, P)
             Y = Y.reshape(Y.shape[0], -1)
+            if theta is not None:
+                theta = np.repeat(theta[:, None], P.shape[1], 1).ravel()
         else:
             Y = Ylm
         if renorm_idx is None:
