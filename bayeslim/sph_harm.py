@@ -509,7 +509,11 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
     """
     if norm is None:
         if isinstance(Ylm, (list, tuple)):
-            Y = Ylm[0] * Ylm[1]
+            # this is separate_variables
+            T, P = Ylm
+            # take dot product
+            Y = torch.einsum("ct,cp->ctp", T, P)
+            Y = Y.reshape(Y.shape[0], -1)
         else:
             Y = Ylm
         if renorm_idx is None:
