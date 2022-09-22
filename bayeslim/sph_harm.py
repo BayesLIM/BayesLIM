@@ -382,11 +382,12 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
 
         # combine
         if separate_variables:
-            Y = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
-        else:
             T = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
             P = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
             Y = (T, P)
+        else:
+            Y = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
+
         norm, alm_mult = [], []
         for (Ydict, nm, am) in output:
             for k in Ydict:
