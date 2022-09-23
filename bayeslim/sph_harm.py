@@ -1482,7 +1482,7 @@ class AlmModel:
 
         return params
 
-    def make_closure(self, params, loss_fn, target, real=False):
+    def make_closure(self, params, loss_fn, target, real=True):
         """
         Make and return a closure function used by
         optimization routines. Use this as an alternative
@@ -1505,7 +1505,8 @@ class AlmModel:
         -------
         callable
         """
-        def closure():
+        def closure(params=params, loss_fn=loss_fn,
+                    target=target, real=real):
             out = self(params)
             if real:
                 out, target = out.real, target.real
