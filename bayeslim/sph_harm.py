@@ -1337,7 +1337,7 @@ class AlmModel:
         self.theta, self.phi = theta, phi
         if self.separate_variables:
             self.theta_grid, self.phi_grid = theta, phi
-            self.theta, phi = self.setup_angs(theta, phi)
+            self.theta, self.phi = self.setup_angs(theta, phi)
 
         # generate Ylm transform if needed
         if Ylm is None:
