@@ -1245,7 +1245,7 @@ class AlmModel:
 
         # convert params to complex if needed
         if self.separate_variables:
-            if torch.is_complex(Phi) and not torch.is_complex(params):
+            if torch.is_complex(Ylm[1]) and not torch.is_complex(params):
                 params = utils.viewcomp(params)
         else:
             if torch.is_complex(Ylm) and not torch.is_complex(params):
