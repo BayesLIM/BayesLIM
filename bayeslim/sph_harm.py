@@ -1482,6 +1482,39 @@ class AlmModel:
 
         return params
 
+    def make_closure(self, params, loss_fn, target, real=False):
+        """
+        Make and return a closure function used by
+        optimization routines. Use this as an alternative
+        to direct least_squares inversion if parameterization
+        is large.
+
+        Parameters
+        ----------
+        params : tensor
+            alm tensor to optimize
+        loss_fn : callable
+            Loss function, takes (output, target)
+        target : tensor
+            Target to optimize against
+        real : bool, optional
+            Cast output and target as real-valued
+            tensors before computing loss
+
+        Returns
+        -------
+        callable
+        """
+        def closure():
+            out = self(params)
+            if real:
+                out, target = out.real, target.real
+            L = loss_fn(out, target)
+            L.backward()
+            return L
+
+        return closure
+
     def push(self, device):
         """
         Push items to new device.
