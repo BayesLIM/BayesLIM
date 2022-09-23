@@ -619,10 +619,14 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
         Filepath of output hdf5 file
     Ylm : array
         Ylm matrix of shape (Ncoeff, Npix)
-    angs : array
+        or a tuple of two matrices (Theta, Phi)
+        of shape (Ncoeff, Ntheta) and (Ncoeff, Nphi)
+    angs : tuple or array
         theta, phi sky positions of Ylm
         of shape (2, Npix), where theta is co-latitude
-        and phi and azimuth [deg].
+        and phi and azimuth [deg]. If theta and phi
+        are of different lengths (e.g. for separate_variables)
+        then each are stored separately.
     l, m : array
         Ylm degree l and order m of len Ncoeff
     norm : array, optional
@@ -647,7 +651,6 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
         Pixel area of each pixel in the Ylm tensor.
         For healpix sampling use nside2pixarea().
         For uniform (theta, phi) grid use sin(theta) * d_theta * d_phi
-        For Gauss Legendre nodes use w(theta) * d_phi
     history : str, optional
         Notes about the Ylm modes
     overwrite : bool, optional
@@ -655,8 +658,17 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
     """
     if not os.path.exists(fname) or overwrite:
         with h5py.File(fname, 'w') as f:
-            f.create_dataset('Ylm', data=Ylm)
-            f.create_dataset('angs', data=np.array(angs))
+            # detect tuple
+            if isinstance(Ylm, (tuple, list)):
+                f.create_dataset('Theta', data=Ylm[0])
+                f.create_dataset('Phi', data=Ylm[1])
+            else:
+                f.create_dataset('Ylm', data=Ylm)
+            if isinstance(angs, (list, tuple)) and angs[0].shape != angs[1].shape:
+                f.create_dataset('theta', data=angs[0])
+                f.create_dataset('phi', data=angs[1])
+            else:
+                f.create_dataset('angs', data=np.asarray(angs))
             f.create_dataset('l', data=l)
             f.create_dataset('m', data=m)
             if D is not None:
@@ -731,7 +743,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     import h5py
     with h5py.File(fname, 'r') as f:
         # load angles and all modes
-        angs = f['angs'][()]
+        if 'angs' in f:
+            angs = f['angs'][()]
+        elif 'theta' in f and 'phi' in f:
+            theta = f['theta'][()]
+            phi = f['phi'][()]
+            angs = (theta, phi)
         l, m = f['l'][()], f['m'][()]
         if 'norm' in f:
             norm = f['norm'][()]
@@ -773,7 +790,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if norm is not None:
             norm = norm[keep]
         if read_data:
-            Ylm = f['Ylm'][keep, :]
+            if 'Ylm' in f:
+                Ylm = f['Ylm'][keep, :]
+            elif 'Theta' in f and 'Phi' in f:
+                Ylm = (f['Theta'][keep, :], f['Phi'][keep, :])
             if 'D' in f:
                 D = f['D'][keep, :][:, keep]
             else:
@@ -805,7 +825,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         az = az[keep]
         angs = colat, az
         if read_data:
-            Ylm = Ylm[:, keep]
+            if isinstance(Ylm, tuple):
+                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+            else:
+                Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
                 pxarea = pxarea[keep]
     if colat_max is not None:
@@ -815,7 +838,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         az = az[keep]
         angs = colat, az
         if read_data:
-            Ylm = Ylm[:, keep]
+            if isinstance(Ylm, tuple):
+                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+            else:
+                Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
                 pxarea = pxarea[keep]
     if az_min is not None:
@@ -825,7 +851,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         az = az[keep]
         angs = colat, az
         if read_data:
-            Ylm = Ylm[:, keep]
+            if isinstance(Ylm, tuple):
+                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+            else:
+                Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
                 pxarea = pxarea[keep]
     if az_max is not None:
@@ -835,17 +864,28 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         az = az[keep]
         angs = colat, az
         if read_data:
-            Ylm = Ylm[:, keep]
+            if isinstance(Ylm, tuple):
+                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+            else:
+                Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
                 pxarea = pxarea[keep]
 
-    if to_real and np.iscomplexobj(Ylm):
-        Ylm = Ylm.real
+    if to_real:
+        if np.iscomplexobj(Ylm) or (isinstance(Ylm, tuple) and np.iscomplexobj(Ylm[1])):
+            if isinstance(Ylm, tuple):
+                Ylm = (Ylm[0].real, Ylm[1].real)
+            else:
+                Ylm = Ylm.real
         if alm_mult is not None:
             info['alm_mult'][:] = 1.0
 
     if read_data:
-        Ylm = torch.as_tensor(Ylm, device=device)
+        if isinstance(Ylm, tuple):
+            Ylm = (torch.as_tensor(Ylm[0], device=device),
+                   torch.as_tensor(Ylm[1], device=device))
+        else:
+            Ylm = torch.as_tensor(Ylm, device=device)
         if pxarea is not None:
             pxarea = torch.as_tensor(pxarea, device=device)
         if D is not None:
@@ -853,7 +893,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         if Dinv is not None:
             Dinv = torch.as_tensor(Dinv, device=device)
         if cast is not None:
-            Ylm = utils.push(Ylm, cast)
+            if isinstance(Ylm, tuple):
+                Ylm = (utils.push(Ylm[0], cast), utils.push(Ylm[1], cast))
+            else:
+                Ylm = utils.push(Ylm, cast)
             pxarea = utils.push(pxarea, cast)
             D = utils.push(D, cast)
             Dinv = utils.push(Dinv, cast)
