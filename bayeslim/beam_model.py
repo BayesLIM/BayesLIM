@@ -596,7 +596,7 @@ class PixelResponse(utils.PixInterp):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
                  powerbeam=True, Rchi=None, interp_gpu=False, interp_cache_depth=None,
-                 edge_alpha=None, edge_fov=180):
+                 taper_kwargs=None):
         """
         Parameters
         ----------
@@ -649,13 +649,9 @@ class PixelResponse(utils.PixInterp):
             for pixel interpolation weights for speedup (PixInterp)
         interp_cache_depth : int, optional
             Depth of interpolation cache, following FIFO (PixInterp)
-        edge_alpha : float, optional
-            If not None, this is the alpha parameter of a tukey mask
-            for tapering the edge of the beam out to fov / 2 zenith angle.
-            Default (None) is no tapering.
-        edge_fov : float, optional
-            This is the fov parameter for the beam object in degrees,
-            i.e. the diameter of the observable hemisphere
+        taper_kwargs : dict, optional
+            Taper the edge of the beam using beam_edge_taper()
+            with these kwargs. Default is no tapering.
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
@@ -671,7 +667,7 @@ class PixelResponse(utils.PixInterp):
         self.freq_ax = 3
         self.Rchi = Rchi
         self.clear_beam_cache()
-        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
+        self.taper_kwargs = taper_kwargs
 
         freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self._setup(**freq_kwargs)
@@ -710,12 +706,9 @@ class PixelResponse(utils.PixInterp):
         elif self.freq_mode == 'linear':
             p = self.freq_LM(params)
 
-        # apply mask if necessary
-        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
-            p *= beam_edge_taper(zen,
-                                 alpha=self.edge_alpha,
-                                 fov=self.edge_fov,
-                                 device=p.device)
+        # apply edge taper if necessary
+        if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
+            beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
 
         return p
 
@@ -858,7 +851,7 @@ class AiryResponse:
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
     """
     def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=True, Ntau=100,
-                 edge_alpha=None, edge_fov=180):
+                 taper_kwargs=None):
         """
         .. math::
 
@@ -877,13 +870,9 @@ class AiryResponse:
             See airy_disk() for details.
         Ntau : int, optional
             Integral pixelization, see airy_disk() for details
-        edge_alpha : float, optional
-            If not None, this is the alpha parameter of a tukey mask
-            for tapering the edge of the beam out to fov / 2 zenith angle.
-            Default (None) is no tapering.
-        edge_fov : float, optional
-            This is the fov parameter for the beam object in degrees,
-            i.e. the diameter of the observable hemisphere
+        taper_kwargs dict, optional
+            Taper the beam edge using these kwargs (see beam_edge_taper())
+            Default is no taper.
         """
         self.freq_ratio = freq_ratio
         self.freq_mode = 'other'
@@ -891,7 +880,7 @@ class AiryResponse:
         self.powerbeam = powerbeam
         self.brute_force = brute_force
         self.Ntau = Ntau
-        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
+        self.taper_kwargs = taper_kwargs
 
     def _setup(self):
         pass
@@ -921,12 +910,9 @@ class AiryResponse:
                          Ntau=self.Ntau)
         beam = torch.as_tensor(beam, device=params.device)
 
-        # apply mask if necessary
-        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
-            beam *= beam_edge_taper(zen,
-                                    alpha=self.edge_alpha,
-                                    fov=self.edge_fov,
-                                    device=beam.device)
+        # apply edge taper if necessary
+        if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
+            beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
 
         return beam
   
@@ -938,8 +924,8 @@ class UniformResponse:
     """
     A uniform beam response
     """
-    def __init__(self, edge_alpha=None, edge_fov=180, device=None):
-        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
+    def __init__(self, device=None, taper_kwargs=None):
+        self.taper_kwargs = taper_kwargs
         self.device = device
 
     def _setup(self):
@@ -949,12 +935,10 @@ class UniformResponse:
         out = torch.ones(params.shape[:3] + (len(freqs), len(zen)),
                           dtype=utils._float(), device=self.device)
 
-        # apply mask if necessary
-        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
-            out *= beam_edge_taper(zen,
-                                   alpha=self.edge_alpha,
-                                   fov=self.edge_fov,
-                                   device=out.device)
+        # apply edge taper if necessary
+        if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
+            beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
+
         return out
 
     def push(self, device):
@@ -994,7 +978,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
                  separate_variables=False, interp_cache_depth=None,
-                 edge_alpha=None, edge_fov=180):
+                 taper_kwargs=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -1060,13 +1044,9 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         interp_cache_depth : int, optional
             The number of entries in the interp_cache allowed.
             Follows first-in, first-out rule. Default is no limit.
-        edge_alpha : float, optional
-            If not None, this is the alpha parameter of a tukey mask
-            for tapering the edge of the beam out to fov / 2 zenith angle.
-            Default (None) is no tapering.
-        edge_fov : float, optional
-            This is the fov parameter for the beam object in degrees,
-            i.e. the diameter of the observable hemisphere
+        taper_kwargs : dict, optional
+            Taper the edge of the beam using beam_edge_taper()
+            with these kwargs. Default is no tapering.
         """
         # init PixelResponse
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
@@ -1086,7 +1066,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         self.freq_ax = 3
         self.device = device
         self.log = log
-        self.edge_alpha, self.edge_fov = edge_alpha, edge_fov
+        self.taper_kwargs = taper_kwargs
 
         # default is no mapping across l
         self.lm_poly_setup()
@@ -1140,12 +1120,9 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         if torch.is_complex(beam):
             beam = torch.real(beam)
 
-        # apply edge mask if necessary
-        if hasattr(self, 'edge_alpha') and self.edge_alpha is not None:
-            beam *= beam_edge_taper(zen,
-                                    alpha=self.edge_alpha,
-                                    fov=self.edge_fov,
-                                    device=beam.device)
+        # apply edge taper if necessary
+        if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
+            beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
 
         if self.log:
             beam = torch.exp(beam)
@@ -1620,7 +1597,8 @@ def cut_sky_fov(sky, cut):
     return cut_sky
 
 
-def beam_edge_taper(zen, alpha=0.1, fov=180, device=None):
+def beam_edge_taper(zen, mode='gauss', fov=180, device=None,
+                    mu=85, sigma=2.5, alpha=0.1):
     """
     Create a Tukey window tapering for a beam response
 
@@ -1640,13 +1618,17 @@ def beam_edge_taper(zen, alpha=0.1, fov=180, device=None):
     -------
     tensor
     """
-    zen = utils.tensor2numpy(zen, clone=False)
-    # theta mask: 5000 yields ang. resolution < nside 512
-    th_arr = np.linspace(-fov/2, fov/2, 5000, endpoint=True)
-    mask = utils.windows.tukey(5000, alpha=alpha)
-    intp = utils.interp1d(th_arr, mask, fill_value=0, bounds_error=False, kind='linear')
-    out = intp(zen)
+    # make empty tapering
+    taper = torch.ones(len(zen), device=device, dtype=utils._float())
+    if mode == 'tukey':
+        # note this is slow if device is cuda
+        # theta mask: 5000 yields ang. resolution < nside 512
+        th_arr = np.linspace(-fov/2, fov/2, 5000, endpoint=True)
+        mask = utils.windows.tukey(5000, alpha=alpha)
+        intp = utils.interp1d(th_arr, mask, fill_value=0, bounds_error=False, kind='linear')
+        taper[:] = torch.as_tensor(intp(zen), device=device)
+    elif mode == 'gauss':
+        s = zen >= mu
+        taper[s] = torch.exp(-0.5 * (zen[s] - mu)**2 / sigma**2)
 
-    return torch.as_tensor(out, device=device)
-
-
+    return taper
