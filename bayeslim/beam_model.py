@@ -695,6 +695,10 @@ class PixelResponse(utils.PixInterp):
         self.freqs = self.freqs.to(device)
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
+        if self.theta is not None:
+            self.theta = self.theta.to(device)
+        if self.phi is not None:
+            self.phi = self.phi.to(device)
 
     def forward(self, params):
         """forward pixelized beam through frequency response"""
