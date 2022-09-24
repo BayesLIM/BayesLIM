@@ -930,6 +930,7 @@ class PixInterp:
                 ygrid = self.theta_grid
                 dx = np.median(np.diff(xgrid))
                 dy = np.median(np.diff(ygrid))
+                # TODO: zen and az can be on gpu, which can speed up bipoly_grid_index
                 xnew, ynew = tensor2numpy(az), tensor2numpy(zen)
 
                 # get map indices
@@ -1133,13 +1134,12 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
         xnew and ynew but cast into dimensionless units
         relative to the start of inds and dx,dy spacing
     """
-    # parse gpu kwarg
-    if gpu:
-        if isinstance(gpu, bool):
-            gpu = 'cuda:0'
-
     # set gpu to false if no cuda
     gpu = gpu if torch.cuda.is_available() else False
+
+    # parse gpu kwarg
+    if gpu and isinstance(gpu, bool):
+        gpu = 'cuda:0'
 
     # get dx, dy
     dx, dy = np.median(np.diff(xgrid)), np.median(np.diff(ygrid))
@@ -1775,7 +1775,7 @@ def arr_hash(arr):
     hash object
     """
     if isinstance(arr, torch.Tensor):
-        h = (arr[0].cpu().numpy(), arr[-1].cpu().numpy(), len(arr))
+        h = (arr[0].cpu().item(), arr[-1].cpu().item(), len(arr))
     else:
         h = (arr[0], arr[-1], len(arr))
     return hash(h)
