@@ -61,7 +61,7 @@ class SkyBase(utils.Module):
         self._args = dict(name=name)
         self._args[self.R.__class__.__name__] = getattr(self.R, '_args', None)
 
-    def push(self, device, attrs=[]):
+    def _push(self, device, attrs=[]):
         """
         Wrapper around nn.Module.to(device) method
         but always pushes self.params whether its a 
@@ -279,6 +279,12 @@ class PointSky(SkyBase):
 
         return skycomp
 
+    def push(self, device, **kwargs):
+        """
+        Wrapper around SkyBase._push()
+        """
+        self._push(device, **kwargs)
+
 
 class PointSkyResponse:
     """
@@ -433,7 +439,7 @@ class PixelSky(SkyBase):
         super().__init__(params, freqs, R=R, name=name,
                          parameter=parameter, p0=p0)
         self.angs = angs
-        self.px_area = px_area
+        self.px_area = torch.as_tensor(px_area)
 
     def forward(self, params=None, prior_cache=None, **kwargs):
         """
@@ -481,6 +487,13 @@ class PixelSky(SkyBase):
         skycomp.setup_data(freqs=self.freqs, data=sky * self.px_area, angs=angs)
 
         return skycomp
+
+    def push(self, device, **kwargs):
+        """
+        Wrapper around SkyBase._push()
+        """
+        self._push(device, **kwargs)
+        self.px_area = utils.push(self.px_area, device)
 
 
 class PixelSkyResponse:
