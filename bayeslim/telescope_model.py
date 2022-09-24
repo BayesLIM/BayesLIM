@@ -366,7 +366,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
             f = torch.exp(sign * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
 
             # if fringe caching, store the full fringe (this is large in memory!)
-            if self.fringe_cache_f:
+            if self.cache_f:
                 self.fringe_cache[key] = f
         else:
             # interpolate cached fringe (not generally recommended)
