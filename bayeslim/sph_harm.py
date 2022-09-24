@@ -1537,12 +1537,17 @@ class AlmModel:
             self.alm_mult = utils.push(self.alm_mult, device)
 
         for k in self.Ylm_cache:
+            # push Ylms in cache
             Ylm = self.Ylm_cache[k]['Ylm']
             if isinstance(Ylm, tuple):
                 self.Ylm_cache[k]['Ylm'] = (utils.push(Ylm[0], device),
                                             utils.push(Ylm[1], device))
             else:
                 self.Ylm_cache[k]['Ylm'] = utils.push(Ylm, device)
+            # push angs in cache
+            angs = self.Ylm_cache[k]['angs']
+            self.Ylm_cache[k]['angs'] = (angs[0].to(device), angs[1].to(device))
+            # push alm_mults in cache
             am = self.Ylm_cache[k]['alm_mult']
             if am is not None:
                 self.Ylm_cache[k]['alm_mult'] = utils.push(am, device)
