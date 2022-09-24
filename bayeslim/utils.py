@@ -1775,8 +1775,10 @@ def arr_hash(arr):
     hash object
     """
     if isinstance(arr, torch.Tensor):
-        arr = arr.numpy()
-    return hash((arr[0], arr[-1], len(arr)))
+        h = (arr[0].cpu().numpy(), arr[-1].cpu().numpy(), len(arr))
+    else:
+        h = (arr[0], arr[-1], len(arr))
+    return hash(h)
 
 
 def push(tensor, device, parameter=False):
