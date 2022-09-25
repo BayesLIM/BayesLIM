@@ -1774,11 +1774,15 @@ def arr_hash(arr):
     -------
     hash object
     """
+    if hasattr(arr, '_arr_hash'):
+        return arr._arr_hash
     if isinstance(arr, torch.Tensor):
-        h = (arr[0].cpu().tolist(), arr[-1].cpu().tolist(), len(arr))
+        key = (arr[0].cpu().tolist(), arr[-1].cpu().tolist(), len(arr))
     else:
-        h = (arr[0], arr[-1], len(arr))
-    return hash(h)
+        key = (arr[0], arr[-1], len(arr))
+    h = hash(key)
+    arr._arr_hash = h
+    return h
 
 
 def push(tensor, device, parameter=False):
