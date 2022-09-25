@@ -1775,7 +1775,7 @@ def arr_hash(arr):
     hash object
     """
     if isinstance(arr, torch.Tensor):
-        h = (arr[0].cpu().item(), arr[-1].cpu().item(), len(arr))
+        h = (arr[0].cpu().tolist(), arr[-1].cpu().tolist(), len(arr))
     else:
         h = (arr[0], arr[-1], len(arr))
     return hash(h)
