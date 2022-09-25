@@ -424,12 +424,13 @@ class PixelBeam(utils.Module):
             if self.priors_out_params is not None:
                 if out_params is None:
                     # we can evaluate prior on PixelResponse beam if mode is interpolate
-                    if hasattr(self.R, 'beam_cache') and self.R.beam_cache is None:
-                        # note that clear_graph_tensors() upon likelhood and prior
-                        # forward calls in optim ensures that beam_cache is not stale
-                        # and also not overwritten for compute = 'post'
-                        p = self.params if self.p0 is None else self.params + self.p0
-                        self.R.set_beam_cache(p)
+                    if hasattr(self.R, 'beam_cache'):
+                        if self.R.beam_cache is None:
+                            # note that clear_graph_tensors() upon likelhood and prior
+                            # forward calls in optim ensures that beam_cache is not stale
+                            # and also not overwritten for compute = 'post'
+                            p = self.params if self.p0 is None else self.params + self.p0
+                            self.R.set_beam_cache(p)
                         out_params = self.R.beam_cache
                 # iterate over priors
                 for prior in self.priors_out_params:
