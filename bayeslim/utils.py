@@ -1781,7 +1781,7 @@ def arr_hash(arr):
     else:
         key = (arr[0], arr[-1], len(arr))
     h = hash(key)
-    if isinstance(arr, (np.ndarry, torch.Tensor)):
+    if isinstance(arr, (np.ndarray, torch.Tensor)):
         arr._arr_hash = h
     return h
 
