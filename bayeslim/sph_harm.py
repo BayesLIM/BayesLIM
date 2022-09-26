@@ -1633,9 +1633,9 @@ class AlmModel:
         Parameters
         ----------
         thetas : list
-            List of theta arrays
+            List of theta arrays [deg]
         phis : list
-            List of phi arrays
+            List of phi arrays [deg]
         Ylms : list
             List of Ylm matrices. Can have separable and non-separable
             Ylms together.
