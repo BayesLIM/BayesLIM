@@ -1323,6 +1323,7 @@ class AlmModel:
                   separable=False, cache=True, h=None, **kwargs):
         """
         Setup forward transform matrices.
+        If Ylm is not provided, generate it.
         Sets self.Ylm, self.alm_mult
 
         Parameters
@@ -1401,7 +1402,7 @@ class AlmModel:
                 angs = (theta, phi)
             self.set_Ylm(Ylm, angs, alm_mult=alm_mult, h=h)
 
-    def get_Ylm(self, theta, phi, separable, h=None):
+    def get_Ylm(self, theta, phi, separable=False, h=None):
         """
         Query cache for Y_lm matrix, otherwise generate it.
 
@@ -1438,7 +1439,8 @@ class AlmModel:
             alm_mult = self.Ylm_cache[h]['alm_mult']
 
         else:
-            self.setup_Ylm(theta, phi, cache=True, h=h)
+            self.setup_Ylm(theta, phi, cache=True, h=h,
+                           separable=separable)
             Ylm = self.Ylm
             alm_mult = self.alm_mult
 
