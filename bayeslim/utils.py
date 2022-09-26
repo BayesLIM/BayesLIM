@@ -817,6 +817,52 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     return theta, phi, nsides, total_nsides
 
 
+def split_healpix_grid(nside):
+    """
+    Split a healpix map into four distinct
+    components:
+    1. southern cap
+    2. central grid 1
+    3. central grid 2
+    4. northern cap
+
+    Parameters
+    ----------
+    nside : int
+        nside of map
+
+    Returns
+    -------
+    southern : (theta, phi) [radians]
+    central1 : (theta, phi) [radians]
+    central2 : (theta, phi) [radians]
+    northern : (theta, phi) [radians]
+    """
+    # the declination boundary between central and caps
+    magic_dec = 41.84 * np.pi / 180
+
+    # get theta, phi
+    theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
+    dec = np.pi / 2 - theta
+
+    # southern cap
+    s = dec < -magic_dec
+    southern = (theta[s], phi[s])
+
+    # northern cap
+    s = dec > magic_dec
+    northern = (theta[s], phi[s])
+
+    # central grids
+    s = (dec > -magic_dec) & (dec < magic_dec)
+    central1 = (theta[s].reshape(-1, nside*4)[::2].ravel(),
+                phi[s].reshape(-1, nside*4)[::2].ravel())
+    central2 = (theta[s].reshape(-1, nside*4)[1::2].ravel(),
+                phi[s].reshape(-1, nside*4)[1::2].ravel())
+
+    return southern, central1, central2, northern
+
+
 class PixInterp:
     """
     Sky pixel spatial interpolation object
