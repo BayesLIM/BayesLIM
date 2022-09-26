@@ -1062,8 +1062,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(utils.PixInterp, self).__init__(l, m, separable=separable,
-                                              default_kw=Ylm_kwargs)
+        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
         self.mode = mode
