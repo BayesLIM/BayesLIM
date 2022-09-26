@@ -817,7 +817,7 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     return theta, phi, nsides, total_nsides
 
 
-def split_healpix_grid(nside, phi_min=None, phi_max=None, theta_min=None, theta_max=None):
+def split_healpix_grid(theta, phi, nside, phi_min=None, phi_max=None, theta_min=None, theta_max=None):
     """
     Split a healpix map into four distinct
     components:
@@ -826,26 +826,34 @@ def split_healpix_grid(nside, phi_min=None, phi_max=None, theta_min=None, theta_
     3. central grid 2
     4. northern cap
 
+    If theta and phi have already been down-selected, they must
+    still retain full 2pi range along phi (i.e. can only pre-
+    down select on theta)
+
     Parameters
     ----------
+    theta : array
+        Theta values of healpix map [rad]
+    phi : array
+        Phi values of healpix map [rad]
     nside : int
-        nside of map
+        NSIDE of the healpix map
     phi_theta_min_max : float, optional
         Min and max ranges of phi or theta in radians
 
     Returns
     -------
-    southern : (phi, theta) [radians]
-    central1 : (phi, theta) [radians]
-    central2 : (phi, theta) [radians]
-    northern : (phi, theta) [radians]
+    southern_idx : Indices for the southern cap
+    central1_idx : Indices for the central 1 grid
+    central2_idx : Indices for the central 2 grid
+    northern_idx : Indices for the northern cap
     """
     # the declination boundary between central and caps
     magic_dec = 41.84 * np.pi / 180
 
     # get theta, phi
-    theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
     dec = np.pi / 2 - theta
+    idx = np.arange(len(theta))
 
     # setup theta/phi selections
     def theta_phi_select(theta, phi):
@@ -864,11 +872,11 @@ def split_healpix_grid(nside, phi_min=None, phi_max=None, theta_min=None, theta_
 
     # southern cap
     s = (dec < -magic_dec) & f
-    southern = (theta[s], phi[s])
+    southern = np.where(s & f)[0]
 
     # northern cap
     s = (dec > magic_dec) & f
-    northern = (theta[s], phi[s])
+    northern = np.where(s & f)[0]
 
     # central grids
     s = (dec > -magic_dec) & (dec < magic_dec)
@@ -876,14 +884,16 @@ def split_healpix_grid(nside, phi_min=None, phi_max=None, theta_min=None, theta_
     # first grid
     th = theta[s].reshape(-1, nside*4)[::2].ravel()
     ph = phi[s].reshape(-1, nside*4)[::2].ravel()
+    _idx = idx[s].reshape(-1, nside*4)[::2].ravel()
     f = theta_phi_select(th, ph)
-    central1 = (th[f], ph[f])
+    central1 = _idx[f]
 
-    # second grid
+    # first grid
     th = theta[s].reshape(-1, nside*4)[1::2].ravel()
     ph = phi[s].reshape(-1, nside*4)[1::2].ravel()
+    _idx = idx[s].reshape(-1, nside*4)[1::2].ravel()
     f = theta_phi_select(th, ph)
-    central2 = (th[f], ph[f])
+    central2 = _idx[f]
 
     return southern, central1, central2, northern
 
