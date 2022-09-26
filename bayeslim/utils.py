@@ -817,7 +817,7 @@ def dynamic_pixelization(base_nside, max_nside, sigma=None, bsky=None, target_ns
     return theta, phi, nsides, total_nsides
 
 
-def split_healpix_grid(nside):
+def split_healpix_grid(nside, phi_min=None, phi_max=None, theta_min=None, theta_max=None):
     """
     Split a healpix map into four distinct
     components:
@@ -830,13 +830,15 @@ def split_healpix_grid(nside):
     ----------
     nside : int
         nside of map
+    phi_theta_min_max : float, optional
+        Min and max ranges of phi or theta in radians
 
     Returns
     -------
-    southern : (theta, phi) [radians]
-    central1 : (theta, phi) [radians]
-    central2 : (theta, phi) [radians]
-    northern : (theta, phi) [radians]
+    southern : (phi, theta) [radians]
+    central1 : (phi, theta) [radians]
+    central2 : (phi, theta) [radians]
+    northern : (phi, theta) [radians]
     """
     # the declination boundary between central and caps
     magic_dec = 41.84 * np.pi / 180
@@ -845,20 +847,43 @@ def split_healpix_grid(nside):
     theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
     dec = np.pi / 2 - theta
 
+    # setup theta/phi selections
+    def theta_phi_select(theta, phi):
+        f = np.ones(len(theta), dtype=bool)
+        if phi_min:
+            f = f & (phi >= phi_min)
+        if phi_max:
+            f = f & (phi <= phi_max)
+        if theta_min:
+            f = f & (theta >= theta_min)
+        if theta_max:
+            f = f & (theta <= theta_max)
+        return f
+
+    f = theta_phi_select(theta, phi)
+
     # southern cap
-    s = dec < -magic_dec
+    s = (dec < -magic_dec) & f
     southern = (theta[s], phi[s])
 
     # northern cap
-    s = dec > magic_dec
+    s = (dec > magic_dec) & f
     northern = (theta[s], phi[s])
 
     # central grids
     s = (dec > -magic_dec) & (dec < magic_dec)
-    central1 = (theta[s].reshape(-1, nside*4)[::2].ravel(),
-                phi[s].reshape(-1, nside*4)[::2].ravel())
-    central2 = (theta[s].reshape(-1, nside*4)[1::2].ravel(),
-                phi[s].reshape(-1, nside*4)[1::2].ravel())
+
+    # first grid
+    th = theta[s].reshape(-1, nside*4)[::2].ravel()
+    ph = phi[s].reshape(-1, nside*4)[::2].ravel()
+    f = theta_phi_select(th, ph)
+    central1 = (th[f], ph[f])
+
+    # second grid
+    th = theta[s].reshape(-1, nside*4)[1::2].ravel()
+    ph = phi[s].reshape(-1, nside*4)[1::2].ravel()
+    f = theta_phi_select(th, ph)
+    central2 = (th[f], ph[f])
 
     return southern, central1, central2, northern
 

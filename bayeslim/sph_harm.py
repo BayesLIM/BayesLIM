@@ -1311,6 +1311,8 @@ class AlmModel:
             Samples for each pixel on the sky
         """
         if separable:
+            if len(phi) > 10000 or len(theta) > 10000:
+                print("Warning: the input phi or theta grid is too large")
             phi_arr, theta_arr = np.meshgrid(phi, theta, copy=False)
             phi = phi_arr.ravel()
             theta = theta_arr.ravel()
