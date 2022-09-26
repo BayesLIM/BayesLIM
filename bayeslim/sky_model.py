@@ -636,7 +636,7 @@ class PixelSkyResponse:
             else:
                 # built it now
                 self.Alm = sph_harm.AlmModel(sk['l'], sk['m'],
-                                             separate_variables=sk.get('separate_variables', False),
+                                             separable=sk.get('separable', False),
                                              default_kw=sk.get('default_kwargs', None))
                 # this attaches self.Alm.Ylm and self.Alm.alm_mult
                 self.Alm.setup_Ylm(sk['theta'], sk['phi'],

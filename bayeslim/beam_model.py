@@ -982,7 +982,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
-                 separate_variables=False, interp_cache_depth=None,
+                 separable=False, interp_cache_depth=None,
                  taper_kwargs=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
@@ -1042,7 +1042,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         interp_gpu : bool, optional
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
-        separate_variables : bool, optional
+        separable : bool, optional
             If True, separate theta and phi transformation in spherical harmonic
             forward model. This requires rectangular grid sampling of theta and phi
             via theta_grid & phi_grid, with no additional samples in theta & phi.
@@ -1062,7 +1062,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(utils.PixInterp, self).__init__(l, m, separate_variables=separate_variables,
+        super(utils.PixInterp, self).__init__(l, m, separable=separable,
                                               default_kw=Ylm_kwargs)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
@@ -1165,7 +1165,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         Used for mode = 'interpolate'
         """
         # forward params at theta/phi and set beam cache
-        if self.separate_variables:
+        if self.separable:
             self.beam_cache = self.forward(params, self.theta_grid, self.phi_grid)
         else:
             self.beam_cache = self.forward(params, self.theta, self.phi)

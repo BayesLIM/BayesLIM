@@ -240,14 +240,14 @@ def _gen_sph2pix_multiproc(job):
     (l, m), args, kwargs = job
     Y, norm, alm_mult = gen_sph2pix(*args, **kwargs)
     if isinstance(Y, tuple):
-        # this is separate_variables
+        # this is separable
         Ydict = {(_l, _m): (Y[0][i], Y[1][i]) for i, (_l, _m) in enumerate(zip(l, m))}        
     else:
         Ydict = {(_l, _m): Y[i] for i, (_l, _m) in enumerate(zip(l, m))}
     return Ydict, norm, alm_mult
 
 
-def gen_sph2pix(theta, phi, l, m, separate_variables=False,
+def gen_sph2pix(theta, phi, l, m, separable=False,
                 method='sphere', theta_crit=None,
                 Nproc=None, Ntask=10, device=None, high_prec=True,
                 bc_type=2, real=False, m_phasor=False,
@@ -285,7 +285,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
         Integer or float array of spherical harmonic l modes
     m : array_like
         Integer array of spherical harmonic m modes
-    separate_variables : bool, optional
+    separable : bool, optional
         If True, separate polar and azimuthal transforms
         into Theta and Phi matrices. Note orthonorm is 
         put into Theta. Otherwise, compute one single Ylm
@@ -338,7 +338,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
     Ylm : tensor
         An (Ncoeff, Npix) tensor encoding a spherical
         harmonic transform from a_lm -> map.
-        If separate_variables, this is actually a tuple
+        If separable, this is actually a tuple
         holding (Theta, Phi), each of which are of shape
         (Ncoeff, Npix)
     norm : tensor
@@ -365,7 +365,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
             _l = l[i*Ntask:(i+1)*Ntask]
             _m = m[i*Ntask:(i+1)*Ntask]
             args = (theta, phi, _l, _m)
-            kwgs = dict(separate_variables=separate_variables,
+            kwgs = dict(separable=separable,
                         method=method, theta_crit=theta_crit,
                         high_prec=high_prec, m_phasor=m_phasor,
                         renorm=renorm, bc_type=bc_type, real=real)
@@ -381,7 +381,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
             pool.join()
 
         # combine
-        if separate_variables:
+        if separable:
             T = torch.zeros((len(l), len(theta)), dtype=utils._cfloat(), device=device)
             P = torch.zeros((len(l), len(phi)), dtype=utils._cfloat(), device=device)
             Y = (T, P)
@@ -393,7 +393,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
             for k in Ydict:
                 _l, _m = k
                 index = np.where((l == _l) & (m == _m))[0][0]
-                if separate_variables:
+                if separable:
                     Y[0][index] = Ydict[k][0].to(device)
                     Y[1][index] = Ydict[k][1].to(device)
                 else:
@@ -442,7 +442,7 @@ def gen_sph2pix(theta, phi, l, m, separate_variables=False,
     if real:
         Phi = Phi.real
 
-    if separate_variables:
+    if separable:
         Y = (torch.as_tensor(H, device=device),
              torch.as_tensor(Phi, device=device))
     else:
@@ -478,7 +478,7 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
         Forward model tensor of shape (Ncoeff, Npix)
         encoding transfrom from a_lm -> map.
         Can also be a tuple of two tensors (Theta, Phi)
-        if generated with separate_variables = True.
+        if generated with separable = True.
     norm : tensor, optional
         (Ncoeff,) shaped tensor. Divide Ylm by norm along
         its 0th axis. Supercedes all other kwargs.
@@ -509,7 +509,7 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
     """
     if norm is None:
         if isinstance(Ylm, (list, tuple)):
-            # this is separate_variables
+            # this is separable
             T, P = Ylm
             # take dot product
             Y = torch.einsum("ct,cp->ctp", T, P)
@@ -625,7 +625,7 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
         theta, phi sky positions of Ylm
         of shape (2, Npix), where theta is co-latitude
         and phi and azimuth [deg]. If theta and phi
-        are of different lengths (e.g. for separate_variables)
+        are of different lengths (e.g. for separable)
         then each are stored separately.
     l, m : array
         Ylm degree l and order m of len Ncoeff
@@ -1197,8 +1197,7 @@ class AlmModel:
     is attached as self.Ylm or (self.Theta, self.Phi), but
     this can be changed by calling get_Ylm().
     """
-    def __init__(self, l, m, separate_variables=False,
-                 default_kw=None):
+    def __init__(self, l, m, default_kw=None):
         """
         Parameters
         ----------
@@ -1206,27 +1205,16 @@ class AlmModel:
             holds float "L" degrees of shape (Ncoeff,)
         m : array
             holds float "M" orders of shape (Ncoeff,)
-        separate_variables : bool, optional
-            If True, assume that theta and phi are sampled on a
-            uniform rectangular grid, in which case theta and phi
-            represent the unique, monotonically increasing grid values,
-            stored as self.theta_grid and self.phi_grid, and theta and phi
-            are converted to their full array shape
-            as np.meshgrid(phi, theta).ravel().
-            This can reduce memory overhead by over OOM.
-            if separate_variables = False.
-            Otherwise, compute the full Ylm and perform both
-            transforms simultaneously.
         default_kw : dict, optional
             These are the default kwargs to use when generating Ylm
             from gen_sph2pix. 
         """
         self.l, self.m = l, m
         self.Ncoeff = len(l)
-        self.separate_variables = separate_variables
         self.device = None
         self.default_kw = {} if default_kw is None else default_kw
         self.clear_Ylm_cache()
+        self.clear_multigrid()
 
     def __call__(self, params, **kwargs):
         return self.forward_alm(params, **kwargs)
@@ -1237,14 +1225,41 @@ class AlmModel:
 
         Will use transform matrices if passed, otherwise will
         use matrices attached to self.
+
+        Parameters
+        ----------
+        Ylm : tensor or tuple, optional
+            A forward model Ylm matrix (Ncoeff, Npix)
+            or a tuple holding (Theta, Phi) if separable
+        alm_mult : tensor, optional
+            Multiply params by this before taking forward transform
         """
+        if Ylm is None and self.multigrid is not None:
+            # iterate over multiple grids
+            out = []
+            for h in self.multigrid:
+                # get the cache for this key
+                c = self.Ylm_cache[h]
+                Ylm, alm_mult = c['Ylm'], c['alm_mult']
+                angs, separable = c['angs'], c['separable']
+                out.append(self.forward_alm(params, Ylm=Ylm, alm_mult=alm_mult))
+
+            out = torch.cat(out, dim=-1)
+            if self._multigrid_idx is not None:
+                out = torch.index_select(out, -1, self._multigrid_idx)
+
+            return out
+
         # get relevant transform matrices
         if Ylm is None:
             Ylm = self.Ylm
             alm_mult = self.alm_mult
+            separable = self.separable
+        else:
+            separable = isinstance(Ylm, (list, tuple))
 
         # convert params to complex if needed
-        if self.separate_variables:
+        if separable:
             if torch.is_complex(Ylm[1]) and not torch.is_complex(params):
                 params = utils.viewcomp(params)
         else:
@@ -1255,7 +1270,7 @@ class AlmModel:
         if alm_mult is not None:
             params = params * alm_mult
 
-        if self.separate_variables:
+        if separable:
             Theta, Phi = Ylm
             # assume Theta and Phi are separable: (..., Ncoeff)
             # first broadcast self.Theta -> (..., Ncoeff, Ntheta)
@@ -1270,37 +1285,40 @@ class AlmModel:
             # full transform
             return torch.einsum("...i,ij->...j", params, Ylm)
 
-    def setup_angs(self, theta, phi):
+    @staticmethod
+    def setup_angs(theta, phi, separable):
         """
-        If separate_variables, takes theta & phi grid points
+        If separable, takes theta & phi grid points
         and meshes and flattens them. Otherwise return as is.
 
         Parameters
         ----------
         theta : array
             Polar (co-latitude) angles in degrees
-            of shape (Npix,). If separate_variables,
+            of shape (Npix,). If separable,
             this holds only the unique grid points.
         phi : array
             Azimuthal (longitude) angles in degrees
             of shape (Npix,), with a start convention
-            of North of East. If separate_variables,
+            of North of East. If separable,
             this holds only the unique grid points.
+        separable: bool, optional
+            Whether theta / phi are grid points or not.
 
         Returns
         -------
         theta, phi : array
             Samples for each pixel on the sky
         """
-        if self.separate_variables:
-            phi_arr, theta_arr = np.meshgrid(phi, theta)
+        if separable:
+            phi_arr, theta_arr = np.meshgrid(phi, theta, copy=False)
             phi = phi_arr.ravel()
             theta = theta_arr.ravel()
 
         return theta, phi
 
     def setup_Ylm(self, theta, phi, Ylm=None, alm_mult=None,
-                  cache=True, **kwargs):
+                  separable=False, cache=True, h=None, **kwargs):
         """
         Setup forward transform matrices.
         Sets self.Ylm, self.alm_mult
@@ -1309,62 +1327,79 @@ class AlmModel:
         ----------
         theta : array
             Polar (co-latitude) angles in degrees
-            of shape (Npix,). If separate_variables,
+            of shape (Npix,). If separable,
             this holds only the unique grid points.
         phi : array
             Azimuthal (longitude) angles in degrees
             of shape (Npix,), with a start convention
-            of North of East. If separate_variables,
+            of North of East. If separable,
             this holds only the unique grid points.
         Ylm : tensor, optional
             Full polar and azimuthal transform matrix
-            of shape (Nmodes, Npix) if separate_variables = False.
-            If separate_variables = True, then this is
+            of shape (Nmodes, Npix) if separable = False.
+            If separable = True, then this is
             (Theta, Phi) where Theta is (Nmodes, Ntheta_uniq)
             and Phi is (Nmodes, Nphi_uniq).
             Default is to generate this given kwargs.
         alm_mult : tensor, optional
             Multiply parameter tensor by these coefficients
             before taking forward transform.
+        separable : bool, optional
+            If True, assume that theta and phi are sampled on a
+            uniform rectangular grid, in which case theta and phi
+            represent the unique, monotonically increasing grid values,
+            stored as self.theta_grid and self.phi_grid, and theta and phi
+            are converted to their full array shape
+            as np.meshgrid(phi, theta).ravel().
+            This can reduce memory overhead by over OOM.
+            if separable = False.
+            Otherwise, compute the full Ylm and perform both
+            transforms simultaneously.
         cache : bool, optional
             If True, also store the Ylm or (Theta, Phi) matrices
             in the cache along with the sky angles hashed.
+        h : int, optional
+            Hash for the theta array. If not provided will
+            compute it.
         kwargs : dict, optional
             Kwargs to pass to gen_sph2pix(). These supercede the
             default kwargs in self.default_kw
         """
         # set angles
         self.theta, self.phi = theta, phi
-        if self.separate_variables:
+        if separable:
             self.theta_grid, self.phi_grid = theta, phi
-            self.theta, self.phi = self.setup_angs(theta, phi)
+            self.theta, self.phi = self.setup_angs(theta, phi, separable)
 
         # generate Ylm transform if needed
         if Ylm is None:
             kw = copy.deepcopy(self.default_kw)
             kw.update(kwargs)
-            if self.separate_variables:
+            if separable:
                 th, ph = self.theta_grid, self.phi_grid
             else:
                 th, ph = self.theta, self.phi
             Ylm, _, alm_mult = gen_sph2pix(th * utils.D2R,
                                            ph * utils.D2R,
                                            self.l, self.m,
-                                           separate_variables=self.separate_variables,
+                                           separable=separable,
                                            device=self.device,
                                            **kw)
         self.Ylm = Ylm
         self.alm_mult = alm_mult
+        self.separable = separable
+        if separable:
+            assert isinstance(Ylm, (tuple, list))
 
         # cache if needed
         if cache:
-            if self.separate_variables:
+            if separable:
                 angs = (self.theta_grid, self.phi_grid)
             else:
                 angs = (theta, phi)
-            self.set_Ylm(Ylm, angs, alm_mult=alm_mult)
+            self.set_Ylm(Ylm, angs, alm_mult=alm_mult, h=h)
 
-    def get_Ylm(self, theta, phi):
+    def get_Ylm(self, theta, phi, separable, h=None):
         """
         Query cache for Y_lm matrix, otherwise generate it.
 
@@ -1373,8 +1408,13 @@ class AlmModel:
         theta, phi : ndarrays
             Zenith angle (co-latitude) and
             azimuth (longitude) [deg] for
-            all sky pixels. If separate_variables,
+            all sky pixels. If separable,
             then these are the unique grid points.
+        separable : bool
+            Whether theta/phi represent grid points or not.
+        h : int, optional
+            The arr_hash for theta used in the Ylm_cache.
+            If not provided will compute it.
 
         Returns
         -------
@@ -1386,27 +1426,28 @@ class AlmModel:
             if not stored return None
         """
         # get hash
-        h = utils.arr_hash(theta)
+        h = h if h is not None else utils.arr_hash(theta)
         if h in self.Ylm_cache:
             Ylm = self.Ylm_cache[h]['Ylm']
             theta, phi = self.Ylm_cache[h]['angs']
-            if self.separate_variables:
+            if separable:
                 self.theta_grid, self.phi_grid = theta, phi
-                theta, phi = self.setup_angs(theta, phi)
+                theta, phi = self.setup_angs(theta, phi, separable)
             alm_mult = self.Ylm_cache[h]['alm_mult']
 
         else:
-            self.setup_Ylm(theta, phi, cache=True)
+            self.setup_Ylm(theta, phi, cache=True, h=h)
             Ylm = self.Ylm
             alm_mult = self.alm_mult
 
         self.Ylm = Ylm
         self.theta, self.phi = theta, phi
         self.alm_mult = alm_mult
+        self.separable = separable
 
         return Ylm, alm_mult
 
-    def set_Ylm(self, Ylm, angs, alm_mult=None):
+    def set_Ylm(self, Ylm, angs, alm_mult=None, h=None):
         """
         Insert a forward model Ylm matrix into the cache
 
@@ -1415,19 +1456,30 @@ class AlmModel:
         Ylm : tensor
             Ylm forward model matrix of shape (Nmodes, Npix)
             or (Theta, Phi) tuple of shape (Nmodes, Ntheta)
-            and (Nmodes, Nphi) if separate_variables
+            and (Nmodes, Nphi) if angs are separable.
         angs : tuple
             sky angles of Ylm pixels of shape (2, Npix)
             holding (zenith, azimuth) in [deg].
-            If separate_variables, this should be passed as
+            If separable, this should be passed as
             (theta_grid, phi_grid).
         alm_mult : tensor, optional
             multiply this (Nmodes,) tensor into alm tensor
             before forward pass
+        h : int, optional
+            Hash for the provided theta array. Will compute
+            if not provided.
+
+        Returns
+        -------
+        h : int
+            The key used to cache the inputs in Ylm_cache
         """
         theta, phi = angs
-        h = utils.arr_hash(theta)
-        self.Ylm_cache[h] = dict(Ylm=Ylm, angs=angs, alm_mult=alm_mult)
+        h = h if h is not None else utils.arr_hash(theta)
+        separable = isinstance(Ylm, (tuple, list))
+        self.Ylm_cache[h] = dict(Ylm=Ylm, angs=angs, separable=separable,
+                                 alm_mult=alm_mult)
+        return h
 
     def clear_Ylm_cache(self):
         """
@@ -1439,8 +1491,8 @@ class AlmModel:
         """
         Compute a least squares estimate of the params
         tensor given observations of shape (..., Npix).
-        
-        If self.separate_variables, will take outer-product
+
+        If self.separable, will take outer-product
         of self.Theta and self.Phi to form the full Ylm
         matrix in order to compute its inverse,
         which can be memory intensive.
@@ -1461,13 +1513,24 @@ class AlmModel:
         tensor
         """
         from bayeslim.linalg import least_squares
-        if self.separate_variables:
-            Theta, Phi = self.Ylm
-            # take outer product to form Ylm
-            Ylm = torch.einsum("cp,ct->cpt", Phi, Theta)
-            Ylm = Ylm.view(-1, Phi.shape[1] * Theta.shape[1])
+
+        def inflate(Ylm):
+            if isinstance(Ylm, (tuple, list)):
+                # this is separable = True
+                Theta, Phi = Ylm
+                # take outer product to form Ylm
+                Ylm = torch.einsum("cp,ct->cpt", Phi, Theta)
+                Ylm = Ylm.view(-1, Phi.shape[1] * Theta.shape[1])
+            return Ylm
+
+        # inflate Ylm to full (Ncoeff, Npix) shape
+        if self.multigrid is not None:
+            # collect all of the sub-grids if using multiple
+            Ylm = torch.cat([inflate(Y) for Y in self.Ylms], dim=-1)
+            if self._multigrid_idx is not None:
+                Ylm = torch.index_select(Ylm, -1, self._multigrid_idx)
         else:
-            Ylm = self.Ylm
+            Ylm = inflate(self.Ylm)
 
         # get D if cached
         if hasattr(self, '_D') and 'D' not in kwargs:
@@ -1536,6 +1599,9 @@ class AlmModel:
         if hasattr(self, 'alm_mult') and self.alm_mult is not None:
             self.alm_mult = utils.push(self.alm_mult, device)
 
+        if self._multigrid_idx is not None and not dtype:
+            self._multigrid_idx = self._multigrid_idx.to(device)
+
         for k in self.Ylm_cache:
             # push Ylms in cache
             Ylm = self.Ylm_cache[k]['Ylm']
@@ -1554,4 +1620,39 @@ class AlmModel:
 
         if not dtype:
             self.device = device
+
+    def setup_multigrid_forward(self, thetas, phis, Ylms, alm_mults, idx=None):
+        """
+        Setup multiple Ylm matrices at distinct theta/phi points
+        for the forward model. For a single call for self.forward_alm()
+        each Ylm in Ylms will be called and the outputs will be
+        concatenated. Sets self.multigrid
+
+        Parameters
+        ----------
+        thetas : list
+            List of theta arrays
+        phis : list
+            List of phi arrays
+        Ylms : list
+            List of Ylm matrices. Can have separable and non-separable
+            Ylms together.
+        alm_mults : list
+            alm multiplies for each Ylm in Ylms
+        idx : tensor, optional
+            Indexing tensor to sort final concatenated output
+        """
+        # iterate over every element in Ylms
+        self.multigrid = []
+        self._multigrid_idx = idx
+        for th, ph, Y, a in zip(thetas, phis, Ylms, alm_mults):
+            h = self.set_Ylm(Y, (th, ph), alm_mult=a)
+            self.multigrid.append(h)
+
+    def clear_multigrid(self):
+        """
+        Remove multiple grids in the forward model
+        """
+        self.multigrid = None
+        self._multigrid_idx = None
 
