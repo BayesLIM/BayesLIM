@@ -1414,9 +1414,13 @@ class AlmModel:
             then these are the unique grid points.
         separable : bool
             Whether theta/phi represent grid points or not.
+            If you are pulling from the cache, this kwarg
+            doesn't matter. If you are setting the cache,
+            then this matters.
         h : int, optional
             The arr_hash for theta used in the Ylm_cache.
-            If not provided will compute it.
+            If not provided will compute it using
+            utils.arr_hash()
 
         Returns
         -------

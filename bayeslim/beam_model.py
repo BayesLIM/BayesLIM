@@ -1116,7 +1116,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         p = self.lm_poly_forward(p)
 
         # get Ylms
-        Ylm, alm_mult = self.get_Ylm(zen, az)
+        Ylm, alm_mult = self.get_Ylm(zen, az, h=zen._arr_hash if hasattr(zen, '_arr_hash') else None)
 
         # next forward to pixel space via slower dot product over Ncoeff
         beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult)
