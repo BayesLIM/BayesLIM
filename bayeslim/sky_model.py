@@ -1256,5 +1256,5 @@ def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None
     with torch.no_grad():
         if obj.p0 is not None:
             obj.p0 = obj.p0[..., s, :]
-        obj.param.data = obj.params.data[..., s, :]
+        obj.params.data = obj.params.data[..., s, :]
 
