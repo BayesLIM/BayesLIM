@@ -1248,22 +1248,13 @@ def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None
         A custom boolean array
         indexing lm axis.
     """
-    s = np.ones(len(obj.R.l), dtype=bool)
-    if lmin is not None:
-        s = s & (obj.R.l >= lmin)
-    if lmax is not None:
-        s = s & (obj.R.l <= lmax)
-    if mmin is not None:
-        s = s & (obj.R.m >= mmin)
-    if mmax is not None:
-        s = s & (obj.R.m <= mmax)
-    if other is not None:
-        s = s & (other)
+    assert hasattr(obj.R, 'Alm')
+    # get indexing tensor
+    s = obj.R.Alm.select(lmin=lmin, lmax=lmax, mmin=mmin, mmax=mmax, other=other)
 
-    obj.R.Ylm = obj.R.Ylm[s]
+    # now index params
     with torch.no_grad():
         if obj.p0 is not None:
             obj.p0 = obj.p0[..., s, :]
-        obj['params'] = obj.params[..., s, :]
-    obj.R.alm_mult = obj.R.alm_mult[s]
-    obj.R.l, obj.R.m = obj.R.l[s], obj.R.m[s]
+        obj.param.data = obj.params.data[..., s, :]
+

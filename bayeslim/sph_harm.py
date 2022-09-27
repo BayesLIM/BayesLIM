@@ -617,7 +617,7 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
     ----------
     fname : str
         Filepath of output hdf5 file
-    Ylm : array
+    Ylm : array or tuple
         Ylm matrix of shape (Ncoeff, Npix)
         or a tuple of two matrices (Theta, Phi)
         of shape (Ncoeff, Ntheta) and (Ncoeff, Nphi)
@@ -1210,7 +1210,6 @@ class AlmModel:
             from gen_sph2pix. 
         """
         self.l, self.m = l, m
-        self.Ncoeff = len(l)
         self.device = None
         self.default_kw = {} if default_kw is None else default_kw
         self.clear_Ylm_cache()
@@ -1324,7 +1323,7 @@ class AlmModel:
         """
         Setup forward transform matrices.
         If Ylm is not provided, generate it.
-        Sets self.Ylm, self.alm_mult
+        Sets Ylm, self.alm_mult
 
         Parameters
         ----------
@@ -1621,7 +1620,7 @@ class AlmModel:
         Setup multiple Ylm matrices at distinct theta/phi points
         for the forward model. For a single call for self.forward_alm()
         each Ylm in Ylms will be called and the outputs will be
-        concatenated. Sets self.multigrid
+        concatenated across the Npix dimension. Sets self.multigrid
 
         Parameters
         ----------
@@ -1635,7 +1634,7 @@ class AlmModel:
         alm_mults : list
             alm multiplies for each Ylm in Ylms
         idx : tensor, optional
-            Indexing tensor to sort final concatenated output
+            Indexing tensor over Npix axis to sort final concatenated output
         """
         # iterate over every element in Ylms
         self.multigrid = []
@@ -1651,6 +1650,75 @@ class AlmModel:
         self.multigrid = None
         self._multigrid_idx = None
 
+    def select(self, lm=None, lmin=None, lmax=None, mmin=None, mmax=None,
+               other=None, atol=1e-10):
+        """
+        Down select on l and m modes. Operates in place.
+
+        Parameters
+        ----------
+        lm : array, optional
+            Array of l and m mode pairs to keep of shape
+            (2, Nkeep), i.e. (l_keep, m_keep).
+        lmin : float, optional
+            Minimum l to keep
+        lmax : float, optional
+            Maximum l to keep
+        mmin : float, optional
+            Minimum m to keep
+        mmax : float, optional
+            Maximum m to keep
+        other : array, optional
+            Additional boolean array of shape (Nmodes,) to use
+            when indexing.
+        atol : float, optional
+            tolerance to use when comparing l and m modes
+
+        Returns
+        -------
+        s : tensor
+            indexing tensor
+        """
+        # get indexing array
+        s = np.ones(len(self.l), dtype=bool)
+        if other is not None:
+            s = s & other
+        if lm is not None:
+            _s = []
+            for _l, _m in zip(*lm):
+                _s.append((np.isclose(self.l, _l, atol=atol, rtol=1e-10) \
+                          & np.isclose(self.m, _m, atol=atol, rtol=1e-10)).any())
+            s = s & np.asarray(_s)
+        if lmin is not None:
+            s = s & (self.l >= lmin)
+        if lmax is not None:
+            s = s & (self.l <= lmax)
+        if mmin is not None:
+            s = s & (self.m >= mmin)
+        if mmax is not None:
+            s = s & (self.m <= mmax)
+
+        def index_Ylm(Ylm, idx):
+            if isinstance(Ylm, (tuple, list)):
+                return (Ylm[0][idx], Ylm[1][idx])
+            else:
+                return Ylm[idx]
+
+        # index relevant quantities
+        self.l = self.l[s]
+        self.m = self.m[s]
+        if hasattr(self, 'Ylm'):
+            self.Ylm = index_Ylm(self.Ylm, s)
+        if hasattr(self, 'alm_mult') and self.alm_mult is not None:
+            self.alm_mult = self.alm_mult[s]
+        if hasattr(self, '_D'):
+            self._D = self._D[s, :][:, s]
+        for k in self.Ylm_cache:
+            self.Ylm_cache[k]['Ylm'] = index_Ylm(self.Ylm_cache[k]['Ylm'], s)
+            if self.Ylm_cache[k]['alm_mult'] is not None:
+                self.Ylm_cache[k]['alm_mult'] = self.Ylm_cache[k]['alm_mult'][s]
+
+        return s
 
 def inflate_Ylm(Ylm):
     """
