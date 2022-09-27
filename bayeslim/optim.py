@@ -60,7 +60,7 @@ class BaseLogPrior:
         if not dtype:
             if self.index is not None:
                 index = []
-                for idx in self.indx:
+                for idx in self.index:
                     if isinstance(idx, (torch.Tensor, np.ndarray)):
                         idx = torch.as_tensor(idx, device=device)
                     index.append(idx)
