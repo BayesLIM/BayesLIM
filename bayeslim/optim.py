@@ -56,6 +56,17 @@ class BaseLogPrior:
 
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
+        # push index if needed
+        if not dtype:
+            if self.index is not None:
+                index = []
+                for idx in self.indx:
+                    if isinstance(idx, (torch.Tensor, np.ndarray)):
+                        idx = torch.as_tensor(idx, device=device)
+                    index.append(idx)
+                self.index = tuple(index)
+
+        # push specified attributes
         for attr in self.attrs:
             if hasattr(self, attr):
                 a = getattr(self, attr)
