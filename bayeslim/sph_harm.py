@@ -1518,23 +1518,14 @@ class AlmModel:
         """
         from bayeslim.linalg import least_squares
 
-        def inflate(Ylm):
-            if isinstance(Ylm, (tuple, list)):
-                # this is separable = True
-                Theta, Phi = Ylm
-                # take outer product to form Ylm
-                Ylm = torch.einsum("cp,ct->cpt", Phi, Theta)
-                Ylm = Ylm.view(-1, Phi.shape[1] * Theta.shape[1])
-            return Ylm
-
         # inflate Ylm to full (Ncoeff, Npix) shape
         if self.multigrid is not None:
             # collect all of the sub-grids if using multiple
-            Ylm = torch.cat([inflate(Y) for Y in self.Ylms], dim=-1)
+            Ylm = torch.cat([inflate_Ylm(Y) for Y in self.Ylms], dim=-1)
             if self._multigrid_idx is not None:
                 Ylm = torch.index_select(Ylm, -1, self._multigrid_idx)
         else:
-            Ylm = inflate(self.Ylm)
+            Ylm = inflate_Ylm(self.Ylm)
 
         # get D if cached
         if hasattr(self, '_D') and 'D' not in kwargs:
@@ -1659,4 +1650,31 @@ class AlmModel:
         """
         self.multigrid = None
         self._multigrid_idx = None
+
+
+def inflate_Ylm(Ylm):
+    """
+    If Ylm is separable, i.e. given as (Theta, Phi)
+    inflate it to full Ylm size, otherwise
+    return as is
+    
+    Parameters
+    ----------
+    Ylm : tensor or tuple
+        If Ylm is (Ncoeff, Npix) tensor, return as-is,
+        or if Ylm is (Theta, Phi) tuple take outer-product
+        and return as (Ncoeff, Npix)
+
+    Returns
+    -------
+    tensor
+    """
+    if isinstance(Ylm, (tuple, list)):
+        # this is separable = True
+        Theta, Phi = Ylm
+        # take outer product to form Ylm
+        Ylm = torch.einsum("cp,ct->cpt", Phi, Theta)
+        Ylm = Ylm.view(-1, Phi.shape[1] * Theta.shape[1])
+
+    return Ylm
 
