@@ -530,7 +530,7 @@ class JonesModel(utils.Module, IndexCache):
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
-        if self.p0:
+        if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
@@ -887,7 +887,7 @@ class RedVisModel(utils.Module, IndexCache):
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        if self.p0:
+        if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         if not dtype:
             for h in self.cache_bidx:
@@ -1016,7 +1016,7 @@ class VisModel(utils.Module, IndexCache):
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        if self.p0:
+        if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
@@ -1194,7 +1194,7 @@ class VisCoupling(utils.Module):
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        if self.p0:
+        if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         # push prior functions
         if self.priors_inp_params is not None:
