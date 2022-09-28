@@ -805,7 +805,7 @@ class LogProb(utils.Module):
                 # if compute is prior, clear any attached graph tensors
                 # in all modules such they are regenerated during this
                 # forward call (e.g. beam.R.beam_cache)
-                for mod in self.modules:
+                for mod in self.modules():
                     mod.clear_graph_tensors()
 
             # evaluate prior
