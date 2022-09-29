@@ -672,7 +672,8 @@ class JonesResponse(BaseResponse):
         elif 'dly' in self.param_type:
             assert self.freqs is not None, 'need frequencies for delay gain type'
 
-        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'real', 'phs_slope', 'dly_slope']
+        assert self.param_type in ['com', 'amp', 'phs', 'dly', 'real',
+                                   'amp_phs', 'phs_slope', 'dly_slope']
 
     def params2complex(self, jones):
         """
