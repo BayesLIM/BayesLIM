@@ -27,7 +27,7 @@ class BaseResponse:
         param_type : str, optional
             dtype of input params. If 'com' push linear A matrices
             to complex type, and viewcomp params when input.
-            options = ['com', 'real', 'amp', 'phs']
+            options = ['com', 'real', 'amp', 'phs', 'amp_phs']
         device : str, optional
             Device to place class attributes if needed
         freq_kwargs : dict, optional
@@ -163,6 +163,9 @@ class BaseResponse:
 
         elif self.param_type == 'phs':
             params = torch.exp(1j * params)
+
+        elif self.param_type == 'amp_phs':
+            params = torch.exp(params[..., 0] + 1j * params[..., 1])
 
         return params
 
@@ -1064,10 +1067,6 @@ class VisModelResponse(BaseResponse):
         complex visibility model per time and frequency
         """
         params = super().forward(params)
-
-        # detect if params needs to be casted into complex
-        if self.param_type == 'amp_phs':
-            params = torch.exp(params[..., 0] + 1j * params[..., 1])
 
         return params
 
