@@ -1356,7 +1356,8 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
         Antenna gain parameters of shape
         (Npol, Npol, Nants, Ntimes, Nfreqs)
     param_type : str
-        Type of params tensor ['com', 'phs', 'dly', 'amp']
+        Type of params tensor ['com', 'phs', 'dly', 'amp', 'amp_phs']
+        If 'amp_phs', params is (..., 2) ordered as (amp, phs) on last dim.
     refant_idx : int
         Reference antenna index in Nants axis of params
     p0 : tensor, optional
@@ -1418,6 +1419,11 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
             params -= params[:, :, refant_idx:refant_idx+1].clone()
             p0 -= p0[:, :, refant_idx:refant_idx+1].clone()
 
+        elif param_type == 'amp_phs':
+            # subtract phs of refant
+            params[..., 1] -= params[:, :, refant_idx:refant_idx+1, ..., 1].clone()
+            p0[..., 1] -= p0[:, :, refant_idx:refant_idx+1, ..., 1].clone()
+
     elif mode == 'zero':
         # just zero-out refant imag component (or dly / phs)
         if param_type == 'com':
@@ -1437,12 +1443,19 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
                 p0.imag[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                     p0.imag[:, :, refant_idx:refant_idx+1]
                 )
-        elif param_type in ['dly', 'phs']:
+        elif param_type in ['dly', 'phs', 'amp_phs']:
             params[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                 params[:, :, refant_idx:refant_idx+1]
             )
             p0[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                 p0[:, :, refant_idx:refant_idx+1]
+            )
+        elif param_type == 'amp_phs':
+            params[:, :, refant_idx:refant_idx+1, ..., 1] = torch.zeros_like(
+                params[:, :, refant_idx:refant_idx+1, ..., 1]
+            )
+            p0[:, :, refant_idx:refant_idx+1, ..., 1] = torch.zeros_like(
+                p0[:, :, refant_idx:refant_idx+1, ..., 1]
             )
 
     if not inplace:
