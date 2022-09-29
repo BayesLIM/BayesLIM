@@ -28,6 +28,9 @@ class BaseResponse:
             dtype of input params. If 'com' push linear A matrices
             to complex type, and viewcomp params when input.
             options = ['com', 'real', 'amp', 'phs', 'amp_phs']
+            If param_type is 'amp_phs', input params should be
+            have (..., Ntimes, Nfreqs, 2) where the last dim holds
+            (amp, phs) respectively.
         device : str, optional
             Device to place class attributes if needed
         freq_kwargs : dict, optional
@@ -72,7 +75,7 @@ class BaseResponse:
             if times is not None:
                 kwgs['x'] = times
             kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-            self.time_LM = utils.LinearModel(linear_mode, dim=-2,
+            self.time_LM = utils.LinearModel(linear_mode, dim=3,
                                              device=self.device, **kwgs)
             self.Ntime_params = self.time_LM.A.shape[1]
 
@@ -102,7 +105,7 @@ class BaseResponse:
             kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
             if freqs is not None:
                 kwgs['x'] = freqs
-            self.freq_LM = utils.LinearModel(linear_mode, dim=-1,
+            self.freq_LM = utils.LinearModel(linear_mode, dim=4,
                                              device=self.device, **kwgs)
             self.Nfreq_params = self.freq_LM.A.shape[1]
 
