@@ -487,6 +487,12 @@ class LogProb(utils.Module):
             a 2-tuple as (str, index)
             e.g. [('sky.params', (range(10), 0, 0)), ...]
         """
+        # if main_params already exists, turn keys back into Parameters
+        if hasattr(self, "_main_indices") and self._main_indices is not None:
+            for param in self._main_indices:
+                self.model.set_param(param)
+
+        # create blank main_params
         self.main_params = None
         self._main_indices = None
         self._main_shapes = None
