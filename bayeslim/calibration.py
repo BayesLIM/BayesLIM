@@ -1375,6 +1375,9 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
     p0 : tensor
         rephased (or zero'd) p0 tensor if not inplace
     """
+    if refant_idx is None:
+        return
+
     if p0 is None:
         p0 = torch.zeros_like(params)
 
