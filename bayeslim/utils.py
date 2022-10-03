@@ -2000,6 +2000,28 @@ def grad_hook_assign(value, index=()):
     return hook
 
 
+def grad_hook_mult(value, index=()):
+    """
+    This retuns a callable hook function, which indexes
+    the grad tensor and multiplies by value.
+
+    Parameters
+    ----------
+    value : float or tensor
+    index : tuple, optional
+
+    Returns
+    -------
+    callable
+    """
+    def hook(grad):
+        new_grad = grad.clone()
+        new_grad[index] *= value
+        return new_grad
+
+    return hook
+
+
 def grad_hook_modify(func):
     """
     This retuns a callable hook function, takes
