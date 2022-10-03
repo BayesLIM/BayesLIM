@@ -1978,14 +1978,13 @@ def grad_hook_store(store, assign):
     return hook
 
 
-def grad_hook_assign(value, index=None):
+def grad_hook_assign(value, index=()):
     """
     This retuns a callable hook function, which indexes
     the input grad tensor and assigns its elements as value.
 
     Parameters
     ----------
-    grad : tensor
     value : float or tensor
     index : tuple, optional
 
@@ -1994,8 +1993,6 @@ def grad_hook_assign(value, index=None):
     callable
     """
     def hook(grad):
-        if index is None:
-            index = ()
         grad[index] = value
 
     return hook
@@ -2009,7 +2006,6 @@ def grad_hook_modify(func):
 
     Parameters
     ----------
-    grad : tensor
     func : callable, optional
 
     Returns
