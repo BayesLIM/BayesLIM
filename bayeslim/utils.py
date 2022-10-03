@@ -1362,7 +1362,6 @@ class Module(torch.nn.Module):
         self.__version__ = version.__version__
         self.set_priors()
         self._name = name
-        self.clear_response_grad()
 
     @property
     def name(self):
@@ -1523,23 +1522,36 @@ class Module(torch.nn.Module):
 
             prior_cache[self.name] = prior_value
 
-    def clear_response_grad(self):
-        self.response_grad = None
-        for mod in self.modules():
-            if hasattr(mod, 'clear_response_grad'):
-                mod.response_grad = None
+    def register_hooks(self, registry=None):
+        """
+        Setup a registry of gradient hooks to apply to 
+        the output of the params tensor after passing through
+        the response function. Default is no hooks. Clear these hooks
+        by calling this function with empty kwargs.
+        Sets self._hook_registry
 
-    def response_grad_hook(self, grad):
-        if not hasattr(self, 'response_grad') or self.response_grad is None:
-            self.response_grad = grad.clone()
-        else:
-            self.response_grad += grad
+        Parameters
+        ----------
+        registry : list, optional
+            List of hook() callables. grad_hook*() functions.
+        """
+        if registry is not None and not isinstance(registry, (list, tuple)):
+            registry = [registry]
+        self._hook_registry = registry
 
     def clear_graph_tensors(self):
         """
         If any graph tensors are attached to self, use
         this function to clear them, i.e. del them
-        or set them to None
+        or set them to None, in order to send them
+        to garbage collection and not lead to a
+        stale graph. For example, for PixelBeam
+        in interpolate mode, the forward modeled
+        beam is set as self.beam_cache, which can
+        be interpolated against at all unique times
+        of the simulation. Before each new forward
+        call (i.e. after the previous L.backward())
+        this tensor must be cleared
         """
         pass
 
@@ -1943,6 +1955,72 @@ def device(d):
     if d is None:
         d = 'cpu'
     return torch.device(d)
+
+
+def grad_hook_store(store, assign):
+    """
+    This returns a callable hook function, which assigns
+    an input grad tensor into the store dictionary with
+    key assign
+
+    Parameters
+    ----------
+    store : dictionary
+    assign : str
+
+    Returns
+    -------
+    callable
+    """
+    def hook(grad):
+        store[assign] = grad
+
+    return hook
+
+
+def grad_hook_assign(grad, value, index=None):
+    """
+    This retuns a callable hook function, which indexes
+    the input grad tensor and assigns its elements as value.
+
+    Parameters
+    ----------
+    grad : tensor
+    value : float or tensor
+    index : tuple, optional
+
+    Returns
+    -------
+    callable
+    """
+    def hook(grad):
+        if index is None:
+            index = ()
+        grad[index] = value
+
+    return hook
+
+
+def grad_hook_modify(grad, func=None):
+    """
+    This retuns a callable hook function, takes
+    grad and passes it through a generalized
+    function func.
+
+    Parameters
+    ----------
+    grad : tensor
+    func : callable, optional
+
+    Returns
+    -------
+    callable
+
+    """
+    def hook(grad):
+        func(grad)
+
+    return hook
 
 
 def fit_zero(x, y):

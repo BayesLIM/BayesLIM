@@ -507,10 +507,11 @@ class JonesModel(utils.Module, IndexCache):
         if jones is None:
             jones = self.R(params)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if jones.requires_grad:
-                jones.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    jones.register_hook(r)
 
         # evaluate priors on full jones tensor size
         self.eval_prior(prior_cache, inp_params=self.params, out_params=jones)
@@ -836,10 +837,11 @@ class RedVisModel(utils.Module, IndexCache):
             params = self.params
         redvis = self.R(params)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if redvis.requires_grad:
-                redvis.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    redvis.register_hook(r)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
@@ -998,10 +1000,11 @@ class VisModel(utils.Module, IndexCache):
             params = self.params
         vis = self.R(params)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if vis.requires_grad:
-                vis.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    vis.register_hook(r)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
@@ -1153,10 +1156,11 @@ class VisCoupling(utils.Module):
             params = self.params
         coupling = self.R(params)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if coupling.requires_grad:
-                coupling.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    coupling.register_hook(r)
 
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=coupling)

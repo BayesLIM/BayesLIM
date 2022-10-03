@@ -129,12 +129,6 @@ class SkyBase(utils.Module):
             self.R.freqs = freqs.to(self.device)
             self.R._setup()
 
-    def hook_response_grad(self, value=True):
-        """
-        Store gradient of response output as self.response_grad
-        """
-        self._hook_response_grad = value
-
 
 class DefaultResponse:
     """
@@ -258,10 +252,11 @@ class PointSky(SkyBase):
         # pass through response
         sky = self.R(p)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if sky.requires_grad:
-                sky.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    sky.register_hook(r)
 
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)
@@ -468,10 +463,11 @@ class PixelSky(SkyBase):
         # pass through response
         sky = self.R(p)
 
-        # register gradient hook if desired
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if sky.requires_grad:
-                sky.register_hook(self.response_grad_hook)
+                for r in self._hook_registry:
+                    sky.register_hook(r)
 
         # evaluate prior on self.params (not params + p0)
         self.eval_prior(prior_cache, inp_params=self.params, out_params=sky)

@@ -232,11 +232,12 @@ class PixelBeam(utils.Module):
         # evaluate the beam!
         beam = self.R(p, new_zen, new_az, self.freqs)
 
-        # register gradient hook if desired (only works for interpolate mode)
-        if hasattr(self, '_hook_response_grad') and self._hook_response_grad:
+        # register gradient hooks if desired (only works for interpolate mode)
+        if hasattr(self, '_hook_registry') and self._hook_registry is not None:
             if hasattr(self.R, 'beam_cache') and self.R.beam_cache is not None:
                 if self.R.beam_cache.requires_grad:
-                    self.R.beam_cache.register_hook(self.response_grad_hook)
+                    for r in self._hook_registry:
+                        self.R.beam_cache.register_hook(r)
 
         # evaluate prior
         self.eval_prior(prior_cache)
@@ -534,12 +535,6 @@ class PixelBeam(utils.Module):
     def clear_cache(self):
         """clear the sky cut cache"""
         self.cache = {}
-
-    def hook_response_grad(self, value=True):
-        """
-        Store gradient of response output as self.response_grad
-        """
-        self._hook_response_grad = value
 
 
 class PixelResponse(utils.PixInterp):
