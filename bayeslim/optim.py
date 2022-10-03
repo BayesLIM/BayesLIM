@@ -258,15 +258,7 @@ class LogGaussPrior(BaseLogPrior):
         self.sparse_cov = sparse_cov
         self.side = side
         self.density = density
-        if self.sparse_cov:
-            self.icov = 1 / self.cov
-            self.logdet = torch.sum(torch.log(self.cov))
-            self.ndim = sum(self.cov.shape)
-        else:
-            self.icov = torch.linalg.pinv(self.cov)
-            self.logdet = torch.slogdet(self.cov).logabsdet
-            self.ndim = len(self.cov)
-        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+        self.compute_icov()
 
     def forward(self, params):
         """
@@ -294,6 +286,21 @@ class LogGaussPrior(BaseLogPrior):
             out -= self.norm
 
         return out
+
+    def compute_icov(self):
+        """
+        Takes self.cov and computes and sets self.icov
+        """
+        if self.sparse_cov:
+            self.icov = 1 / self.cov
+            self.logdet = torch.sum(torch.log(self.cov))
+            self.ndim = sum(self.cov.shape)
+        else:
+            self.icov = torch.linalg.pinv(self.cov, hermitian=True)
+            self.logdet = torch.slogdet(self.cov).logabsdet
+            self.ndim = len(self.cov)
+        self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
+        self.icov = self.icov.to(self.mean.device)
 
 
 class LogLaplacePrior(BaseLogPrior):
