@@ -1993,7 +1993,9 @@ def grad_hook_assign(value, index=()):
     callable
     """
     def hook(grad):
-        grad[index] = value
+        new_grad = grad.clone()
+        new_grad[index] = value
+        return new_grad
 
     return hook
 
@@ -2014,7 +2016,7 @@ def grad_hook_modify(func):
 
     """
     def hook(grad):
-        func(grad)
+        return func(grad)
 
     return hook
 
