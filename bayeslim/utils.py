@@ -1522,7 +1522,7 @@ class Module(torch.nn.Module):
 
             prior_cache[self.name] = prior_value
 
-    def register_hooks(self, registry=None):
+    def register_response_hooks(self, registry=None):
         """
         Setup a registry of gradient hooks to apply to 
         the output of the params tensor after passing through
