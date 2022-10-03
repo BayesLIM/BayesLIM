@@ -1978,7 +1978,7 @@ def grad_hook_store(store, assign):
     return hook
 
 
-def grad_hook_assign(grad, value, index=None):
+def grad_hook_assign(value, index=None):
     """
     This retuns a callable hook function, which indexes
     the input grad tensor and assigns its elements as value.
@@ -2001,7 +2001,7 @@ def grad_hook_assign(grad, value, index=None):
     return hook
 
 
-def grad_hook_modify(grad, func=None):
+def grad_hook_modify(func):
     """
     This retuns a callable hook function, takes
     grad and passes it through a generalized
