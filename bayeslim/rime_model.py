@@ -628,6 +628,32 @@ class VisMapper:
 
         return dm
 
+    def push(self, device):
+        """
+        Push objects, including Modules attached to self,
+        to a new device or dtype
+        """
+        dtype = isinstance(device, torch.dtype)
+        if self.A is not None:
+            self.A = utils.push(self.A, device)
+        if self.w is not None:
+            self.w = utils.push(self.w, device)
+        if self.DI is not None:
+            self.DI = utils.push(self.DI, device)
+        if self.D is not None:
+            self.D = utils.push(self.D, device)
+        if self.v is not None:
+            self.v = utils.push(self.v, device)
+        if self.Dinv is not None:
+            self.Dinv = utils.push(self.Dinv, device)
+        if not dtype:
+            self.device = device
+        if self.beam is not None:
+            self.beam.push(device)
+        self.array.push(device)
+        self.vis.push(device)
+        self.telescope.push(device)
+
 
 def log(message, verbose=False, style=1):
     """
