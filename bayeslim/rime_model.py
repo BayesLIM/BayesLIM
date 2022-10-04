@@ -509,7 +509,6 @@ class VisMapper:
         Nfreqs = self.vis.Nfreqs
         self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
         self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
-        self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=self.vis.data.dtype, device=self.device)
         # build A matrix
         for i, time in enumerate(self.vis.times):
             # get alt, az
@@ -544,18 +543,45 @@ class VisMapper:
             # insert
             self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
             self.w[i*Nbls:(i+1)*Nbls] = wgt
-            self.v[i*Nbls:(i+1)*Nbls] = self.vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
         # normalize weight sum
         self.w /= self.w.sum(0)
 
-    def make_map(self, clip=1e-5, norm_sqbeam=False):
+    @torch.no_grad()
+    def build_v(self, vis=None):
         """
-        Given A matrix and other products from build_A(),
-        make and normalize a dirty map
+        Build the visibility tensor that is dotted
+        into self.A to form dirty map.
+        Sets self.v
 
         Parameters
         ----------
+        vis : VisData, optional
+            Default is to use self.vis, but if
+            fed will use this VisData instead.
+            vis must match self.vis in shape
+            and in metadata exactly.
+        """
+        vis = vis if vis is not None else self.vis
+        Nbls = vis.Nbls
+        Nbls = vis.Nbls
+        Nfreqs = vis.Nfreqs
+        self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=vis.data.dtype, device=self.device)
+        for i, time in enumerate(vis.times):
+            self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
+
+    def make_map(self, vis=None, clip=1e-5, norm_sqbeam=False):
+        """
+        Given A matrix and other products from build_A()
+        and build_v(), make and normalize a dirty map
+
+        Parameters
+        ----------
+        vis : VisData, optional
+            Use this VisData instead of self.vis
+            for making map. Default is self.vis.
+            This must match self.vis in shape
+            and in metadata.
         clip : float, optional
             Clip DI matrix at this value
         norm_sqbeam : bool, optional
