@@ -563,7 +563,7 @@ class VisMapper:
             and in metadata exactly.
         """
         vis = vis if vis is not None else self.vis
-        Nbls = vis.Nbls
+        Ntimes = vis.Ntimes
         Nbls = vis.Nbls
         Nfreqs = vis.Nfreqs
         self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=vis.data.dtype, device=self.device)
