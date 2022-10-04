@@ -127,6 +127,62 @@ class TensorData:
         from bayeslim import optim
         self.icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
 
+    def __add__(self, other):
+        assert self.data.shape == other.data.shape
+        out = self.copy()
+        out.data += other.data
+        self._propflags(out, other)
+        return out
+
+    def __iadd__(self, other):
+        assert self.data.shape == other.data.shape
+        self.data += other.data
+        self._propflags(out, other)
+
+    def __sub__(self, other):
+        assert self.data.shape == other.data.shape
+        out = self.copy()
+        out.data -= other.data
+        self._propflags(out, other)
+        return out
+
+    def __isub__(self, other):
+        assert self.data.shape == other.data.shape
+        self.data -= other.data
+        self._propflags(self, other)
+
+    def __mul__(self, other):
+        assert self.data.shape == other.data.shape
+        out = self.copy()
+        out.data *= other.data
+        self._propflags(out, other)
+        return out
+
+    def __imul__(self, other):
+        assert self.data.shape == other.data.shape
+        self.data *= other.data
+        self._propflags(self, other)
+
+    def __truediv__(self, other):
+        assert self.data.shape == other.data.shape
+        out = self.copy()
+        out.data /= other.data
+        self._propflags(out, other)
+        return out
+
+    def __itruediv__(self, other):
+        assert self.data.shape == other.data.shape
+        self.data /= other.data
+        self._propflags(self, other)
+
+    @staticmethod
+    def _propflags(td1, td2):
+        """Propagate flags from td2 into td1"""
+        if td2.flags is not None:
+            if td1.flags is None:
+                td1.flags = td2.flags.copy()
+            else:
+                td1.flags += td2.flags
 
 class VisData(TensorData):
     """
