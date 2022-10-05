@@ -10,11 +10,11 @@ from . import dataset, utils
 
 class FFT(utils.Module):
     """
-    A 1D FFT block
+    A 1D FFT block for tensors, VisData, MapData or CalData
     """
     def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None,
                  ndim=None, window=None, fftshift=True, ifft=False,
-                 edgecut=None):
+                 edgecut=None, square=False):
         """
         Parameters
         ----------
@@ -44,6 +44,8 @@ class FFT(utils.Module):
             a window, this ensures the window smoothly connects
             to the edgecut (not the same as only giving zero weight
             to edge channels).
+        square : bool, optional
+            If True, take abs(fft)**2 before output
         """
         super().__init__()
         self.dim = dim
@@ -51,6 +53,7 @@ class FFT(utils.Module):
         self.peaknorm = peaknorm
         self.dx = dx if dx is not None else 1.0
         self.fftshift = fftshift
+        self.square = square
         if N is not None:
             self.freqs = torch.fft.fftfreq(N, d=self.dx)
             if fftshift:
@@ -103,6 +106,9 @@ class FFT(utils.Module):
 
         if self.peaknorm:
             inp_fft = inp_fft / torch.max(torch.abs(inp_fft), dim=self.dim, keepdim=True).values
+
+        if self.square:
+            inp_fft = torch.abs(inp_fft)**2
 
         return inp_fft
 
