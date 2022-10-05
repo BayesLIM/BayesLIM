@@ -49,7 +49,7 @@ class GPFilter(BaseFilter):
     and C_signal is the covariance of the
     signal we want to remove from the data.
     """
-    def __init__(self, C_signal, C_data, dim, no_filter=False,
+    def __init__(self, C_signal, C_data, dim=0, no_filter=False,
                  rcond=1e-15, dtype=None, device=None, name=None):
         """
         Parameters
