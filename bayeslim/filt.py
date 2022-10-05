@@ -43,28 +43,46 @@ class GPFilter(BaseFilter):
 
     where
 
-    y_map = C_signal C_data^-1 y
+    y_map = G y
 
-    where C_data is the full data covariance
-    and C_signal is the covariance of the
-    signal we want to remove from the data.
+    where
+
+    G = C_signal [C_signal + C_noise]^-1
+
+    if generalized_form = False or
+
+    G = [C_signal^-1 + C_noise^-1]^-1 C_noise^-1
+
+    if generalized_form = True, where C_signal is
+    the covariance of the signal and C_noise is the
+    covariance of the remaining parts of the data
+    (can include thermal noise and whatever other
+    terms in the data).
     """
-    def __init__(self, C_signal, C_data, dim=0, no_filter=False,
-                 rcond=1e-15, dtype=None, device=None, name=None):
+    def __init__(self, Cs, Cn, dim=0, hermitian=True, no_filter=False,
+                 generalized_form=False, rcond=1e-15, dtype=None,
+                 device=None, name=None):
         """
         Parameters
         ----------
-        C_signal : tensor
+        Cs : tensor
             Square covariance of signal you want to remove
             of shape (N_pred_samples, N_data_samples)
-        C_data : tensor
-            Square covariance of the data
+        Cn : tensor
+            Square covariance of the noise
             of shape (N_data_samples, N_data_samples)
         dim : int
             Dimension of input data to apply filter
+        hermitian : bool, optional
+            If input covariances are real-symmetric or complex-hermitian.
+            Generally this is true, unless one applies a 
+            complex phasor in front of Cs.
         no_filter : bool, optional
             If True, don't filter the input data and
             return as-is
+        generalized_form : bool, optional
+            If True, use alternative filtering
+            matrix (see above)
         rcond : float, optional
             rcond parameter when taking pinv of C_data
         dtype : torch dtype, optional
@@ -72,39 +90,48 @@ class GPFilter(BaseFilter):
         name : str, optional
             Name of the filter
         """
-        attrs = ['C_signal', 'C_data', 'C_data_inv', 'R', 'V']
+        attrs = ['Cs', 'Cn', 'Cs_inv', 'Cn_inv' 'C_inv', 'R', 'V']
         super().__init__(dim=dim, name=name, attrs=attrs)
-        self.C_signal = torch.as_tensor(C_signal, device=device)
-        self.C_data = torch.as_tensor(C_data, device=device)
+        self.Cs = torch.as_tensor(Cs, device=device)
+        self.Cn = torch.as_tensor(Cn, device=device)
+        self.generalized_form = generalized_form
         self.dtype = dtype
         self.rcond = rcond
         self.setup_filter()
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+        self.hermitian = hermitian
         self.no_filter = no_filter
 
     def setup_filter(self):
         """
         Setup the filter matrix given self.C_signal, self.C_data
         and self.rcond. This takes pseudo-inv of C_data
-        and sets self.R (signal map prediction matrix)
+        and sets self.G (signal map prediction matrix)
         and self.V (signal variance matrix)
         """
-        self.C_data_inv = torch.linalg.pinv(self.C_data,
-                                            rcond=self.rcond,
-                                            hermitian=True)
-        Cs, Cinv = self.C_signal, self.C_data_inv
-        # get signal prediction matrix
-        self.R = Cs @ Cinv
-        self.R = self.R.to(self.dtype).to(self.device)
-        # get signal variance matrix
-        self.V = Cs - Cs @ Cinv @ Cs.T.conj()
+        pinv = lambda x: torch.linalg.pinv(x, rcond=self.rcond, hermitian=self.hermitian)
+        if self.generalized_form:
+            # G = [S^-1 + N^-1]^-1 N^-1
+            self.Cs_inv = pinv(self.Cs)
+            self.Cn_inv = pinv(self.Cn)
+            self.C_inv = pinv(self.Cs_inv + self.Cn_inv)
+            self.G = self.Cs @ se
+            self.V = self.Cs - self.Cs @ pinv(self.Cs + self.Cn) @ self.Cs.T.conj()
+
+        else:
+            # G = S [S + N]^-1
+            self.C_inv = pinv(self.Cs + self.Cn)
+            self.G = self.Cs @ self.C_inv
+            self.V = self.Cs - self.Cs @ self.C_inv @ self.Cs.T.conj()
+
+        self.G = self.G.to(self.dtype).to(self.device)
 
     def predict(self, inp):
         """
         Given input data, form the prediction
         of the signal
 
-        y_map = R @ y_inp
+        y_map = G @ y_inp
 
         Note that its covariance is held as self.V
 
@@ -126,7 +153,7 @@ class GPFilter(BaseFilter):
         ein = ein[:inp.ndim]
         ein[self.dim] = 'j'
         ein = ''.join(ein)
-        y = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), self.R, inp)
+        y = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), self.G, inp)
 
         return y
 
