@@ -97,10 +97,11 @@ class GPFilter(BaseFilter):
         self.generalized_form = generalized_form
         self.dtype = dtype
         self.rcond = rcond
-        self.setup_filter()
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         self.hermitian = hermitian
         self.no_filter = no_filter
+
+        self.setup_filter()
 
     def setup_filter(self):
         """
