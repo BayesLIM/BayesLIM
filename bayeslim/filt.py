@@ -116,7 +116,7 @@ class GPFilter(BaseFilter):
             self.Cs_inv = pinv(self.Cs)
             self.Cn_inv = pinv(self.Cn)
             self.C_inv = pinv(self.Cs_inv + self.Cn_inv)
-            self.G = self.Cs @ se
+            self.G = self.C_inv @ self.Cn_inv
             self.V = self.Cs - self.Cs @ pinv(self.Cs + self.Cn) @ self.Cs.T.conj()
 
         else:
