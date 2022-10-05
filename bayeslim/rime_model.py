@@ -536,7 +536,7 @@ class VisMapper:
 
             # get weights
             if self.vis.icov is not None and self.vis.cov_axis is None:
-                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0]
+                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
             else:
                 wgt = torch.tensor(1.0, device=self.device)
 
