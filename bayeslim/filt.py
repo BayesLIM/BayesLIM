@@ -72,7 +72,7 @@ class GPFilter(BaseFilter):
         name : str, optional
             Name of the filter
         """
-        attrs = ['C_signal', 'C_data', 'R']
+        attrs = ['C_signal', 'C_data', 'C_data_inv', 'R', 'V']
         super().__init__(dim=dim, name=name, attrs=attrs)
         self.C_signal = torch.as_tensor(C_signal, device=device)
         self.C_data = torch.as_tensor(C_data, device=device)
