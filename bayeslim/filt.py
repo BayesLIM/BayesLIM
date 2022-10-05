@@ -48,28 +48,24 @@ class GPFilter(BaseFilter):
     where
 
     G = C_signal [C_signal + C_noise]^-1
-
-    if generalized_form = False or
-
-    G = [C_signal^-1 + C_noise^-1]^-1 C_noise^-1
-
-    if generalized_form = True, where C_signal is
-    the covariance of the signal and C_noise is the
+    
+    where C_signal is the covariance of the signal
+    to remove from the data, and C_noise is the
     covariance of the remaining parts of the data
     (can include thermal noise and whatever other
     terms in the data).
     """
     def __init__(self, Cs, Cn, dim=0, hermitian=True, no_filter=False,
-                 generalized_form=False, rcond=1e-15, dtype=None,
+                 rcond=1e-15, dtype=None,
                  device=None, name=None):
         """
         Parameters
         ----------
         Cs : tensor
-            Square covariance of signal you want to remove
+            Square covariance of signal you want to remove,
             of shape (N_pred_samples, N_data_samples)
         Cn : tensor
-            Square covariance of the noise
+            Square covariance of the noise (and other things)
             of shape (N_data_samples, N_data_samples)
         dim : int
             Dimension of input data to apply filter
@@ -80,9 +76,6 @@ class GPFilter(BaseFilter):
         no_filter : bool, optional
             If True, don't filter the input data and
             return as-is
-        generalized_form : bool, optional
-            If True, use alternative filtering
-            matrix (see above)
         rcond : float, optional
             rcond parameter when taking pinv of C_data
         dtype : torch dtype, optional
@@ -90,11 +83,11 @@ class GPFilter(BaseFilter):
         name : str, optional
             Name of the filter
         """
-        attrs = ['Cs', 'Cn', 'Cs_inv', 'Cn_inv' 'C_inv', 'R', 'V']
+        attrs = ['Cs', 'Cn', 'C', 'C_inv', 'G', 'V']
         super().__init__(dim=dim, name=name, attrs=attrs)
         self.Cs = torch.as_tensor(Cs, device=device)
         self.Cn = torch.as_tensor(Cn, device=device)
-        self.generalized_form = generalized_form
+        self.C = self.Cs + self.Cn
         self.dtype = dtype
         self.rcond = rcond
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
@@ -105,25 +98,15 @@ class GPFilter(BaseFilter):
 
     def setup_filter(self):
         """
-        Setup the filter matrix given self.C_signal, self.C_data
+        Setup the filter matrix given self.Cs, self.Cn
         and self.rcond. This takes pseudo-inv of C_data
         and sets self.G (signal map prediction matrix)
         and self.V (signal variance matrix)
         """
-        pinv = lambda x: torch.linalg.pinv(x, rcond=self.rcond, hermitian=self.hermitian)
-        if self.generalized_form:
-            # G = [S^-1 + N^-1]^-1 N^-1
-            self.Cs_inv = pinv(self.Cs)
-            self.Cn_inv = pinv(self.Cn)
-            self.C_inv = pinv(self.Cs_inv + self.Cn_inv)
-            self.G = self.C_inv @ self.Cn_inv
-            self.V = self.Cs - self.Cs @ pinv(self.Cs + self.Cn) @ self.Cs.T.conj()
-
-        else:
-            # G = S [S + N]^-1
-            self.C_inv = pinv(self.Cs + self.Cn)
-            self.G = self.Cs @ self.C_inv
-            self.V = self.Cs - self.Cs @ self.C_inv @ self.Cs.T.conj()
+        # G = S [S + N]^-1
+        self.C_inv = torch.linalg.pinv(self.C, rcond=self.rcond, hermitian=self.hermitian)
+        self.G = self.Cs @ self.C_inv
+        self.V = self.Cs - self.Cs @ self.C_inv @ self.Cs.T.conj()
 
         self.G = self.G.to(self.dtype).to(self.device)
 
