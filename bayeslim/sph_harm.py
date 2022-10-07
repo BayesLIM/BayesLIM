@@ -439,15 +439,14 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
         Phi *= np.exp(1j * phi)
 
     # transform to real if needed
-    if real:
-        Phi = Phi.real
+    dtype = utils._float() if real else utils._cfloat()
 
     if separable:
-        Y = (torch.as_tensor(H, device=device),
-             torch.as_tensor(Phi, device=device))
+        Y = (torch.as_tensor(H, dtype=dtype, device=device),
+             torch.as_tensor(Phi, dtype=dtype, device=device))
     else:
         # combine into spherical harmonic
-        Y = torch.as_tensor(H * Phi, dtype=utils._cfloat(), device=device)
+        Y = torch.as_tensor(H * Phi, dtype=dtype, device=device)
 
     if renorm:
         norm_kwargs['theta'] = theta
