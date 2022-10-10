@@ -1366,6 +1366,8 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     """
     ### TODO: enable Hessian between params
     # get all leaf variables on prob
+    if prob.Nbatch > 1:
+        print("Warning: not yet imp. for grad accumulation")
     named_params = prob.named_params
 
     # unset all named params
