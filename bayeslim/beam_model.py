@@ -524,7 +524,9 @@ class PixelBeam(utils.Module):
         """
         h = utils.arr_hash(zen)
         if h not in self.cache:
-            self.cache[h] = cut.to(device)
+            if isinstance(cut, torch.Tensor):
+                cut = cut.to(device)
+            self.cache[h] = cut
 
     def query_cache(self, zen):
         """
