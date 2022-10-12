@@ -150,7 +150,7 @@ def stripe_tukey_mask(theta, theta_min, theta_max,
 
 def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
                  whiten=True, x0=None, dx=None, Ndeg=None, basis='direct',
-                 device=None, dtype=None, **kwargs):
+                 qr=False, device=None, dtype=None, **kwargs):
     """
     Generate a linear mapping design matrix A
 
@@ -178,6 +178,8 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
         (mode='poly') Number of poly degrees
     basis : str, optional
         (mode='poly') poly basis
+    qr : bool, optional
+        (mode='poly') If True, re-orthogonalize poly modes
     device : str, optional
         Device to push A to
     dtype : type, optional
@@ -190,7 +192,8 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
     """
     dtype = dtype if dtype is not None else _float()
     if linear_mode == 'poly':
-        A = gen_poly_A(x, Ndeg, basis=basis, d0=d0, logx=logx, whiten=whiten, x0=x0, dx=dx)
+        A = gen_poly_A(x, Ndeg, basis=basis, d0=d0, logx=logx, whiten=whiten,
+                       x0=x0, dx=dx, qr=qr)
     elif linear_mode == 'custom':
         A = torch.as_tensor(A)
 
@@ -198,7 +201,7 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
 
 
 def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
-               logx=False, whiten=True, x0=None, dx=None):
+               logx=False, whiten=True, x0=None, dx=None, qr=False):
     """
     Generate design matrix (A) for polynomial of Ndeg across x,
     with coefficient ordering
@@ -229,6 +232,11 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
         If whiten, use this centering instead of x.mean()
     dx : float, optional
         If whiten, use this scaling instead of (x-x0).max()
+    qr : bool, optional
+        If True, use QR factorization to make resultant A strictly
+        orthogonal (i.e. gram-schmidt). Note this makes A effectively
+        the same as basis='legendre', whiten=True, regardless of 
+        the chosen basis or x0, dx.
 
     Returns
     -------
@@ -240,6 +248,10 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
     # setup the polynomial
     from emupy.linear import setup_polynomial
     A = setup_polynomial(x[:, None], Ndeg - 1, basis=basis)[0]
+
+    if qr:
+        A = np.linalg.qr(A)[0]
+
     A = torch.as_tensor(A, dtype=_float(), device=device)
 
     return A
