@@ -1569,7 +1569,7 @@ class AlmModel:
                     target=target, real=real):
             if params.grad is not None:
                 params.grad.zero_()
-            out = self(params)
+            out = self.forward_alm(params)
             if real:
                 out, target = out.real, target.real
             L = loss_fn(out, target)
