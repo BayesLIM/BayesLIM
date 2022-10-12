@@ -1397,7 +1397,7 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     return hess
 
 
-def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-10, rm_fill=1e-10,
+def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
                    rm_offdiag=False, rcond=1e-15, hermitian=True, return_hess=False):
     """
     Invert a Hessian (Fisher Information) matrix (H) to get a covariance
