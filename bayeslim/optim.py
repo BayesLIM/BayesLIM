@@ -547,8 +547,9 @@ class LogProb(utils.Module):
                     indices = []
                     for _idx in idx:
                         p = self.model[param][_idx].detach()
-                        shape.append(p.shape)
-                        numel = shape.numel()
+                        p_shape = p.shape
+                        shape.append(p_shape)
+                        numel = p_shape.numel()
                         indices.append(slice(N, N + numel))
                         device = p.device
                         N += numel
