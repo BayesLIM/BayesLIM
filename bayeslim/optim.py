@@ -491,8 +491,15 @@ class LogProb(utils.Module):
             E.g. ['sky.params', 'cal.params']
             If None, main_params is set as None.
             You can also index each params by passing
-            a 2-tuple as (str, index)
-            e.g. [('sky.params', (range(10), 0, 0)), ...]
+            a 2-tuple as (str, index), e.g.
+            [
+            ('sky.params', (range(10), 0, 0)),
+            ('beam.params', [(0, [0, 1, 2]), (1, [1, 2])],
+            ...,
+            ]
+            Note that you can also feed two indexing tuples
+            (must be wrapped in a list!) which will index the
+            params tensor multiple times in that order.
         """
         # if main_params already exists, turn keys back into Parameters
         if hasattr(self, "_main_indices") and self._main_indices is not None:
@@ -513,24 +520,44 @@ class LogProb(utils.Module):
             self._main_devices = {}
             self._main_index = {}
             for param in model_params:
+                # get (multi-)indexing if desired
                 if isinstance(param, str):
                     idx = None
                 else:
                     param, idx = param
-                if idx is None:
-                    p = self.model[param].detach()
+
+                if idx is None or not isinstance(idx, list):
+                    if idx is None:
+                        # no indexing,take the whole tensor
+                        p = self.model[param].detach()
+                    else:
+                        # single indexing, take part of tensor
+                        p = self.model[param][idx].detach()
+
+                    # get shapes
+                    shape = p.shape
+                    numel = shape.numel()
+                    indices = slice(N, N + numel)
+                    device = p.device
+                    N += numel
+
                 else:
-                    p = self.model[param][idx].detach()
-                shape = p.shape
-                numel = shape.numel()
-                device = p.device
+                    # this is mult-indexing
+                    shape = []
+                    indices = []
+                    for _idx in idx:
+                        p = self.model[params][_idx].detach()
+                        shape.append(p.shape)
+                        numel = shape.numel()
+                        indices.append(slice(N, N + numel))
+                        device = p.device
+                        N += numel
 
                 # append metadata
-                self._main_indices[param] = slice(N, N + numel) 
+                self._main_indices[param] = indices
                 self._main_shapes[param] = shape
                 self._main_devices[param] = device
                 self._main_index[param] = idx
-                N += numel
 
             # setup empty main_params
             self.main_params = torch.nn.Parameter(torch.zeros(N, dtype=utils._float()))
@@ -560,7 +587,13 @@ class LogProb(utils.Module):
                 if idx is None:
                     params[indices] = self.model[k].detach().to('cpu').to(utils._float()).ravel()
                 else:
-                    params[indices] = self.model[k][idx].detach().to('cpu').to(utils._float()).ravel()
+                    if not isinstance(idx, list):
+                        # single index
+                        params[indices] = self.model[k][idx].detach().to('cpu').to(utils._float()).ravel()
+                    else:
+                        for _idx, _inds in zip(idx, indices):
+                            # multi-index
+                            params[_inds] = self.model[k][_idx].detach().to('cpu').to(utils._float()).ravel()
 
             if not inplace:
                 return params
@@ -592,23 +625,35 @@ class LogProb(utils.Module):
         """
         main_params = main_params if main_params is not None else self.main_params
         if main_params is not None:
-            if not inplace:
-                out = {}
+            out = {}
             for param in self._main_indices:
-                # get shaped parameter on device
-                value = main_params[self._main_indices[param]]
-                value = value.reshape(self._main_shapes[param])
-                value = value.to(self._main_devices[param])
+                # get metadata
+                inds = self._main_indices[param]
                 idx = self._main_index[param]
-                if not inplace:
-                    if fill is None:
-                        out[param] = self.model[param].detach().clone()
+                shape = self._main_shapes[param]
+                device = self._main_devices[param]
+
+                if not isinstance(inds, list):
+                    # turn single or no indexing into multi-index form
+                    inds, idx, shape = [inds], [idx], [shape]
+
+                for _inds, _idx, _shape in zip(inds, idx, shape):
+                    value = main_params[_inds]
+                    value = value.reshape(_shape)
+                    value = value.to(device)
+
+                    if not inplace:
+                        p = self.model[param].detach().clone()
+                        if fill is None:
+                            out[param] = p
+                        else:
+                            out[param] = torch.ones_like(p) * fill
+                        out[param][_idx] = value
+
                     else:
-                        out[param] = torch.ones_like(self.model[param].detach().clone()) * fill
-                    out[param][idx] = value
-                else:
-                    utils.set_model_attr(self.model, param, value, idx=idx,
-                                         clobber_param=True, no_grad=False)
+                        utils.set_model_attr(self.model, param, value, idx=_idx,
+                                             clobber_param=True, no_grad=False)
+
             if not inplace:
                 return out
 
