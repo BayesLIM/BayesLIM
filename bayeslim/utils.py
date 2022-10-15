@@ -1408,7 +1408,7 @@ class Module(torch.nn.Module):
     def __delitem__(self, name):
         del_model_attr(self, name)
 
-    def update(self, pdict, clobber_param=False):
+    def update(self, pdict, parameter=False):
         """
         Update model attributes from pdict
 
@@ -1417,17 +1417,12 @@ class Module(torch.nn.Module):
         pdict : ParamDict
             dictionary of values to assign
             to model
-        clobber_param : bool, optional
-            If True and key from pdict is an existing
-            Parameter on self, del the param then assign
-            it from pdict (this removes Parameter object
-            but keeps memory address from pdict) and
-            keep it as a non-Parameter. Else, turn
-            result on self into a Parameter again
+        parameter : bool, optional
+            Set tensors from pdict as Parameters
         """
         for key, val in pdict.items():
             # uses set_model_attr for no_grad context
-            set_model_attr(self, key, val, clobber_param=clobber_param)
+            set_model_attr(self, key, val, parameter=parameter)
 
     def unset_param(self, name):
         """
@@ -1696,11 +1691,7 @@ def get_model_attr(model, name, pop=0):
 def set_model_attr(model, name, value, clobber_param=False,
                    no_grad=True, idx=None, add=False, fill=None):
     """
-    Set value to model as model.name
-
-    If name is a torch.nn.Parameter, cast
-    value as Parameter before setting
-    unless clobber_param
+    Set value to model as model.name.
 
     Parameters
     ----------
@@ -1713,15 +1704,15 @@ def set_model_attr(model, name, value, clobber_param=False,
         If True and name already exists as a Parameter,
         detach it then assign value as name
         (this removes existing name from graph).
-        If False (default) and name already exists,
-        try to insert value into existing model.name. 
+        If False (default) and name already exists as Parameter,
+        try to insert value into existing model.name as a Parameter.
     no_grad : bool, optional
         If True, enter a torch.no_grad() context,
         otherwise enter a nullcontext.
     idx : tuple, optional
         If model.name already exists, insert value as
         model.name[idx] = value. Note that if clobber_param = False
-        and model.name is a Paramter, this will only work with
+        and model.name is a Parameter, this will only work with
         simple indexing schemes. Note that value should already
         have a shape that matches model.name[idx]
     add : bool, optional
@@ -1744,14 +1735,14 @@ def set_model_attr(model, name, value, clobber_param=False,
             param = getattr(model, name) if hasattr(model, name) else None
             parameter = isinstance(param, torch.nn.Parameter)
 
-            # if param is a parameter, detach it by del then set
-            if param is not None and parameter:
-                pd = param.data
-                delattr(model, name)
-                setattr(model, name, pd)
-
             if param is not None:
-                # model.name already exists
+                # if model.name is an existing Parameter, del then reset it
+                if parameter:
+                    pd = param.data
+                    delattr(model, name)
+                    setattr(model, name, pd)
+
+                # check device
                 device = param.device
                 if not check_devices(device, value.device):
                     value = value.to(device)
@@ -1775,6 +1766,10 @@ def set_model_attr(model, name, value, clobber_param=False,
                         setattr(model, name, value)
                     else:
                         param[idx] = value
+
+                # set as parameter if needed
+                if not clobber_param and parameter:
+                    setattr(model, name, torch.nn.Parameter(getattr(model, name)))
 
             else:
                 # model.name doesn't exist, so just set it

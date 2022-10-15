@@ -656,7 +656,7 @@ class LogProb(utils.Module):
                     # only fill if this is first index of this param
                     # only add if this is isn't first index of this param
                     utils.set_model_attr(model, param, value, idx=_idx,
-                                         clobber_param=False, no_grad=False,
+                                         clobber_param=True, no_grad=False,
                                          fill=fill if i == 0 else None,
                                          add=True if i > 0 else False)
 
@@ -1433,7 +1433,7 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
         shape = inp.shape
         N = shape.numel()
         def func(x):
-            utils.set_model_attr(prob, param, x, clobber_param=False)
+            utils.set_model_attr(prob, param, x, clobber_param=True)
             return prob()
         h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
         if keep_diag:
