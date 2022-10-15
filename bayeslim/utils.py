@@ -1749,7 +1749,9 @@ def set_model_attr(model, name, value, clobber_param=False,
                 # if clobbering, re-set as model.name.data
                 # only clobber if its a Parameter (not just if requires_grad)
                 if param is not None and parameter:
-                    setattr(model, name, param.data)
+                    pd = param.data
+                    delattr(model, name)
+                    setattr(model, name, pd)
                 parameter = False
 
             if param is not None:
