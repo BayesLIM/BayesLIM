@@ -627,7 +627,7 @@ class LogProb(utils.Module):
         main_params = main_params if main_params is not None else self.main_params
         if main_params is not None:
 
-            if inplace:
+            if not inplace:
                 # use a dummy Python3 class object to set params
                 class Obj: pass
                 model = Obj()
