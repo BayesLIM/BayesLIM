@@ -1752,7 +1752,7 @@ def set_model_attr(model, name, value, clobber_param=False,
                     setattr(model, name, param.data)
                 parameter = False
 
-            if param is not None
+            if param is not None:
                 # model.name already exists
                 device = param.device
                 if not check_devices(device, value.device):
