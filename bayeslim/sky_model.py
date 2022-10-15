@@ -347,7 +347,7 @@ class PointSkyResponse:
 
     def __call__(self, params):
         # pass to device
-        if utils.device(params.device) != utils.device(self.device):
+        if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
         if self.freq_mode == 'channel':
@@ -718,7 +718,7 @@ class PixelSkyResponse:
             return out
 
     def __call__(self, params):
-        if utils.device(params.device) != utils.device(self.device):
+        if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
         if self.transform_order == 0:
             params = self.spatial_transform(params)

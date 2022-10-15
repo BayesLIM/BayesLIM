@@ -458,7 +458,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         if dtype:
             self.antpos = utils.push(self.antpos, device)
         else:
-            if utils.device(device) != utils.device('cpu'):
+            if not utils.check_devices(device, 'cpu'):
                 self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)

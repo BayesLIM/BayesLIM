@@ -117,7 +117,7 @@ class BaseResponse:
         Forward pass params through response
         """
         # pass to device
-        if utils.device(params.device) != utils.device(self.device):
+        if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
         # detect if params needs to be casted into complex

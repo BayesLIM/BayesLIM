@@ -135,7 +135,7 @@ def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
                                     parameter=False, polmode=polmode,
                                     powerbeam=True, fov=180)
 
-    assert utils.device(sky.device) == utils.device(beam.device)    
+    assert utils.check_devices(sky.device, beam.device)    
 
     # interpolate sky model to frequencies
     sky.freq_interp(freqs, kind=freq_interp)

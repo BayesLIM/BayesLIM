@@ -653,7 +653,7 @@ class LogProb(utils.Module):
 
                     else:
                         utils.set_model_attr(self.model, param, value, idx=_idx,
-                                             clobber_param=True, no_grad=False)
+                                             clobber_param=False, no_grad=False)
 
             if not inplace:
                 return out

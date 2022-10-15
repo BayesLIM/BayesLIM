@@ -793,7 +793,7 @@ class VisData(TensorData):
         else:
             vd = self.copy(detach=True)
         cal_data = cd.data
-        if utils.device(vd.data.device) != utils.device(cal_data.device):
+        if not utils.check_devices(vd.data.device, cal_data.device):
             cal_data = cal_data.to(vd.data.device)
 
         vd.data, vd.cov = calibration.apply_cal(vd.data, vd.bls, cal_data, cd.ants, cal_2pol=cal_2pol,

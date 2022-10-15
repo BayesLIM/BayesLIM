@@ -277,9 +277,9 @@ class PixelBeam(utils.Module):
         Nmp = len(modelpairs)
 
         # move objects to device
-        if utils.device(beam.device) != utils.device(self.device):
+        if not utils.check_devices(beam.device, self.device):
             beam = beam.to(self.device)
-        if utils.device(sky.device) != utils.device(self.device):
+        if not utils.check_devices(sky.device, self.device):
             sky = sky.to(self.device)
 
         # expand beam to (Npol, Nvec, Nmodelpair, Nfreqs, Nsources)
@@ -702,7 +702,7 @@ class PixelResponse(utils.PixInterp):
 
     def forward(self, params):
         """forward pixelized beam through frequency response"""
-        if utils.device(params.device) != utils.device(self.device):
+        if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
         # pass through frequency response
         if self.freq_mode == 'channel':
@@ -904,10 +904,10 @@ class AiryResponse:
         Dew = params[..., 0:1]
         Dns = params[..., 1:2] if params.shape[-1] > 1 else None
         if isinstance(az, torch.Tensor):
-            if utils.device(params.device) != utils.device(az.device):
+            if not utils.check_devices(params.device, az.device):
                 az = az.to(params.device)
         if isinstance(zen, torch.Tensor):
-            if utils.device(params.device) != utils.device(zen.device):
+            if not utils.check_devices(params.device, zen.device):
                 zen = zen.to(params.device)
         beam = airy_disk(zen * D2R, az * D2R, Dew, freqs, Dns, self.freq_ratio,
                          square=self.powerbeam, brute_force=self.brute_force,
@@ -1101,7 +1101,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             params = utils.viewcomp(params)
 
         # pass to device
-        if utils.device(params.device) != utils.device(self.device):
+        if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
         # first handle frequency axis
@@ -1592,7 +1592,7 @@ def cut_sky_fov(sky, cut):
     else:
         if isinstance(cut, np.ndarray):
             cut = torch.as_tensor(cut)
-        if utils.device(cut.device) != utils.device(sky.device):
+        if not utils.check_devices(cut.device, sky.device):
             cut = cut.to(sky.device)
         # for integer index, this is faster than sky[...,cut] on GPU
         cut_sky = sky.index_select(-1, cut)
