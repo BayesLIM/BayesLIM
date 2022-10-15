@@ -1737,7 +1737,7 @@ def set_model_attr(model, name, value, clobber_param=False,
 
             if param is not None:
                 # if clobber_param, del and reset it (even if not a Parameter)
-                if clobber_param:
+                if clobber_param or parameter:
                     pd = param.data
                     delattr(model, name)
                     setattr(model, name, pd)
