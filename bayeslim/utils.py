@@ -1408,7 +1408,7 @@ class Module(torch.nn.Module):
     def __delitem__(self, name):
         del_model_attr(self, name)
 
-    def update(self, pdict, parameter=False):
+    def update(self, pdict, clobber_param=False):
         """
         Update model attributes from pdict
 
@@ -1422,7 +1422,7 @@ class Module(torch.nn.Module):
         """
         for key, val in pdict.items():
             # uses set_model_attr for no_grad context
-            set_model_attr(self, key, val, parameter=parameter)
+            set_model_attr(self, key, val, clobber_param=clobber_param)
 
     def unset_param(self, name):
         """
