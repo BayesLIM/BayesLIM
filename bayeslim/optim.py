@@ -658,7 +658,7 @@ class LogProb(utils.Module):
                     utils.set_model_attr(model, param, value, idx=_idx,
                                          clobber_param=True, no_grad=False,
                                          fill=fill if i == 0 else None,
-                                         add=add if i > 0 else False)
+                                         add=True if i > 0 else False)
 
             if not inplace:
                 # collect dictionary and return
