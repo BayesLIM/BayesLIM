@@ -174,7 +174,6 @@ class HMC(SamplerBase):
         """
         super().__init__(x0)
         self.potential_fn = potential_fn
-        self.potential_fn.update(x0)
         self.fn_evals = 0
         self.Nstep = Nstep
         if isinstance(eps, torch.Tensor):
@@ -323,7 +322,6 @@ class HMC(SamplerBase):
             ## to save 1 call to dUdx per iteration
         else:
             self._U = U_start
-            self.potential_fn.update(self.x)
 
         return accept
 
@@ -449,7 +447,8 @@ class Potential(utils.Module):
         param_name : str, optional
             If feeding forward(x) with x as a Tensor,
             this is the param attached to self.prob
-            to update.
+            to update. i.e. 'main_params' means
+            self.prob.main_params
         """
         super().__init__()
         self.prob = prob
@@ -465,7 +464,9 @@ class Potential(utils.Module):
         ----------
         x : ParamDict or tensor
             Update the model with these param
-            values
+            values. The keys of x should attached
+            to self.prob. I.e. self.prob.main_params
+            should have a key of 'main_params'
 
         Returns
         -------
@@ -477,9 +478,9 @@ class Potential(utils.Module):
         # update params
         if x is not None:
             if isinstance(x, ParamDict):
-                self.update(x)
+                self.prob.update(x)
             else:
-                self[self.param_name] = torch.as_tensor(x)
+                self.prob[self.param_name] = torch.as_tensor(x)
 
         # zero gradients
         self.prob.zero_grad()
@@ -488,7 +489,7 @@ class Potential(utils.Module):
         U = self.prob.closure()
 
         # collect gradients
-        gradU = ParamDict({k: self[k].grad.clone() for k in self.named_params})
+        gradU = ParamDict({k: self[k].grad.clone() for k in self.prob.named_params})
 
         return U, gradU
 
