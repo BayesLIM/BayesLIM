@@ -655,8 +655,10 @@ class LogProb(utils.Module):
 
                     # only fill if this is first index of this param
                     # only add if this is isn't first index of this param
+                    # only clobber existing param if first index
                     utils.set_model_attr(model, param, value, idx=_idx,
-                                         clobber_param=True, no_grad=False,
+                                         clobber_param=True if i == 0 else False,
+                                         no_grad=False,
                                          fill=fill if i == 0 else None,
                                          add=True if i > 0 else False)
 

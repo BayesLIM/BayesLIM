@@ -1741,6 +1741,7 @@ def set_model_attr(model, name, value, clobber_param=False,
                     pd = param.data
                     delattr(model, name)
                     setattr(model, name, pd)
+                    param = getattr(model, name)
 
                 # check device
                 device = param.device
@@ -1774,11 +1775,6 @@ def set_model_attr(model, name, value, clobber_param=False,
             else:
                 # model.name doesn't exist, so just set it
                 setattr(model, name, value)
-
-            # if param existed and was a parameter and not clobber_param
-            # re-set as Parameter
-            if parameter and not clobber_param:
-                setattr(model, name, torch.nn.Parameter(getattr(model, name)))
 
         else:
             # recurse through the '.' names until you get to the end
