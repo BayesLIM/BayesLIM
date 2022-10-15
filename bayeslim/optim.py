@@ -618,15 +618,23 @@ class LogProb(utils.Module):
             in a dictionary.
         main_params : tensor, optional
             Use this main_params tensor instead of self.main_params
-            when sending to sub-params.
+            when sending to sub-params. Default is self.main_params
         fill : float, optional
-            If None (default) fill un-indexed elements in params
+            If None (default) keep un-indexed elements in params
             with their existing values. Otherwise, fill them with
             this value before returning.
         """
         main_params = main_params if main_params is not None else self.main_params
         if main_params is not None:
-            out = {}
+
+            if inplace:
+                # use a dummy Python3 class object to set params
+                class Obj: pass
+                model = Obj()
+            else:
+                # otherwise use self.model
+                model = self.model
+
             for param in self._main_indices:
                 # get metadata
                 inds = self._main_indices[param]
@@ -638,25 +646,21 @@ class LogProb(utils.Module):
                     # turn single or no indexing into multi-index form
                     inds, idx, shape = [inds], [idx], [shape]
 
-                for _inds, _idx, _shape in zip(inds, idx, shape):
+                for i, (_inds, _idx, _shape) in enumerate(zip(inds, idx, shape)):
                     value = main_params[_inds]
                     value = value.reshape(_shape)
                     value = value.to(device)
 
-                    if not inplace:
-                        p = self.model[param].detach().clone()
-                        if fill is None:
-                            out[param] = p
-                        else:
-                            out[param] = torch.ones_like(p) * fill
-                        out[param][_idx] = value
-
-                    else:
-                        utils.set_model_attr(self.model, param, value, idx=_idx,
-                                             clobber_param=False, no_grad=False)
+                    # only fill if this is first index of this param
+                    # only add if this is isn't first index of this param
+                    utils.set_model_attr(model, param, value, idx=_idx,
+                                         clobber_param=True, no_grad=False,
+                                         fill=fill if i == 0 else None,
+                                         add=add if i > 0 else False)
 
             if not inplace:
-                return out
+                # collect dictionary and return
+                return model.__dict__
 
     @property
     def Nbatch(self):
