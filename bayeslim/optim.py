@@ -631,6 +631,8 @@ class LogProb(utils.Module):
                 # use a dummy Python3 class object to set params
                 class Obj: pass
                 model = Obj()
+                for param in self._main_indices:
+                    setattr(model, param, getattr(self.model, param).clone())
             else:
                 # otherwise use self.model
                 model = self.model
