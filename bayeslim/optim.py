@@ -660,7 +660,7 @@ class LogProb(utils.Module):
                                          clobber_param=True if i == 0 else False,
                                          no_grad=False,
                                          fill=fill if i == 0 else None,
-                                         add=True if i > 0 else False)
+                                         add=False)
 
             if not inplace:
                 # collect dictionary and return
