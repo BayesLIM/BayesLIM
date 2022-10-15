@@ -1774,7 +1774,9 @@ def set_model_attr(model, name, value, clobber_param=False,
                 else:
                     # replace with value
                     if idx is None:
-                        param[:] = value
+                        # note this actually replaces the whole
+                        # tensor with value. all others assign in-place
+                        setattr(model, name, value)
                     else:
                         param[idx] = value
 
