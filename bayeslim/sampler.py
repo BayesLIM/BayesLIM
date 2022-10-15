@@ -489,7 +489,7 @@ class Potential(utils.Module):
         U = self.prob.closure()
 
         # collect gradients
-        gradU = ParamDict({k: self[k].grad.clone() for k in self.prob.named_params})
+        gradU = ParamDict({k: self.prob[k].grad.clone() for k in self.prob.named_params})
 
         return U, gradU
 
