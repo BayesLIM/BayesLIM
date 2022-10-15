@@ -1421,10 +1421,9 @@ class Module(torch.nn.Module):
             If True and key from pdict is an existing
             Parameter on self, del the param then assign
             it from pdict (this removes Parameter object
-            but keeps memory address from pdict).
-            If False (default), insert value from pdict
-            into existing Parameter object, changing
-            its memory address.
+            but keeps memory address from pdict) and
+            keep it as a non-Parameter. Else, turn
+            result on self into a Parameter again
         """
         for key, val in pdict.items():
             # uses set_model_attr for no_grad context
@@ -1745,14 +1744,11 @@ def set_model_attr(model, name, value, clobber_param=False,
             param = getattr(model, name) if hasattr(model, name) else None
             parameter = isinstance(param, torch.nn.Parameter)
 
-            if clobber_param:
-                # if clobbering, re-set as model.name.data
-                # only clobber if its a Parameter (not just if requires_grad)
-                if param is not None and parameter:
-                    pd = param.data
-                    delattr(model, name)
-                    setattr(model, name, pd)
-                parameter = False
+            # if param is a parameter, detach it by del then set
+            if param is not None and parameter:
+                pd = param.data
+                delattr(model, name)
+                setattr(model, name, pd)
 
             if param is not None:
                 # model.name already exists
@@ -1783,6 +1779,11 @@ def set_model_attr(model, name, value, clobber_param=False,
             else:
                 # model.name doesn't exist, so just set it
                 setattr(model, name, value)
+
+            # if param existed and was a parameter and not clobber_param
+            # re-set as Parameter
+            if parameter and not clobber_param:
+                setattr(model, name, torch.nn.Parameter(getattr(model, name)))
 
         else:
             # recurse through the '.' names until you get to the end
