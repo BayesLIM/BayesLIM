@@ -1736,8 +1736,8 @@ def set_model_attr(model, name, value, clobber_param=False,
             parameter = isinstance(param, torch.nn.Parameter)
 
             if param is not None:
-                # if model.name is an existing Parameter, del then reset it
-                if parameter:
+                # if clobber_param, del and reset it (even if not a Parameter)
+                if clobber_param:
                     pd = param.data
                     delattr(model, name)
                     setattr(model, name, pd)
