@@ -510,9 +510,8 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
         if isinstance(Ylm, (list, tuple)):
             # this is separable
             T, P = Ylm
-            # take dot product
-            Y = torch.einsum("ct,cp->ctp", T, P)
-            Y = Y.reshape(Y.shape[0], -1)
+            # inflate
+            Y = inflate_Ylm(Ylm, True)
             if theta is not None:
                 theta = np.repeat(theta[:, None], P.shape[1], 1).ravel()
         else:
@@ -1744,8 +1743,8 @@ def inflate_Ylm(Ylm):
         # this is separable = True
         Theta, Phi = Ylm
         # take outer product to form Ylm
-        Ylm = torch.einsum("cp,ct->cpt", Phi, Theta)
-        Ylm = Ylm.view(-1, Phi.shape[1] * Theta.shape[1])
+        Ylm = torch.einsum("ct,cp->ctp", Theta, Phi)
+        Ylm = Ylm.view(-1, Theta.shape[1] * Phi.shape[1])
 
     return Ylm
 
