@@ -67,9 +67,9 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     assert m.shape == l.shape
     # avoid singularity
     x = np.atleast_1d(x).copy()
-    s = np.isclose(np.abs(x), 1, rtol=1e-10)
+    s = np.isclose(np.abs(x), 1, rtol=1e-12)
     if np.any(s):
-        dx = 1e-8
+        dx = 1e-10
         x[s] *= (1 - dx)
     # compute Plm
     if not deriv:
