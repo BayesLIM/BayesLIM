@@ -1195,7 +1195,7 @@ class AlmModel:
     is attached as self.Ylm or (self.Theta, self.Phi), but
     this can be changed by calling get_Ylm().
     """
-    def __init__(self, l, m, default_kw=None):
+    def __init__(self, l, m, default_kw=None, real_output=False):
         """
         Parameters
         ----------
@@ -1206,10 +1206,13 @@ class AlmModel:
         default_kw : dict, optional
             These are the default kwargs to use when generating Ylm
             from gen_sph2pix. 
+        real_output : bool, optional
+            If True, cast output to real before returning
         """
         self.l, self.m = l, m
         self.device = None
         self.default_kw = {} if default_kw is None else default_kw
+        self.real_output = real_output
         self.clear_Ylm_cache()
         self.clear_multigrid()
 
@@ -1225,6 +1228,10 @@ class AlmModel:
 
         Parameters
         ----------
+        params : tensor
+            parameter tensor to forward model
+            of shape (..., Ncoeff) unless passing
+            as viewreal, in which case (..., Ncoeff, 2)
         Ylm : tensor or tuple, optional
             A forward model Ylm matrix (Ncoeff, Npix)
             or a tuple holding (Theta, Phi) if separable
@@ -1233,21 +1240,25 @@ class AlmModel:
         """
         if Ylm is None and self.multigrid is not None:
             # iterate over multiple grids
-            out = []
+            output = []
             for h in self.multigrid:
                 # get the cache for this key
                 c = self.Ylm_cache[h]
                 Ylm, alm_mult = c['Ylm'], c['alm_mult']
                 angs, separable = c['angs'], c['separable']
-                out.append(self.forward_alm(params, Ylm=Ylm, alm_mult=alm_mult))
+                output.append(self.forward_alm(params, Ylm=Ylm, alm_mult=alm_mult))
 
-            out = torch.cat(out, dim=-1)
-            if self._multigrid_idx is not None:
+            # concatenate output along Npix
+            out = torch.cat(output, dim=-1)
+
+            if self._multigrid_idx is None:
+                # this is slightly slower than out[..., idx] on cpu, same speed on gpu
+                # but backprop is faster on gpu w/ index_select
                 out = torch.index_select(out, -1, self._multigrid_idx)
 
             return out
 
-        # get relevant transform matrices
+        # assume only forwarding one Ylm matrix
         if Ylm is None:
             Ylm = self.Ylm
             alm_mult = self.alm_mult
@@ -1268,19 +1279,24 @@ class AlmModel:
             params = params * alm_mult
 
         if separable:
-            Theta, Phi = Ylm
             # assume Theta and Phi are separable: (..., Ncoeff)
+            Theta, Phi = Ylm
             # first broadcast self.Theta -> (..., Ncoeff, Ntheta)
             params = torch.einsum("ct,...c->...tc", Theta, params)
             # dot product into Phi --> (..., Nphi, Ntheta)
             params = torch.einsum("...tc,cp->...tp", params, Phi)
             # unravel to (..., Npix)
             shape = params.shape[:-2] + (Theta.shape[1] * Phi.shape[1],)
-            return params.reshape(shape)
+            out = params.reshape(shape)
 
         else:
             # full transform
-            return torch.einsum("...i,ij->...j", params, Ylm)
+            out = torch.einsum("...i,ij->...j", params, Ylm)
+
+        if self.real_output:
+            out = out.real
+
+        return out
 
     @staticmethod
     def setup_angs(theta, phi, separable):
@@ -1617,7 +1633,7 @@ class AlmModel:
         if not dtype:
             self.device = device
 
-    def setup_multigrid_forward(self, thetas, phis, Ylms, alm_mults, idx=None):
+    def setup_multigrid_forward(self, thetas, phis, Ylms, alm_mults, idxs=None):
         """
         Setup multiple Ylm matrices at distinct theta/phi points
         for the forward model. For a single call for self.forward_alm()
@@ -1636,7 +1652,7 @@ class AlmModel:
         alm_mults : list
             alm multiplies for each Ylm in Ylms
         idx : tensor, optional
-            Indexing tensor over Npix axis to sort final concatenated output
+            Re-indexing tensor of final output along Npix dim
         """
         # iterate over every element in Ylms
         self.multigrid = []
