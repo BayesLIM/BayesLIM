@@ -1633,7 +1633,7 @@ class AlmModel:
         if not dtype:
             self.device = device
 
-    def setup_multigrid_forward(self, thetas, phis, Ylms, alm_mults, idxs=None):
+    def setup_multigrid_forward(self, thetas, phis, Ylms, alm_mults, idx=None):
         """
         Setup multiple Ylm matrices at distinct theta/phi points
         for the forward model. For a single call for self.forward_alm()
