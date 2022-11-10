@@ -1251,7 +1251,7 @@ class AlmModel:
             # concatenate output along Npix
             out = torch.cat(output, dim=-1)
 
-            if self._multigrid_idx is None:
+            if self._multigrid_idx is not None:
                 # this is slightly slower than out[..., idx] on cpu, same speed on gpu
                 # but backprop is faster on gpu w/ index_select
                 out = torch.index_select(out, -1, self._multigrid_idx)
