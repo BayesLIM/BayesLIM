@@ -608,7 +608,7 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
 def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
               alm_mult=None, theta_min=None, theta_max=None,
               phi_max=None, pxarea=None, history='', overwrite=False,
-              **kwargs):
+              idx=None, **kwargs):
     """
     Write a Ylm basis to HDF5 file
 
@@ -654,6 +654,8 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
         Notes about the Ylm modes
     overwrite : bool, optional
         Overwrite if file exists
+    idx : tensor, optional
+        Optional re-indexing tensor along Npix axis of Ylm
     kwargs : dict, optional
         Additional attributes to write as attrs, and
         added to the info dict upon read-in
@@ -684,6 +686,8 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
                 f.create_dataset('alm_mult', data=alm_mult)
             if pxarea is not None:
                 f.create_dataset('pxarea', data=pxarea)
+            if idx is not None:
+                f.create_dataset('idx', data=idx)
             if theta_min is not None:
                 f.attrs['theta_min'] = theta_min
             if theta_max is not None:
@@ -814,6 +818,10 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
                 pxarea = f['pxarea'][()]
             else:
                 pxarea = None
+            if 'idx' in f:
+                idx = f['idx'][()]
+            else:
+                idx = None
         else:
             Ylm = None
             D = None
@@ -912,6 +920,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     info['D'] = D
     info['Dinv'] = Dinv
     info['pxarea'] = pxarea
+    info['idx'] = idx
 
     return Ylm, angs, l, m, info
 
