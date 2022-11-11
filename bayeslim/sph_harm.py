@@ -1625,7 +1625,7 @@ class AlmModel:
         its corresponding value in self.Ylm_cache.
         """
         dtype = isinstance(device, torch.dtype)
-        if hasattr(self, 'Ylm'):
+        if hasattr(self, 'Ylm') and self.Ylm is not None:
             if isinstance(self.Ylm, tuple):
                 self.Ylm = (utils.push(self.Ylm[0], device),
                             utils.push(self.Ylm[1], device))
