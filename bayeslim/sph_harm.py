@@ -1333,7 +1333,8 @@ class AlmModel:
         return theta, phi
 
     def setup_Ylm(self, theta, phi, Ylm=None, alm_mult=None,
-                  separable=False, cache=True, h=None, **kwargs):
+                  separable=False, generate=False, cache=True,
+                  h=None, **kwargs):
         """
         Setup forward transform matrices.
         If Ylm is not provided, generate it.
@@ -1371,6 +1372,10 @@ class AlmModel:
             if separable = False.
             Otherwise, compute the full Ylm and perform both
             transforms simultaneously.
+        generate : bool, optional
+            If Ylm is passed as None and generate = True, use
+            utils.gen_sph2pix to generate it given kwargs.
+            Otherwise attach Ylm as None.
         cache : bool, optional
             If True, also store the Ylm or (Theta, Phi) matrices
             in the cache along with the sky angles hashed.
@@ -1388,7 +1393,7 @@ class AlmModel:
             self.theta, self.phi = self.setup_angs(theta, phi, separable)
 
         # generate Ylm transform if needed
-        if Ylm is None:
+        if Ylm is None and generate:
             kw = copy.deepcopy(self.default_kw)
             kw.update(kwargs)
             if separable:
@@ -1404,7 +1409,7 @@ class AlmModel:
         self.Ylm = Ylm
         self.alm_mult = alm_mult
         self.separable = separable
-        if separable:
+        if separable and self.Ylm is not None:
             assert isinstance(Ylm, (tuple, list))
 
         # cache if needed

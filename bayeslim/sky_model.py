@@ -632,7 +632,7 @@ class PixelSkyResponse:
                 # check for pre-built Alm
                 self.Alm = spatial_kwargs['Alm']
             else:
-                # built it now
+                # build it now
                 self.Alm = sph_harm.AlmModel(sk['l'], sk['m'],
                                              default_kw=sk.get('default_kwargs', None))
                 # this attaches self.Alm.Ylm and self.Alm.alm_mult
