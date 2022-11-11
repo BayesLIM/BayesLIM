@@ -607,7 +607,8 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
 
 def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
               alm_mult=None, theta_min=None, theta_max=None,
-              phi_max=None, pxarea=None, history='', overwrite=False):
+              phi_max=None, pxarea=None, history='', overwrite=False,
+              **kwargs):
     """
     Write a Ylm basis to HDF5 file
 
@@ -653,6 +654,10 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
         Notes about the Ylm modes
     overwrite : bool, optional
         Overwrite if file exists
+    kwargs : dict, optional
+        Additional attributes to write as attrs, and
+        added to the info dict upon read-in
+        in as info
     """
     if not os.path.exists(fname) or overwrite:
         with h5py.File(fname, 'w') as f:
@@ -686,6 +691,8 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
             if phi_max is not None:
                 f.attrs['phi_max'] = phi_max
             f.attrs['history'] = history
+            for k in kwargs:
+                f.attrs[k] = kwargs[k]
 
 
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
@@ -757,8 +764,11 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         else:
             alm_mult = None
         info = {}
+        for p in f.attrs:
+            info[p] = f.attrs[p]
         for p in ['history', 'theta_max', 'theta_min', 'phi_max']:
-            info[p] = f.attrs[p] if p in f.attrs else None
+            if p not in info:
+                info[p] = None
 
         # truncate modes
         keep = np.ones_like(l, dtype=bool)
