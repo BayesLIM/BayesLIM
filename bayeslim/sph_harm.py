@@ -142,7 +142,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         for i in range(Njobs):
             marr = m[i*Ntask:(i+1)*Ntask]
             _mmin = marr.min()
-            _mmax = marr.max() - 1
+            _mmax = marr.max()
             jobs.append([(phi_max, _mmax, theta_min, theta_max, lmax),
                          dict(dl=dl, mmin=_mmin, high_prec=high_prec,
                               add_mono=add_mono, add_sectoral=add_sectoral,
