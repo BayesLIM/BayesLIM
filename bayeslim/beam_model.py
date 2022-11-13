@@ -1061,7 +1061,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs)
+        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs, real_output=powerbeam)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
         self.mode = mode
@@ -1118,16 +1118,16 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         Ylm, alm_mult = self.get_Ylm(zen, az, h=zen._arr_hash if hasattr(zen, '_arr_hash') else None)
 
         # next forward to pixel space via slower dot product over Ncoeff
+        # this also casts beam to real if powerbeam
         beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult)
-
-        if torch.is_complex(beam):
-            beam = torch.real(beam)
 
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
             beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
 
         if self.log:
+            if torch.is_complex(beam):
+                beam = beam.real
             beam = torch.exp(beam)
 
         if self.mode != 'generate':
