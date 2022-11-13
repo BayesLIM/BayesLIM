@@ -977,7 +977,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
     automatically when using the rime_model.RIME object.
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
-                 mode='interpolate', device=None, interp_mode='nearest',
+                 real_beam=False, mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
@@ -1002,7 +1002,9 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             x, y = meshgrid(phi_grid, theta_grid)
             x, y = x.ravel(), y.ravel()
         comp_params : bool, optional
-            Cast params to compelx if True.
+            If True, cast params to complex if they are in 2-real form.
+        real_beam : bool, optional
+            Cast output beam to real if True, otherwise keep as-is.
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm for each zen, az call. Slow and not recommended.
             interpolate - interpolate existing beam onto zen, az. See warning
@@ -1024,7 +1026,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             nside of healpix map if pixtype is healpix
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
-            beam is complex antenna farfield beam.
+            beam is a (possibly complex) antenna farfield beam.
         log : bool, optional
             If True assume params is logged and take exp(params) before returning.
         freq_mode : str, optional
@@ -1061,7 +1063,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs, real_output=powerbeam)
+        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs, real_output=real_beam)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
         self.mode = mode
@@ -1118,7 +1120,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         Ylm, alm_mult = self.get_Ylm(zen, az, h=zen._arr_hash if hasattr(zen, '_arr_hash') else None)
 
         # next forward to pixel space via slower dot product over Ncoeff
-        # this also casts beam to real if powerbeam
+        # this also casts beam to real if real_beam
         beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult)
 
         # apply edge taper if necessary
