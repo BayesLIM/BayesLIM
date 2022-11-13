@@ -1749,11 +1749,11 @@ class AlmModel:
         # index relevant quantities
         self.l = self.l[s]
         self.m = self.m[s]
-        if hasattr(self, 'Ylm'):
+        if hasattr(self, 'Ylm') and self.Ylm is not None:
             self.Ylm = index_Ylm(self.Ylm, s)
         if hasattr(self, 'alm_mult') and self.alm_mult is not None:
             self.alm_mult = self.alm_mult[s]
-        if hasattr(self, '_D'):
+        if hasattr(self, '_D') and self._D is not None:
             self._D = self._D[s, :][:, s]
         for k in self.Ylm_cache:
             self.Ylm_cache[k]['Ylm'] = index_Ylm(self.Ylm_cache[k]['Ylm'], s)
@@ -1761,6 +1761,7 @@ class AlmModel:
                 self.Ylm_cache[k]['alm_mult'] = self.Ylm_cache[k]['alm_mult'][s]
 
         return s
+
 
 def inflate_Ylm(Ylm):
     """
