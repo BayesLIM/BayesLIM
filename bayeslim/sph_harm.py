@@ -827,6 +827,7 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             D = None
             Dinv = None
             pxarea = None
+            idx = None
 
         if alm_mult is not None:
             info['alm_mult'] = torch.as_tensor(alm_mult)
