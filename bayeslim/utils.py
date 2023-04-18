@@ -1066,12 +1066,9 @@ class PixInterp:
 
         # get nearest neighbors to use for interpolation
         # inds has shape (Nnearest, Nangles)
-        nearest = m[..., inds]
-
-        # note that simple tests show that
-        # above fancy indexing is faster than
-        # an expand->gather indexing on CPU
-        # but is similar in speed on GPU
+        # nearest = m[..., inds]  # LEGACY: backprop slower than index_select
+        # note that legacy above is ~same for cpu but ~2-5x faster on GPU
+        nearest = m.index_select(-1, inds.view(-1)).view(m.shape[:-1] + inds.shape)
 
         # multiply by weights and sum
         out = torch.sum(nearest * wgts, axis=-1)
@@ -1844,7 +1841,6 @@ class Difference(Module):
 #################################
 ######### Miscellaneous #########
 #################################
-
 
 def Jy_to_KStr(freqs):
     """
