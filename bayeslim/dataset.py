@@ -310,6 +310,7 @@ class VisData(TensorData):
         Given an antpair or antpair pol tuple "bl",
         or list of such, return unique bls and pol
         """
+        assert isinstance(bl, (tuple, list))
         if isinstance(bl, tuple):
             # this is an antpair or antpairpol
             if len(bl) == 2:
