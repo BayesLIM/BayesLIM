@@ -1321,9 +1321,12 @@ def _apply_cal(vis, gains, g1_idx, g2_idx, cal_2pol=False, cov=None,
     else:
         cov_out = cov
 
-    g1 = torch.gather(gains, 2, g1_idx[None, None, :, None, None].expand_as(vis))
-    g2 = torch.gather(gains, 2, g2_idx[None, None, :, None, None].expand_as(vis))
-       
+    # legacy: haven't shown this is faster or more mem efficient, just is more verbose
+    #g1 = torch.gather(gains, 2, g1_idx[None, None, :, None, None].expand_as(vis))
+    #g2 = torch.gather(gains, 2, g2_idx[None, None, :, None, None].expand_as(vis))
+    g1 = gains.index_select(2, g1_idx)
+    g2 = gains.index_select(2, g2_idx)
+
     if polmode in ['1pol', '2pol']:
         # update visibilities
         if vis_type == 'com':
