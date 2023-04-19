@@ -113,6 +113,15 @@ class RIME(utils.Module):
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
  
+    @property
+    def Ntimes_all(self):
+        return len(self.all_sim_times)
+
+    @property
+    def Nbls_all(self):
+        return len(self.all_sim_bls)
+
+
     def setup_freqs(self, freqs):
         """
         Set frequency array
@@ -224,7 +233,7 @@ class RIME(utils.Module):
                 times = {0: times}
 
         self.sim_time_groups = times
-        self.all_times = np.asarray(utils.flatten(self.sim_time_groups.values()))
+        self.all_sim_times = np.asarray(utils.flatten(self.sim_time_groups.values()))
         self.Ntime_groups = len(self.sim_time_groups)
         self._set_group()
 
