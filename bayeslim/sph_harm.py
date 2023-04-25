@@ -930,7 +930,7 @@ def _gen_bessel2freq_multiproc(job):
     args, kwargs = job
     return gen_bessel2freq(*args, **kwargs)
 
-
+ 
 def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
                     device=None, method='shell', bc_type=2,
                     renorm=True, r_crit=None, **kln_kwargs):
@@ -1052,7 +1052,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=utils._float())
         kt = torch.as_tensor(k, device=device, dtype=utils._float())
-        gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-3) * gl
+        gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-4) * gl
         kln[_l] = k
 
     return gln, kln
@@ -1061,6 +1061,12 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
 def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=False, device=None):
     """
     Generate a spherical bessel radial basis function, g_l(k_n r)
+
+    g_l(k_ln r) = j_l(k_ln r) + A_ln y_l(k_ln r)
+
+    where A_ln are coefficients determined by
+    boundary conditions, and k_ln are wavevectors
+    determined by boundary conditions.
 
     Parameters
     ----------
@@ -1076,12 +1082,12 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
         Only needed for method = shell.
         Type of boundary condition, 1 (Dirichlet) sets
         function to zero at edges, 2 (Neumann, default) sets
-        its derivative to zero at edges. Only used to 
-        solve for the proportionality constant between
-        j_l and y_l if method is shell.
+        its derivative to zero at edges, and 3 (potential)
+        sets the boundaries equal to the potential (see Gebhardt+21).
     r_crit : float, optional
         One of the radial edges [cMpc] if method is shell
-        (aka rmin or rmax).
+        (aka rmin or rmax). If bc_type is 3 this should be
+        r_min.
     renorm : bool, optional
         If True, renormalize amplitude of basis function
         such that inner product of r g_l(k_n r) with
@@ -1111,8 +1117,11 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
             j_i = special.jl(l, _k * r)
             deriv = bc_type == 2
             if _k > 0:
-                A = -special.jl(l, _k * r_crit, deriv=deriv) / \
-                     special.yl(l, _k * r_crit, deriv=deriv).clip(-1e50, np.inf)
+                # get proportionality constant
+                ell = l if bc_type < 3 else l + 1
+                A = -special.jl(ell, _k * r_crit, deriv=deriv) / \
+                     special.yl(ell, _k * r_crit, deriv=deriv).clip(-1e50, np.inf)
+                # add in y_l
                 y_i = special.yl(l, _k * r).clip(-1e50, np.inf)
                 j_i += A * y_i
 
@@ -1124,12 +1133,12 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
     # renormalize
     if renorm:
         rt = torch.as_tensor(r, device=device, dtype=utils._float())
-        j *= torch.sqrt(np.pi/2 * k.clip(1e-3)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
+        j *= torch.sqrt(np.pi/2 * k.clip(1e-4)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
 
     return j
 
 
-def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
+def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=0.5, decimate=False,
                    bc_type=2, add_kzero=False):
     """
     Get spherical bessel Fourier bins given r_min, r_max and
@@ -1149,7 +1158,7 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     dk_factor : float, optional
         The delta-k spacing in the k_array used for sampling
         for the roots of the boundary condition is given as
-        dk = k_min * dk_factor where k_min = 2pi / (rmax-rmin)
+        dk = k_min * dk_factor where k_min = 1e-4
         A smaller dk_factor leads to higher resolution in k
         when solving for roots, but is slower to compute.
     decimate : bool, optional
@@ -1159,9 +1168,10 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
     bc_type : int, optional
         Type of boundary condition, 1 (Dirichlet) sets
         function to zero at edges, 2 (Neumann, default) sets
-        its derivative to zero at edges.
+        its derivative to zero at edges, 3 (potential)
+        sets the edges equal to the potential (see Gebhardt+21).
     add_kzero : bool, optional
-        Add zeroth k mode.
+        Add a zero k mode if l == 0.
 
     Returns
     -------
@@ -1169,7 +1179,8 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
         Fourier modes k_n = [2pi / r_n]
     """
     # setup k_array of k samples to find roots
-    kmin = 0.9 * (2 * np.pi / (r_max - r_min))  # give a 10% buffer to kmin
+    assert bc_type in [1, 2, 3]
+    kmin = 1e-4
     dk = kmin * dk_factor
     k_arr = np.linspace(kmin, kmax, int((kmax-kmin)//dk)+1)
 
@@ -1179,10 +1190,12 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
         y = special.jl(l, k_arr * r_max, deriv=deriv)
 
     elif method == 'shell':
-        y = (special.jl(l, k_arr * r_min, deriv=deriv) * \
-             special.yl(l, k_arr * r_max, deriv=deriv).clip(-1e50, np.inf) - \
-             special.jl(l, k_arr * r_max, deriv=deriv) * \
-             special.yl(l, k_arr * r_min, deriv=deriv).clip(-1e50, np.inf))
+        l1 = l if bc_type < 3 else l - 1
+        l2 = l if bc_type < 3 else l + 1
+        y = (special.jl(l2, k_arr * r_min, deriv=deriv) * \
+             special.yl(l1, k_arr * r_max, deriv=deriv).clip(-1e50, np.inf) - \
+             special.jl(l1, k_arr * r_max, deriv=deriv) * \
+             special.yl(l2, k_arr * r_min, deriv=deriv).clip(-1e50, np.inf))
 
     # get roots
     k = utils.get_zeros(k_arr, y)
@@ -1192,7 +1205,7 @@ def sph_bessel_kln(l, r_min, r_max, kmax=0.5, dk_factor=5e-3, decimate=False,
         k = k[::2]
 
     # add zeroth k mode
-    if add_kzero:
+    if add_kzero and np.isclose(l, 0, atol=1e-5):
         k = np.concatenate([[0.0], k])
 
     return np.asarray(k)
