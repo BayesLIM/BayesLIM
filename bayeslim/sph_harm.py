@@ -931,7 +931,7 @@ def _gen_bessel2freq_multiproc(job):
     return gen_bessel2freq(*args, **kwargs)
 
  
-def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
+def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
                     device=None, method='shell', bc_type=2,
                     renorm=True, r_crit=None, **kln_kwargs):
     """
@@ -951,11 +951,9 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
     ----------
     l : array_like
         Spherical harmonic l modes for g_l(kr) terms
-    freqs : array_like
-        Frequency array [Hz]. If not passing kbins, assume
-        first and last channel in freqs define radial mask.
-    cosmo : Cosmology object
-        For freq -> r [comoving Mpc] conversion
+    r : array_like
+        Line of sight comoving distances [Mpc] at which
+        to evaluate spherical bessel functions.
     kbins : dict, optional
         Use pre-computed k_ln bins. Keys are
         l modes, values are arrays of k_ln modes in cMpc^-1.
@@ -974,9 +972,9 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         function to zero at edges, 2 (Neumann, default) sets
         its derivative to zero at edges.
     renorm : bool, optional
-        If True (default), renormalize the g_l modes
-        such that inner product of r^1 g_l(k_n r) with
-        itself equals pi/2 k^-2
+        If True, renormalize the forward transform matrices such
+        that their inner product is identity. Note
+        this is not the same as renorm kwarg in sph_bessel_func.
     r_crit : float, optional
         Either r_min or r_max for method == 'shell'.
         Used for normalization of 1st and 2nd sph bessel funcs.
@@ -996,8 +994,6 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         A dictionary holding a series of k modes [Mpc^-1]
         for each l mode. same keys as gln
     """
-    # convert frequency to LOS distance
-    r = cosmo.f2r(freqs)
     ul = np.unique(l)
 
     # multiproc mode
@@ -1011,7 +1007,7 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            args = (_l, freqs, cosmo)
+            args = (_l,)
             kwargs = dict(device=device, method=method, r_crit=r_crit,
                           renorm=renorm, bc_type=bc_type)
             kwargs.update(kln_kwargs)
@@ -1048,12 +1044,15 @@ def gen_bessel2freq(l, freqs, cosmo, kbins=None, Nproc=None, Ntask=10,
             k = kbins[_l]
         # get basis function g_l
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
-                             renorm=renorm, device=device, r_crit=r_crit)
+                             device=device, r_crit=r_crit)
         # form transform matrix: sqrt(2/pi) k g_l
         rt = torch.as_tensor(r, device=device, dtype=utils._float())
         kt = torch.as_tensor(k, device=device, dtype=utils._float())
         gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-4) * gl
         kln[_l] = k
+
+        if renorm:
+            gln[_l] /= torch.sqrt((torch.abs(gln[_l])**2).sum(axis=1, keepdims=True))
 
     return gln, kln
 
