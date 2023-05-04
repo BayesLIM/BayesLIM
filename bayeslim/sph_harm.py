@@ -8,7 +8,7 @@ import copy
 import os
 import h5py
 
-from . import special, version, utils
+from . import special, version, utils, linalg
 
 
 def gen_lm(lmax, real_field=True):
@@ -936,7 +936,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
                     renorm=True, r_crit=None, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
-    from Fourier domain (k) to LOS distance or frequency domain (r_nu)
+    from Fourier domain (k) to LOS distance or frequency domain (r or nu)
 
     The inverse transformation from Fourier space (k)
     to configuration space (r) is
@@ -1007,7 +1007,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         jobs = []
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
-            args = (_l,)
+            args = (_l, r)
             kwargs = dict(device=device, method=method, r_crit=r_crit,
                           renorm=renorm, bc_type=bc_type)
             kwargs.update(kln_kwargs)
@@ -1052,7 +1052,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         kln[_l] = k
 
         if renorm:
-            gln[_l] /= torch.sqrt((torch.abs(gln[_l])**2).sum(axis=1, keepdims=True))
+            gln[_l] /= torch.sqrt((torch.abs(gln[_l])**2).sum(axis=1, keepdims=True).clip(1e-40))
 
     return gln, kln
 
@@ -1570,8 +1570,6 @@ class AlmModel:
         -------
         tensor
         """
-        from bayeslim.linalg import least_squares
-
         # inflate Ylm to full (Ncoeff, Npix) shape
         if self.multigrid is not None:
             # collect all of the sub-grids if using multiple
@@ -1586,7 +1584,7 @@ class AlmModel:
             kwargs['D'] = self._D
 
         # compute least squares
-        params, D = least_squares(Ylm, y, dim=-1, pretran=True, **kwargs)
+        params, D = linalg.least_squares(Ylm, y, dim=-1, pretran=True, **kwargs)
 
         # store D
         if cache_D:
@@ -1774,6 +1772,272 @@ class AlmModel:
                 self.Ylm_cache[k]['alm_mult'] = self.Ylm_cache[k]['alm_mult'][s]
 
         return s
+
+
+class SFBModel:
+    """
+    An object for handling the radial component of the
+    spherical Fourier Bessel transform.
+
+    a_lm(r) = Sum_n g_l(k_n r) * t_lmn
+
+    The forward call takes a params tensor of shape
+    (..., Nlmn) and returns a tensor of shape (..., Nlm, Nr),
+    where Nlmn is the total number of sph.harm LM modes and
+    their k_n modes, and Nr is the number of radial pixels.
+    """
+    def __init__(self):
+        pass
+
+    def setup_gln(self, l, gln=None, kln=None, out_dtype=None,
+                  r=None, **gln_kwargs):
+        """
+        Setup spherical Bessel forward transform
+        gln matrices, t_lm(k_n) * g_l(k_n r) -> a_lm(r)
+
+        Parameters
+        ----------
+        l : array
+            The degree "L" of the output a_lm tensor along its
+            Nlm dimension, of shape (Nlm,)
+        gln : dict, optional
+            Forward transform tensors of shape (Nk, Nradial)
+            for each unique "L" in the l array. Key is "L" float,
+            value is the g_l(k_n r) tensor.
+
+        kln : dict, optional
+        """
+        # compute gln dictionary if needed
+        if not gln:
+            gln, kln = gen_bessel2freq(l, r, kbins=kln, **gln_kwargs)
+
+        self.gln = gln
+        self.kln = kln
+        self.l = l
+
+        # get indexing from gln dict to params tensor
+        # assumes gln is an ordered dict
+        self.params_idx = {}
+        self.alm_idx = {}
+        self.alm_shape = {}
+        self.k_arr = []
+        self.l_arr = []
+        Nlmn = 0
+        for key in self.gln:
+            Nk = len(self.gln[key])
+            idx = np.where(np.isclose(l, key, atol=1e-6, rtol=1e-10))[0]
+            Nl = len(idx)
+            N = Nk * Nl
+            # set indexing of input params tensor
+            self.params_idx[key] = slice(Nlmn, Nlmn + N)
+            # set indexing of output tensor
+            self.alm_idx[key] = utils._list2slice(list(idx))
+            self.alm_shape[key] = (self.gln[key].shape[1], len(idx))
+            # populate arrays of k and l of the input params tensor
+            self.k_arr.extend(list(self.kln[key]) * Nl) 
+            self.l_arr.extend([key] * N)
+            Nlmn += N
+    
+        self.Nlmn = Nlmn
+        self.k_arr = np.asarray(self.k_arr)
+        self.l_arr = np.asarray(self.l_arr)
+        self.Nr = self.gln[self.l_arr[0]].shape[1]
+        self.Nlm = len(l)
+        self.out_dtype = out_dtype if out_dtype is not None else utils._cfloat()
+        self.device = self.gln[self.l_arr[0]].device
+
+    def __call__(self, params, **kwargs):
+        return self.forward_gln(params, **kwargs)
+
+    def forward_gln(self, params, gln=None):
+        """
+        Perform radial forward model of a SFB
+        params tensor t_lm(k_n) -> a_lm(r) 
+
+        Parameters
+        ----------
+        params : tensor
+            Of shape (..., Nlmn) where Nlmn
+            is the sum total of row vectors
+            in gln. Note that the ordering of l values
+            along Nlmn must match that of self.alm_idx
+        gln : dict, optional
+            Use this gln dictionary instead
+            of self.gln. Note that the matrices in gln must
+            have the same shape as self.gln, and the key
+            ordering of gln must match self.gln.
+
+        Returns
+        -------
+        tensor
+            Of shape (..., Nradial)
+        """
+        pshape = params.shape[:-1]
+        shape = pshape + (self.Nr, self.Nlm)
+        out = torch.zeros(shape, dtype=self.out_dtype, device=self.device)
+        for key, g in self.gln.items():
+            new = pshape + (-1, self.alm_shape[key][1])  # (..., Nk, Nl)
+            p = params[..., self.params_idx[key]].reshape(new)
+            out[..., self.alm_idx[key]] = g.T @ p
+
+        return out
+
+    def push(self, device):
+        """
+        Push object to a new device (or dtype)
+        """
+        dtype = isinstance(device, torch.dtype)
+
+        for key in self.gln:
+            self.gln[key] = self.gln[key].to(device)
+
+        if not dtype:
+            self.device = device
+        else:
+            self.out_dtype = device
+
+    def least_squares(self, y, **kwargs):
+        """
+        Compute a least squares estimate of the params
+        tensor given observations of shape (..., Nr, Nlm).
+
+        Parameters
+        ----------
+        y : tensor
+            a_lm tensor of shape (..., Nr, Nlm)
+
+        kwargs : dict
+            kwargs to pass to linalg.least_squares
+
+        Returns
+        -------
+        tensor
+        """
+        shape = y.shape[:-2] + (self.Nlmn,)
+        params = torch.zeros(shape, dtype=self.out_dtype)
+
+        # compute least squares
+        for _l in np.unique(self.l):
+            g = self.gln[_l]
+            idx = self.alm_idx[_l]
+            fit, D = linalg.least_squares(g, y[..., idx], dim=-2, pretran=True, **kwargs)
+            params[..., self.params_idx[_l]] = fit.ravel()
+
+        return params
+
+    def make_closure(self, params, loss_fn, target, real=False):
+        """
+        Make and return a closure function used by
+        optimization routines. Use this as an alternative
+        to direct least_squares inversion if parameterization
+        is large.
+
+        Parameters
+        ----------
+        params : tensor
+            SFB t_lmn tensor to optimize, shape (..., Nlmn)
+        loss_fn : callable
+            Loss function, takes (output, target)
+        target : tensor
+            Target a_lm tensor to optimize against (..., Nr, Nlm)
+        real : bool, optional
+            Cast output and target as real-valued
+            tensors before computing loss
+
+        Returns
+        -------
+        callable
+        """
+        def closure(params=params, loss_fn=loss_fn,
+                    target=target, real=real):
+            if params.grad is not None:
+                params.grad.zero_()
+            out = self.forward_gln(params)
+            if real:
+                out, target = out.real, target.real
+            L = loss_fn(out, target)
+            L.backward()
+            return L
+
+        return closure
+
+    
+def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=None):
+    """
+    Bin and average a SFB tlmn params tensor along its last axis.
+
+    Parameters
+    ----------
+    params : tensor
+        A tlmn params tensor of shape (..., Nlmn)
+    k_arr : array
+        Array of k-values for params of shape (Nlmn,)
+    kbins : array
+        Array of k bin centers [Mpc^-1]
+    var : array
+        Variance of params tensor, of same shape.
+    wgts : array, optional
+        Binning weights, optional.
+    l_arr : array, optional
+        Array of l-values for params of shape (Nlmn,)
+    lbins : array, optional
+        Array of l bin centers for 2D k-l binning.
+        Default is just k binning.
+
+    Returns
+    -------
+    tensor
+        output binned params
+    tensor
+        output binned var
+    """
+    # push bin centers forward by diff
+    kdiff = np.diff(kbins)
+    kdiff = np.concatenate([kdiff, kdiff[-1:]])
+    kbins = kbins + kdiff / 2
+    kinds = np.digitize(k_arr, kbins)
+    Nk = len(kbins)
+    if var is None:
+        var = torch.ones_like(params)
+
+    if lbins is not None:
+        ldiff = np.diff(lbins)
+        ldiff = np.concatenate([ldiff, ldiff[-1:]])
+        lbins = lbins + ldiff / 2
+        linds = np.digitize(l_arr, lbins)
+        Nl = len(lbins)
+
+    if wgts is None:
+        wgts = torch.ones_like(params)
+
+    if lbins is None:
+        # 1D binning
+        out = torch.zeros(params.shape[:-1] + (Nk,), dtype=params.dtype, device=params.device)
+        vout = torch.zeros_like(out)
+
+        # iterate over bins
+        for i in range(Nk):
+            idx = np.where(kinds == i)[0]
+            w = wgts[idx]
+            w /= torch.sum(w).clip(1e-40)
+            out[..., i] = torch.sum(params[..., idx] * w, dim=-1)
+            vout[..., i] = torch.sum(var[..., idx] * w**2, dim=-1)
+
+    else:
+        # 2D binning
+        out = torch.zeros(params.shape[:-1] + (Nk, Nl), dtype=params.dtype, device=params.device)
+        vout = torch.zeros_like(out)
+
+        # iterate over bins
+        for i in range(Nk):
+            for j in range(Nl):
+                idx = np.where((kinds == i) & (linds == j))[0]
+                w = wgts[idx]
+                w /= torch.sum(w).clip(1e-40)
+                out[..., i, j] = torch.sum(params[..., idx] * w, dim=-1)
+                vout[..., i, j] = torch.sum(var[..., idx] * w**2, dim=-1)
+
+    return out, vout
 
 
 def inflate_Ylm(Ylm):
