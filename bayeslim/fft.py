@@ -172,7 +172,7 @@ class PeakDelay(FFT):
         return out
 
 
-def gen_window(window, N, alpha=0.5):
+def gen_window(window, N, **kwargs):
     """
     Generate a window function of len N
 
@@ -195,9 +195,9 @@ def gen_window(window, N, alpha=0.5):
     elif window in ['blackmanharris', 'blackman-harris', 'bh', 'bh4']:
         w = windows.blackmanharris(N)
     elif window in ['hanning', 'hann']:
-        w =  windows.hann(N )
+        w =  windows.hann(N)
     elif window == 'tukey':
-        w =  windows.tukey(N, alpha)
+        w =  windows.tukey(N, **kwargs)
     elif window in ['blackmanharris-7term', 'blackman-harris-7term', 'bh7']:
         # https://ieeexplore.ieee.org/document/293419
         a_k = [0.27105140069342, 0.43329793923448, 0.21812299954311, 0.06592544638803, 0.01081174209837,
@@ -218,7 +218,7 @@ def gen_window(window, N, alpha=0.5):
     else:
         try:
             # return any single-arg window from windows
-            w  = getattr(windows, window)(N)
+            w  = getattr(windows, window)(N, **kwargs)
         except AttributeError:
             raise ValueError("Didn't recognize window {}".format(window))
 
