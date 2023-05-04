@@ -2231,10 +2231,15 @@ def flatten(arr, Nelem=None):
 
 
 def _list2slice(inds):
-    """convert list indexing to slice if possible"""
-    if isinstance(inds, list):
+    """convert list/tuple indexing to slice if possible"""
+    if isinstance(inds, (list, tuple)):
+        if len(inds) == 0:
+            return inds
         diff = list(set(np.diff(inds)))
-        if len(diff) == 1:
+        if len(diff) == 0:
+            # only 1 element
+            return slice(inds[0], inds[0]+1)
+        elif len(diff) == 1:
             if (inds[1] - inds[0]) > 0:
                 # only return as slice if inds is increasing
                 return slice(inds[0], inds[-1]+diff[0], diff[0])
