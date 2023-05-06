@@ -292,7 +292,7 @@ class PointSkyResponse:
         - linear : linear mapping across frequency
         - powerlaw : amplitude and exponent, centered at f0.
     """
-    def __init__(self, freqs, freq_mode='linear', log=False, device=None, **freq_kwargs):
+    def __init__(self, freqs, freq_mode='linear', log=False, device=None, LM=None, **freq_kwargs):
         """
         Choose a frequency parameterization for PointSky
 
@@ -313,13 +313,16 @@ class PointSkyResponse:
             For powerlaw mode we only take exp(params[...,0,:])
         device : str, optional
             Device of point source params
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
         freq_kwargs : dict, optional
             Kwargs for different freq_modes, see Notes below
 
         Notes
         -----
         freq_mode == 'linear'
-            See utils.gen_linear_A() for necessary kwargs
+            See linear_model.gen_linear_A() for necessary kwargs
         freq_mode == 'powerlaw':
             f0 : anchor frequency [Hz]
         """
@@ -327,6 +330,7 @@ class PointSkyResponse:
         self.freqs = freqs
         self.freq_mode = freq_mode
         self.device = device
+        self.LM = LM
         self._setup(**freq_kwargs)
 
         # construct _args for str repr
@@ -339,8 +343,8 @@ class PointSkyResponse:
             kwgs = copy.deepcopy(kwargs)
             linear_mode = kwgs.pop('linear_mode')
             kwgs['x'] = self.freqs
-            self.freq_LM = utils.LinearModel(linear_mode, dim=-2,
-                                             device=self.device, **kwgs)
+            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2,
+                                                    device=self.device, **kwgs)
 
         elif self.freq_mode == 'powerlaw':
             self.f0 = kwargs['f0']
@@ -349,6 +353,9 @@ class PointSkyResponse:
         # pass to device
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
+
+        if self.LM is not None:
+            params = self.LM(params)
 
         if self.freq_mode == 'channel':
             pass
@@ -371,6 +378,7 @@ class PointSkyResponse:
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.freqs = self.freqs.to(device)
+        if self.LM is not None: self.LM.push(device)
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
 
@@ -513,7 +521,8 @@ class PixelSkyResponse:
     """
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
-                 cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False):
+                 cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False,
+                 LM=None):
         """
         Parameters
         ----------
@@ -553,7 +562,7 @@ class PixelSkyResponse:
                 kwargs to LinearModel()
         freq_kwargs : dict, optional
             Kwargs used to generate freq transform matrix
-            for 'linear' freq_mode, see utils.gen_linear_A()
+            for 'linear' freq_mode, see linear_model.gen_linear_A()
             gln : dict, dictionary of gln modes for bessel mode
             kbins : dict, dictionary of kln values for bessel mode
             f0 : float, fiducial frequency [Hz], used for poly
@@ -565,6 +574,9 @@ class PixelSkyResponse:
         log : bool, optional
             If True, assumed params is log sky and take
             exp of params just before return
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
         """
         self.freqs = freqs
         self.comp_params = comp_params
@@ -577,6 +589,7 @@ class PixelSkyResponse:
             cosmo = cosmology.Cosmology()
         self.cosmo = cosmo
         self.log = log
+        self.LM = LM
 
         self._spatial_setup(spatial_kwargs=spatial_kwargs)
         self._freq_setup(freq_kwargs=freq_kwargs)
@@ -598,7 +611,7 @@ class PixelSkyResponse:
             linear_mode = fkwgs.pop('linear_mode')
             fkwgs['x'] = self.freqs
             fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
-            self.freq_LM = utils.LinearModel(linear_mode, dim=-2, device=self.device, **fkwgs)
+            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device, **fkwgs)
 
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
@@ -645,7 +658,7 @@ class PixelSkyResponse:
             assert 'linear_mode' in skwgs, "must specify linear_mode"
             linear_mode = skwgs.pop('linear_mode')
             skwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
-            self.spat_LM = utils.LinearModel(linear_mode, dim=-1, device=self.device, **skwgs)
+            self.spat_LM = linear_model.LinearModel(linear_mode, dim=-1, device=self.device, **skwgs)
 
     def spatial_transform(self, params):
         """
@@ -720,6 +733,8 @@ class PixelSkyResponse:
     def __call__(self, params):
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
+        if self.LM is not None:
+            params = self.LM(params)
         if self.transform_order == 0:
             params = self.spatial_transform(params)
             params = self.freq_transform(params)
@@ -749,6 +764,7 @@ class PixelSkyResponse:
                 self.gln[k] = self.gln[k].to(device)
 
         self.freqs = self.freqs.to(device)
+        if self.LM is not None: self.LM.push(device)
         if not dtype: self.device = device
 
 

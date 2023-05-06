@@ -19,6 +19,7 @@ from . import paramdict
 from . import fft
 from . import sph_harm
 from . import filt
+from . import linear_model
 
 from .paramdict import ParamDict
 from .dataset import VisData, Dataset

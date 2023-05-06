@@ -8,7 +8,7 @@ import warnings
 from scipy import interpolate
 import copy
 
-from . import utils, linalg, special, sph_harm
+from . import utils, linalg, special, sph_harm, linear_model
 
 
 D2R = utils.D2R
@@ -596,7 +596,7 @@ class PixelResponse(utils.PixInterp):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
                  powerbeam=True, Rchi=None, interp_gpu=False, interp_cache_depth=None,
-                 taper_kwargs=None):
+                 taper_kwargs=None, LM=None):
         """
         Parameters
         ----------
@@ -636,7 +636,7 @@ class PixelResponse(utils.PixInterp):
             exp before returning.
         freq_kwargs : dict, optional
             Kwargs for frequency parameterization.
-            'linear' : pass kwargs to utils.LinearModel
+            'linear' : pass kwargs to linear_model.LinearModel
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
         Rchi : tensor, optional
@@ -652,6 +652,9 @@ class PixelResponse(utils.PixInterp):
         taper_kwargs : dict, optional
             Taper the edge of the beam using beam_edge_taper()
             with these kwargs. Default is no tapering.
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
@@ -668,6 +671,7 @@ class PixelResponse(utils.PixInterp):
         self.Rchi = Rchi
         self.clear_beam_cache()
         self.taper_kwargs = taper_kwargs
+        self.LM = LM
 
         freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self._setup(**freq_kwargs)
@@ -684,8 +688,8 @@ class PixelResponse(utils.PixInterp):
             kwgs['x'] = self.freqs
             linear_mode = kwgs.pop('linear_mode')
             kwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
-            self.freq_LM = utils.LinearModel(linear_mode, dim=-2, device=self.device,
-                                             **kwgs)
+            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device,
+                                                    **kwgs)
 
     def push(self, device):
         """push attrs to device"""
@@ -699,11 +703,22 @@ class PixelResponse(utils.PixInterp):
             self.theta = self.theta.to(device)
         if self.phi is not None:
             self.phi = self.phi.to(device)
+        if self.LM is not None:
+            self.LM.push(device)
 
     def forward(self, params):
         """forward pixelized beam through frequency response"""
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
+
+        # cast to complex if needed
+        if self.comp_params and not torch.is_complex(params):
+            params = utils.viewcomp(params)
+
+        # pass through LinearModel if desired
+        if self.LM is not None:
+            params = self.LM(params)
+
         # pass through frequency response
         if self.freq_mode == 'channel':
             p = params
@@ -718,11 +733,14 @@ class PixelResponse(utils.PixInterp):
 
     def __call__(self, params, zen, az, *args):
         # cast to complex if needed
-        if self.comp_params:
+        if self.comp_params and not torch.is_complex(params):
             params = utils.viewcomp(params)
 
         # set beam cache if it doesn't exist
         if self.beam_cache is None:
+            # pass through LinearModel if needed
+            if self.LM is not None:
+                params = self.LM(params)
             self.set_beam_cache(params)
 
         # interpolate at sky values
@@ -981,8 +999,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
-                 separable=False, interp_cache_depth=None,
-                 taper_kwargs=None):
+                 separable=False, interp_cache_depth=None, taper_kwargs=None,
+                 LM=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -1032,7 +1050,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         freq_mode : str, optional
             Frequency parameterization ['channel', 'linear']
         freq_kwargs : dict, optional
-            Kwargs for generating linear modes, see utils.gen_linear_A()
+            Kwargs for generating linear modes, see linear_model.gen_linear_A()
         Ylm_kwargs : dict, optional
             Kwargs for generating Ylm modes
         Rchi : tensor, optional
@@ -1053,6 +1071,9 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         taper_kwargs : dict, optional
             Taper the edge of the beam using beam_edge_taper()
             with these kwargs. Default is no tapering.
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
         """
         # init PixelResponse
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
@@ -1063,7 +1084,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           interp_gpu=interp_gpu,
                                           interp_cache_depth=interp_cache_depth)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
-        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs, real_output=real_beam)
+        super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs,
+                                              real_output=real_beam, LM=LM)
         dtype = utils._cfloat() if comp_params else utils._float()
         self.powerbeam = powerbeam
         self.mode = mode
@@ -1105,6 +1127,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # pass to device
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
+
+        # pass through LinearModel if needed
+        if self.LM is not None:
+            params = self.LM(params)
 
         # first handle frequency axis
         if self.freq_mode == 'channel':
@@ -1150,6 +1176,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
+                # pass through LinearModel if needed
+                if self.LM is not None:
+                    params = self.LM(params)
+
                 # forward beam at pre-designated points before interpolating
                 self.set_beam_cache(params)
 
@@ -1181,14 +1211,14 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                 self.lm_poly_A[k] = (lm_inds, p_inds, utils.push(A, device))
         # PixelResponse push
         super(YlmResponse, self).push(device)
-        # AlmModel push
+        # AlmModel push (this also gets self.LM)
         super(utils.PixInterp, self).push(device)
 
     # lm_poly_fit is experimental...
     def lm_poly_setup(self, lm_poly_kwargs=None):
         """
         Setup polynomial compression along degree l if desired using
-        utils.gen_poly_A().
+        linear_model.gen_poly_A().
         This means the last dimension of the input params tensor
         are the weights to self.lm_poly_A matrices ordered
         according to increasing unique m value.
@@ -1197,7 +1227,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         Parameters
         ----------
         lm_poly_kwargs : dict, optional
-            Kwargs for utils.gen_poly_A(), compressing along l
+            Kwargs for linear_model.gen_poly_A(), compressing along l
             for each fixed integer m. Default is no compression.
             Can also be a kwarg dictionary for each unique m integer.
             If Ndeg is fed as None for a particular m mode dictionary,
@@ -1238,7 +1268,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
 
                 if compress:
                     # generate A matrix
-                    A = utils.gen_poly_A(self.l[lm_inds], Ndeg, **kwargs)
+                    A = linear_model.gen_poly_A(self.l[lm_inds], Ndeg, **kwargs)
                     dtype = utils._float() if not self.comp_params else utils._cfloat()
                     A = A.to(dtype)
                 else:

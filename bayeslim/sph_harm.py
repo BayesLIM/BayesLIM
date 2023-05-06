@@ -1227,7 +1227,7 @@ class AlmModel:
     is attached as self.Ylm or (self.Theta, self.Phi), but
     this can be changed by calling get_Ylm().
     """
-    def __init__(self, l, m, default_kw=None, real_output=False):
+    def __init__(self, l, m, default_kw=None, real_output=False, LM=None):
         """
         Parameters
         ----------
@@ -1240,11 +1240,15 @@ class AlmModel:
             from gen_sph2pix. 
         real_output : bool, optional
             If True, cast output to real before returning
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
         """
         self.l, self.m = l, m
         self.device = None
         self.default_kw = {} if default_kw is None else default_kw
         self.real_output = real_output
+        self.LM = LM
         self.clear_Ylm_cache()
         self.clear_multigrid()
 
@@ -1270,6 +1274,9 @@ class AlmModel:
         alm_mult : tensor, optional
             Multiply params by this before taking forward transform
         """
+        if self.LM is not None:
+            params = self.LM(params)
+
         if Ylm is None and self.multigrid is not None:
             # iterate over multiple grids
             output = []
@@ -1786,8 +1793,15 @@ class SFBModel:
     where Nlmn is the total number of sph.harm LM modes and
     their k_n modes, and Nr is the number of radial pixels.
     """
-    def __init__(self):
-        pass
+    def __init__(self, LM=None):
+        """
+        Parameters
+        ----------
+        LM : LinearModel object, optional
+            Pass the input params through this LinearModel
+            object before passing through the response function.
+        """
+        self.LM = LM
 
     def setup_gln(self, l, gln=None, kln=None, out_dtype=None,
                   r=None, **gln_kwargs):
@@ -1872,6 +1886,10 @@ class SFBModel:
         tensor
             Of shape (..., Nradial)
         """
+        if self.LM is not None:
+            params = self.LM(params)
+
+        # get shapes
         pshape = params.shape[:-1]
         shape = pshape + (self.Nr, self.Nlm)
         out = torch.zeros(shape, dtype=self.out_dtype, device=self.device)
@@ -1890,6 +1908,9 @@ class SFBModel:
 
         for key in self.gln:
             self.gln[key] = self.gln[key].to(device)
+
+        if self.LM is not None:
+            self.LM.push(device)
 
         if not dtype:
             self.device = device
