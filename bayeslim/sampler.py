@@ -183,16 +183,20 @@ class HMC(SamplerBase):
         self.eps = eps
         self.set_cov(cov, sparse_cov)
 
-    def set_cov(self, cov=None, sparse_cov=None, rcond=1e-15):
+    def set_cov(self, hess=None, cov=None, sparse_cov=None, rcond=1e-15):
         """
-        Set the parameter covariance, aka the
-        inverse mass matrix, used to define the kinetic energy.
-        Also sets the cholesky of the mass matrix, used for
+        Set the parameter covariance, aka the inverse mass matrix,
+        used to define the kinetic energy.
+        Also sets the cholesky of the inv. mass matrix, used for
         sampling the momenta.
         Default is sparse, unit variance for all parameters.
+        Can also pass the Hessian instead of the covariance.
 
         Parameters
         ----------
+        hess : ParamDict, optional
+            Hessian matrix for each parameter in ParamDict.
+            Pass either hess or cov.
         cov : ParamDict, optional
             Covariance matrix for each parameter in ParamDict
         sparse_cov : bool or ParamDict, optional
@@ -202,28 +206,43 @@ class HMC(SamplerBase):
             rcond parameter for pinverse of cov to get mass matrix
         """
         ## TODO: allow for structured covariances between parameters
+        if sparse_cov is None or isinstance(sparse_cov, bool):
+            sparse_cov = {k: sparse_cov for k in self.x}
+
+        # set the covariance
+        if hess is not None:
+            assert cov is None
+            cov = ParamDict({})
+            for k in hess:
+                if sparse_cov[k]:
+                    cov[k] = 1 / hess[k].reshape(self.x[k].shape)
+                else:
+                    cov[k] = torch.linalg.pinv(hess[k], rcond=rcond)
+
         if cov is None:
             cov = ParamDict({k: torch.ones_like(self.x[k]) for k in self.x})
             sparse_cov = True
-        if isinstance(sparse_cov, bool):
-            sparse_cov = {k: sparse_cov for k in self.x}
-
-        # set the cholesky of the mass matrix
-        self.chol = {}
-        for k in cov:
-            if sparse_cov[k]:
-                self.chol[k] = torch.sqrt(1 / cov[k])
-            else:
-                try:
-                    self.chol[k] = torch.linalg.cholesky(torch.pinverse(cov[k], rcond=rcond))
-                except RuntimeError:
-                    # error in taking cholesky, so just default to using diagonal
-                    self.chol[k] = torch.sqrt(1 / cov[k].diagonal().reshape(self.x[k].shape))
-                    sparse_cov[k] = True
-                    cov[k] = cov[k].diagonal().reshape(self.x[k].shape)
 
         self.cov = cov
         self.sparse_cov = sparse_cov
+
+        # set the cholesky of inv mass matrix (aka Hessian)
+        self.chol = {}
+        for k in cov:
+            if sparse_cov[k]:
+                h = hess[k] if hess is not None else 1 / cov[k]
+                self.chol[k] = torch.sqrt(h.reshape(self.x[k].shape))
+            else:
+                try:
+                    h = hess[k] if hess is not None else torch.pinverse(cov[k], rcond=rcond)
+                    self.chol[k] = torch.linalg.cholesky(h)
+                except RuntimeError:
+                    # error in taking cholesky, so just default to using diagonal
+                    print("Error taking cholesky for {}, setting cov to diagonal".format(k))
+                    h = hess[k].diagonal() if hess is not None else 1 / cov[k].diagonal()
+                    self.chol[k] = torch.sqrt(h.reshape(self.x[k].shape))
+                    sparse_cov[k] = True
+                    cov[k] = cov[k].diagonal().reshape(self.x[k].shape)
 
     def K(self, p):
         """
