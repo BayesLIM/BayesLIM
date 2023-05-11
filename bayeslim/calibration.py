@@ -1467,7 +1467,7 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
                 p0.imag[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                     p0.imag[:, :, refant_idx:refant_idx+1]
                 )
-        elif param_type in ['dly', 'phs', 'amp_phs']:
+        elif param_type in ['dly', 'phs']:
             params[:, :, refant_idx:refant_idx+1] = torch.zeros_like(
                 params[:, :, refant_idx:refant_idx+1]
             )
