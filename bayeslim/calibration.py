@@ -124,13 +124,13 @@ class BaseResponse:
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
-        # detect if params needs to be casted into complex
-        if self.param_type == 'com' and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         # pass through a LinearModel if requested
         if self.LM is not None:
             params = self.LM(params)
+
+        # detect if params needs to be casted into complex
+        if self.param_type == 'com' and not torch.is_complex(params):
+            params = utils.viewcomp(params)
 
         # convert representation to full Ntimes, Nfreqs
         if self.freq_mode == 'channel':
