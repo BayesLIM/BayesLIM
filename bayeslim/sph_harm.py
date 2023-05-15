@@ -1580,7 +1580,7 @@ class AlmModel:
         # inflate Ylm to full (Ncoeff, Npix) shape
         if self.multigrid is not None:
             # collect all of the sub-grids if using multiple
-            Ylm = torch.cat([inflate_Ylm(Y) for Y in self.Ylms], dim=-1)
+            Ylm = torch.cat([inflate_Ylm(self.Ylm_cache[h]['Ylm']) for h in self.multigrid], dim=-1)
             if self._multigrid_idx is not None:
                 Ylm = torch.index_select(Ylm, -1, self._multigrid_idx)
         else:
