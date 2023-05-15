@@ -219,6 +219,30 @@ class ParamDict:
 
         return pd
 
+    def operator(self, func, inplace=False):
+        """
+        Apply a function operator to each value and
+        return the object e.g.
+            pd.operator(torch.log)
+            pd.operator(lambda x: torch.mean(x, dim=0))
+
+        Parameters
+        ----------
+        func : callable
+        inplace : bool, optional
+            Apply operation inplace
+            and return None
+
+        Returns
+        -------
+        ParamDict object
+        """
+        if inplace:
+            for k in self.keys():
+                self[k] = func(self[k])
+        else:
+            return ParamDict({k: func(self[k]) for k in self.keys()})
+
 
 def model2pdict(model, parameters=True, clone=False, prefix=None):
     """
