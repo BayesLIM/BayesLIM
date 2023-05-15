@@ -22,22 +22,21 @@ class SamplerBase:
         ----------
         x0 : ParamDict
             Starting parameters
-        outdir : str, optional
-            A directory path for checkpoint saving
-            parameters and models of this run.
         """
         self.x = x0.clone().copy()
         self.accept_ratio = 1.0
         self._acceptances = []
         self.chain = {k: [] for k in x0.keys()}
-        # this contains all lists, which is needed
+        self.Uchain = []
+        # this contains all list attrs, which is needed
         # when writing the chain to file and loading it
-        self.lists = ['_acceptances']
+        self._lists = ['_acceptances', 'Uchain']
 
     def step(self):
         """overload this method in a Sampler subclass.
         Should make an MCMC step and either accept or reject it,
         update self.x accordingly and return an acceptance bool
+        and the probability
         """
         raise NotImplementedError
 
@@ -57,10 +56,13 @@ class SamplerBase:
             to write the chain
         """
         for i in range(Nsample):
-            accept = self.step()
+            accept, prob = self.step()
             self._acceptances.append(accept)
+            # append parameter values to chain
             for k in self.x.keys():
                 self.chain[k].append(utils.tensor2numpy(self.x[k], clone=True))
+            # append potential values to chain
+            self.Uchain.append(self._U)
             if Ncheck is not None:
                 if i > 0 and i % Ncheck == 0:
                     assert outfile is not None
@@ -84,19 +86,19 @@ class SamplerBase:
             Path to output npz file
         attrs : list of str, optional
             List of additional attributes to write to file.
-            Base attrs are chain, _acceptances, x, accept_ratio
+            Base attrs are chain, _acceptances, x, accept_ratio, Uchain
         overwrite : bool, optional
             Overwrite if file exists
         description : str, optional
             Description of run
         """
-        attrs  = ['chain', '_acceptances', 'accept_ratio', 'x'] + attrs
+        attrs  = ['chain', '_acceptances', 'accept_ratio', 'x', 'Uchain'] + attrs
         self.accept_ratio = sum(self._acceptances) / len(self._acceptances)
         fexists = os.path.exists(outfile)
         if not fexists or overwrite:
             write_dict = {}
             for attr in attrs:
-                if attr in self.lists:
+                if attr in self._lists:
                     # special treatment for list to preserve it upon read
                     # wrap it in its own dict
                     write_dict[attr] = {attr: getattr(self, attr)}
@@ -136,21 +138,41 @@ class SamplerBase:
         with np.load(infile, allow_pickle=True) as f:
             for key in f:
                 if key not in ['description']:
-                    if key in self.lists:
+                    if key in self._lists:
                         # special treatment for lists
                         setattr(self, key, f[key].item()[key])
                     else:
                         setattr(self, key, f[key].item())
+
+    def clear_chain(self, N=None):
+        """
+        Clear the oldest N entries from the chain.
+        Default is clear the whole chain.
+
+        Parameters
+        ----------
+        N : int, optional
+            Clear the oldest N entries in the chain.
+            Default is all entries
+        """
+        for k in self.chain:
+            Nclear = N if N is not None else len(self.chain[k])
+            self.chain[k] = self.chain[k][Nclear:]
+        self.Uchain = self.Uchain[Nclear:]
+        self._divergences = [(d[0]-Nclear, d[1]) for d in self._divergences]
 
 
 class HMC(SamplerBase):
     """
     Hamiltonian Monte Carlo sampler.
 
-    Note that the mass matrix only informs the momentum
-    sampling: the kinetic energy always uses an identity mass matrix.
+    The step size, eps, and the number of steps must be
+    chosen a priori. A good starting point is eps ~ [0.1, 0.9]
+    and Nstep = max[1 / eps, 5] assuming the a (cov)variance
+    is provided.
     """
-    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10):
+    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10,
+                 dHmax=1000, record_divergences=False):
         """
         Parameters
         ----------
@@ -163,7 +185,8 @@ class HMC(SamplerBase):
         eps : ParamDict
             Size of position step in units of x
         cov : ParamDict, optional
-            Covariance matrix to inform momentum sampling
+            Covariance matrix to inform momentum sampling.
+            You can also pass the Hessian via self.set_cov().
         sparse_cov : bool, optional
             If True, cov represents the diagonal
             of the cov matrix. Otherwise, it is
@@ -171,19 +194,31 @@ class HMC(SamplerBase):
             in x0.
         Nstep : int, optional
             Number of leapfrog updates per step
+        dHmax : float, optional
+            Maximum allowable change in Hamiltonian for a
+            step, in which case the trajectory is deemed divergent.
+            In this case, the trajectory restarts from a random position
+            in the chain and resamples the momentum.
+        record_divergences : bool, optional
+            If True, record metadata about divergences as they
+            appear in self._divergences
         """
         super().__init__(x0)
+        self._lists += ['_divergences']
         self.potential_fn = potential_fn
         self.fn_evals = 0
         self.Nstep = Nstep
-        if isinstance(eps, torch.Tensor):
+        self.dHmax = dHmax
+        self.record_divergences = record_divergences
+        self._divergences = []  # [(chain_sample, final x, final p), ]
+        if isinstance(eps, (torch.Tensor)):
             eps = ParamDict({k: eps for k in x0})
         self._U = np.inf # starting potential energy
         self.p = None    # ending momentum
         self.eps = eps
-        self.set_cov(cov, sparse_cov)
+        self.set_cov(cov=cov, sparse_cov=sparse_cov)
 
-    def set_cov(self, hess=None, cov=None, sparse_cov=None, rcond=1e-15):
+    def set_cov(self, cov=None, hess=None, sparse_cov=True, rcond=1e-15):
         """
         Set the parameter covariance, aka the inverse mass matrix,
         used to define the kinetic energy.
@@ -194,11 +229,11 @@ class HMC(SamplerBase):
 
         Parameters
         ----------
+        cov : ParamDict, optional
+            Covariance matrix for each parameter in ParamDict
         hess : ParamDict, optional
             Hessian matrix for each parameter in ParamDict.
             Pass either hess or cov.
-        cov : ParamDict, optional
-            Covariance matrix for each parameter in ParamDict
         sparse_cov : bool or ParamDict, optional
             If True, cov represents just the variance,
             otherwise it represents full covariance
@@ -221,7 +256,7 @@ class HMC(SamplerBase):
 
         if cov is None:
             cov = ParamDict({k: torch.ones_like(self.x[k]) for k in self.x})
-            sparse_cov = True
+            sparse_cov = {k: sparse_cov for k in self.x}
 
         self.cov = cov
         self.sparse_cov = sparse_cov
@@ -247,7 +282,8 @@ class HMC(SamplerBase):
     def K(self, p):
         """
         Compute the kinetic energy given state of
-        momentum p
+        momentum p. Uses state of self.cov (i.e. inv-mass)
+        to scale momenta.
 
         Parameters
         ----------
@@ -271,6 +307,25 @@ class HMC(SamplerBase):
                     K += prav @ self.cov[k] @ prav / 2
 
         return K
+
+    def is_divergent(self, H_start, H_end):
+        """
+        Assess whether a trajectory has diverged
+        based on initial and final Hamiltonian values,
+        and self.dHmax threshold
+
+        Parameters
+        ----------
+        H_start : float
+            Starting Hamiltonian energy level (K_start + U_start)
+        H_end : float
+            Ending Hamiltonian energy level (K_end + U_end)
+
+        Returns
+        -------
+        bool
+        """
+        return (H_end - H_start) > self.dHmax
 
     def dUdx(self, x):
         """
@@ -310,6 +365,13 @@ class HMC(SamplerBase):
             variables given mass matrix. If False, use
             existing self.p to begin (not standard, and
             only used for tracking an HMC trajectory)
+
+        Returns
+        -------
+        bool
+            If the sampler accepted the step
+        float
+            The computed acceptance probability
         """
         # sample momentum vector and get starting energies
         if sample_p:
@@ -318,6 +380,7 @@ class HMC(SamplerBase):
             p = self.p.copy()
         K_start = self.K(p)
         U_start = self._U
+        H_start = K_start + U_start
 
         # copy temporary position tensor
         q = self.x.copy()
@@ -329,9 +392,26 @@ class HMC(SamplerBase):
         # get final energies
         K_end = self.K(p_new)
         U_end = self._U
+        H_end = K_end + U_end
+
+        # assess whether this is divergent, otherwise continue as normal
+        if self.is_divergent(H_start, H_end):
+            Nchain = len(self.Uchain)
+
+            # record info if desired
+            if self.record_divergences:
+                self._divergences.append((Nchain, q_new, p_new))
+
+            # pick a random spot in the chain and restart from there
+            if Nchain > 0:
+                i = np.random.randint(0, Nchain)
+                self._U = self.Uchain[i]
+                self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
+
+            return False, torch.tensor(0.)
 
         # evaluate metropolis acceptance
-        prob = torch.exp(K_start + U_start - K_end - U_end)
+        prob = min(torch.tensor(1.), torch.exp(H_start - H_end))
         accept = np.random.rand() < prob
 
         if accept:
@@ -342,11 +422,54 @@ class HMC(SamplerBase):
         else:
             self._U = U_start
 
-        return accept
+        return accept, prob
 
-    def optimize_cov(self, Nback=None, sparse_cov=True, robust=False):
+    def dual_averaging(self, Nadapt, target=0.8, gamma=0.05, t0=10.0, kappa=0.75):
         """
-        Try to compute the covariance of self.x given 
+        Dual averaging method for optimizing epsilon stepsize
+        from Hoffman et al. 2014 Eqn (6). Uses current value
+        self.eps as starting point. Updates self.eps inplace!
+
+        Parameters
+        ----------
+        Nadapt : int
+            Number of steps to perform eps adaptation
+        target : float, optional
+            Target acceptance probability [0, 1]
+        gamma : float, optional
+            A stepsize scheduling parameter, see Hoffman+14
+        t0 : float, optional
+            A stepsize scheduling parameter, see Hoffman+14
+        kappa : float, optional
+            A stepsize scheduling parameter, see Hoffman+14
+        """
+        # initialize variables
+        log_eps_bar = torch.log(torch.ones(1))
+        h_bar = 0.0
+
+        if isinstance(self.eps, ParamDict):
+            mu = (10 * self.eps).operator(torch.log)
+        else:
+            mu = torch.log(10 * self.eps)
+
+        # iterate over adaptation steps
+        for i in range(1, Nadapt+1):
+            # run a leapfrog trajectory
+            accept, prob = self.step()
+            # compute dual averaging quantities
+            eta = 1.0 / (i + t0)
+            h_bar = (1 - eta) * h_bar + eta * (target - prob)
+            log_eps = (mu - h_bar * torch.sqrt(torch.tensor(i)) / gamma)
+            x_eta = i**(-kappa)
+            log_eps_bar = x_eta * log_eps + (1 - x_eta) * log_eps_bar
+            if isinstance(log_eps, ParamDict):
+                self.eps = log_eps.operator(torch.exp)
+            else:
+                self.eps = torch.exp(torch.as_tensor(log_eps))
+
+    def estimate_cov(self, Nback=None, sparse_cov=True, robust=False):
+        """
+        Try to estimate the covariance of self.x given 
         recent sampling history of Nback most-recent samples.
 
         Parameters
@@ -378,7 +501,7 @@ class HMC(SamplerBase):
                 cov = torch.tensor(np.cov(c), dtype=dtype, device=device)
             Cov[k] = cov
 
-        self.set_cov(Cov, sparse_cov=sparse_cov)
+        self.set_cov(cov=Cov, sparse_cov=sparse_cov)
 
     def write_chain(self, outfile, overwrite=False, description=''):
         """
@@ -395,14 +518,16 @@ class HMC(SamplerBase):
             model_tree = json.dumps(io.get_model_description(self.potential_fn)[1], indent=2)
             description = "{}\n{}\n{}".format(model_tree, '-'*40, description)
         self._write_chain(outfile, overwrite=overwrite,
-                          attrs=['fn_evals', '_H'], description=description)
+                          attrs=['fn_evals', '_H', '_divergences'],
+                          description=description)
 
 
 class NUTS(HMC):
     """
-    No-U Turn sampler for HMC
+    No U-Turn Sampler variant of HMC
     """
-    def __init__(self, potential_fn, x0, eps, mass=None, sparse_mass=True):
+    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10,
+                 dHmax=1000, record_divergences=False):
         """
         Parameters
         ----------
@@ -414,42 +539,64 @@ class NUTS(HMC):
             Starting value for parameters
         eps : ParamDict
             Size of position step in units of x
-        mass : ParamDict, optional
-            Mass matrix. Default is unit matrix.
-        sparse_mass : bool, optional
-            If True, mass represents the diagonal
-            of the mass matrix. Otherwise, it is
+        cov : ParamDict, optional
+            Covariance matrix to inform momentum sampling
+        sparse_cov : bool, optional
+            If True, cov represents the diagonal
+            of the cov matrix. Otherwise, it is
             a 2D tensor for each param.ravel()
             in x0.
+        Nstep : int, optional
+            Number of leapfrog updates per step
+        dHmax : float, optional
+            Maximum allowable change in Hamiltonian for a
+            step, in which case the trajectory is deemed divergent.
+            In this case, the trajectory restarts from a random position
+            in the chain and resamples the momentum.
+        record_divergences : bool, optional
+            If True, record metadata about divergences as they
+            appear in self._divergences
         """
-        raise NotImplementedError
+        super().__init__(potential_fn, x0, eps, cov=cov, sparse_cov=sparse_cov, Nstep=Nstep,
+                         dHmax=dHmax, record_divergences=record_divergences)
 
     def build_tree(self, ):
         pass
 
-    def step(self):
+    def stop_criterion(self, q, q_new, p_new):
         """
-        Make a HMC step with metropolis update
+        The U-Turn criterion, Hoffman+14 Eqn. 1,
+        which is the dot product (q_new-q) p_new
+
+        Parameters
+        ----------
+        q : tensor or ParamDict
+            The initial position vector
+        q_new : tensor or ParamDict
+            The proposed position vector
+        p_new : tensor or ParamDict
+            The proposed momentum vector
+
+        Returns
+        -------
+        float
         """
-        # sample momentum vector
-        p = self.draw_momentum()
+        pass
 
-        # copy temporary position tensor
-        q = self.x.copy()
+    def sample_slice(self, H):
+        """
+        Sample slice variable from uniform dist [0, H]
 
-        # run leapfrog steps from current position
-        q_new, p_new = leapfrog(q, p, self.dUdx, self.eps, self.Nstep)
+        Parameters
+        ----------
+        H : float
+            Hamiltonian value
 
-        # evaluate metropolis acceptance
-        H_new = self.K(p_new) + self._U
-        prob = torch.exp(self._H - H_new)
-        accept = np.random.rand() < prob
-
-        if accept:
-            self._H = H_new.detach()
-            self.x = q_new
-
-        return accept
+        Returns
+        -------
+        float
+        """
+        pass
 
 
 class Potential(utils.Module):
@@ -550,6 +697,7 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True):
     ## TODO: incorporate data split (Neal+2011 Sec 5.)
     ## TODO: incorporate friction term (Chen+2014 SGHMC)
     ## TODO: allow for more frequent update of "fast" parameters
+    ## TODO: return full trajectory and allow for MH acceptances
     if isinstance(q, ParamDict):
         if isinstance(sparse_mass, bool):
             sparse_mass = {k: sparse_mass for k in q}
@@ -558,22 +706,21 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True):
         if isinstance(invmass, (float, int, torch.Tensor)):
             invmass = ParamDict({k: torch.ones_like(p[k]) * invmass for k in q})
 
-    # momentum half step
+    def pos_step(q, eps, invmass, p, sparse_mass):
+        # position full step on tensors
+        if sparse_mass:
+            q += (eps * invmass) * p
+        else:
+            q += eps * (invmass @ p.ravel()).reshape(p.shape)
+
+    # initial momentum half step
     p -= dUdq(q) * (eps / 2)
 
     # iterate over steps
     for i in range(N):
         with torch.no_grad():
-            def pos_step(q, eps, invmass, p, sparse_mass):
-                # position full step on tensors
-                if sparse_mass:
-                    q += (eps * invmass) * p
-                else:
-                    q += eps * (invmass @ p.ravel()).reshape(p.shape)
-
             if isinstance(q, torch.Tensor):
                 pos_step(q, eps, invmass, p, sparse_mass)
-
             elif isinstance(q, ParamDict):
                 for k in q:
                     pos_step(q[k], eps[k], invmass[k], p[k], sparse_mass[k])
@@ -587,4 +734,3 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True):
 
     # return position, negative momentum
     return q, p
-
