@@ -1960,7 +1960,7 @@ def _list2slice(inds):
         diff = list(set(np.diff(inds)))
         if len(diff) == 0:
             # only 1 element
-            return slice(inds[0], inds[0]+1)
+            return slice(inds[0], inds[0]+1, 1)
         elif len(diff) == 1:
             if (inds[1] - inds[0]) > 0:
                 # only return as slice if inds is increasing
