@@ -711,13 +711,13 @@ class PixelResponse(utils.PixInterp):
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
-        # cast to complex if needed
-        if self.comp_params and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         # pass through LinearModel if desired
         if self.LM is not None:
             params = self.LM(params)
+
+        # cast to complex if needed
+        if self.comp_params and not torch.is_complex(params):
+            params = utils.viewcomp(params)
 
         # pass through frequency response
         if self.freq_mode == 'channel':
@@ -732,16 +732,13 @@ class PixelResponse(utils.PixInterp):
         return p
 
     def __call__(self, params, zen, az, *args):
+        # set beam cache if it doesn't exist
+        if self.beam_cache is None:
+            self.set_beam_cache(params)
+
         # cast to complex if needed
         if self.comp_params and not torch.is_complex(params):
             params = utils.viewcomp(params)
-
-        # set beam cache if it doesn't exist
-        if self.beam_cache is None:
-            # pass through LinearModel if needed
-            if self.LM is not None:
-                params = self.LM(params)
-            self.set_beam_cache(params)
 
         # interpolate at sky values
         b = self.interp(self.beam_cache, zen, az)
@@ -1120,10 +1117,6 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             pixelized beam on the sky
             of shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
         """
-        # cast to complex if needed
-        if self.comp_params and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         # pass to device
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
@@ -1131,6 +1124,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # pass through LinearModel if needed
         if self.LM is not None:
             params = self.LM(params)
+
+        # cast to complex if needed
+        if self.comp_params and not torch.is_complex(params):
+            params = utils.viewcomp(params)
 
         # first handle frequency axis
         if self.freq_mode == 'channel':
@@ -1165,10 +1162,6 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         return beam
 
     def __call__(self, params, zen, az, *args):
-        # cast to complex if needed
-        if self.comp_params and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         # for generate mode, forward model the beam exactly at zen, az
         if self.mode == 'generate':
             beam = self.forward(params, zen, az)
@@ -1176,10 +1169,6 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # otherwise interpolate the pre-forwarded beam in beam_cache at zen, az
         elif self.mode == 'interpolate':
             if self.beam_cache is None:
-                # pass through LinearModel if needed
-                if self.LM is not None:
-                    params = self.LM(params)
-
                 # forward beam at pre-designated points before interpolating
                 self.set_beam_cache(params)
 
