@@ -8,6 +8,7 @@ from scipy.interpolate import interp1d
 import copy
 
 from . import utils, linalg
+from .utils import _float, _cfloat
 
 
 class LinearModel:
