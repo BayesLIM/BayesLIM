@@ -6,7 +6,7 @@ import numpy as np
 from scipy import special, interpolate
 import copy
 
-from . import utils, cosmology, dataset, sph_harm
+from . import utils, cosmology, dataset, sph_harm, linear_model
 from .utils import _float, _cfloat
 
 
@@ -522,7 +522,7 @@ class PixelSkyResponse:
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
                  cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False,
-                 LM=None):
+                 real_output=True, LM=None):
         """
         Parameters
         ----------
@@ -574,6 +574,8 @@ class PixelSkyResponse:
         log : bool, optional
             If True, assumed params is log sky and take
             exp of params just before return
+        real_output : bool, optional
+            If True, ensure that the output of self is a real-valued tensor.
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
@@ -742,7 +744,7 @@ class PixelSkyResponse:
             params = self.freq_transform(params)
             params = self.spatial_transform(params)
 
-        if torch.is_complex(params):
+        if self.real_output:
             params = params.real
 
         if hasattr(self, 'log') and self.log:
