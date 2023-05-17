@@ -84,6 +84,7 @@ class ParamDict:
         else:
             for k in self.keys():
                 self.params[k] /= other
+        return self
 
     def __truediv__(self, other):
         return self.__div__(other)
