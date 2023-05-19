@@ -362,6 +362,45 @@ def cmatmul(a, b):
     return c
 
 
+def cholesky_inverse(A, check_errors=True):
+    """
+    Take the inverse of a M x M matrix A using
+    its cholesky factorization (assuming A is positive definite).
+    This is generally faster than linalg.pinv for symmetric,
+    full-rank matrices.
+
+    Note that this uses torch.linalg.cholesky_ex rather than
+    torch.linalg.cholesky, which is faster but doesn't
+    error if A is not positive definite!
+
+    Parameters
+    ----------
+    A : tensor
+        Positive definite matrix of shape (M, M)
+    check_errors : bool, optional
+        If True, check for positive definiteness of
+        input A.
+
+    Returns
+    -------
+    Ainv : tensor
+        Inverse of A of shape (M, M)
+    L : tensor
+        Lower triangular cholesky factorization
+        of A
+    """
+    if A.ndim == 1:
+        Ainv = 1 / A
+        L = torch.sqrt(A)
+    else:
+        L = torch.linalg.cholesky_ex(A, check_errors=check_errors).L
+        I = torch.eye(len(L), dtype=L.dtype, device=L.device)
+        Linv = torch.linalg.solve_triangular(L, I, upper=False)
+        Ainv = Linv.T @ Linv
+
+    return Ainv, L
+
+
 def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                   eps=0, rcond=1e-15, hermitian=True, D=None,
                   preconj=False, pretran=False):
@@ -403,15 +442,17 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
          where N = Nsamples.
          Default is identity matrix.
     norm : str, optional
-        Normalization type, [None, 'inv', 'diag']
+        Normalization type, [None, 'inv', 'diag', 'lstsq']
         None : no normalization, assume D is identity
         'inv' : invert A.T Ninv A
         'diag' : take inverse of diagonal of A.T Ninv A
+        'lstsq' : use torch.linalg.lstsq to invert A.T Ninv A
     pinv : bool, optional
-        Use pseudo inverse if inverting A.T A (default).
+        Use pseudo inverse if norm = 'inv'.
         Can also specify regularization parameter instead.
     eps : float, optional
         Regularization parameter (default is None)
+        to add to A while taking inverse.
     rcond : float, optional
         rcond parameter for taking pseudo-inverse
     hermitian : bool, optional
@@ -432,6 +473,9 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         Assume A has been pre-transposed,
         i.e. instead of shape (Nsamples. Nvariables)
         it is (Nvariables, Nsamples).
+    driver : str, optional
+        If norm = 'lstsq', this is
+        driver option for torch.linalg.lstsq()
 
     Returns
     -------
@@ -470,11 +514,11 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                         Aconj, y)
 
     # compute normalization matrix: (A.T Ninv A)^-1, multiply it into xhat
-    if norm == 'inv':
+    if norm in ['inv', 'lstsq']:
         if D is None:
             if preconj:
                 A = A.conj()
-            # full invert to get D
+            # get A.T Ninv A
             if Ninv is None:
                 Dinv = torch.einsum("{},{}->jk".format(A_ein, A_ein2),
                                     Aconj, A)
@@ -490,13 +534,20 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
             # add regularization if desired
             if eps > 0:
                 Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
+
             if torch.is_complex(Dinv):
                 Dinv = Dinv.real
+
             # invert
-            if pinv:
-                D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
+            if norm == 'lstsq':
+                D = torch.linalg.lstsq(Dinv, torch.eye(len(Dinv), dtype=Dinv.dtype, device=Dinv.device),
+                    rcond=rcond, driver=driver)
+
             else:
-                D = torch.inverse(Dinv)
+                if pinv:
+                    D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
+                else:
+                    D = torch.inverse(Dinv)
 
         # apply D to un-normalized xhat
         xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
