@@ -17,8 +17,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     Associated Legendre function of the first kind
     in hypergeometric form, aka Ferrers function
     DLMF 14.3.1 & 14.10.5 with interval -1 < x < 1.
-    Note 1: this is numerically continued to |x| = 1
-    Note 2: stable to integer l = m ~ 800, for all x
+    Note: stable to integer l = m ~ 800, for all x
 
     .. math::
 
@@ -65,34 +64,32 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     if m.ndim == 1:
         m = m[:, None]
     assert m.shape == l.shape
-    # avoid singularity
     x = np.atleast_1d(x).copy()
-    s = np.isclose(np.abs(x), 1, rtol=1e-12, atol=1e-12)
-    if np.any(s):
-        dx = 1e-12
-        x[s] *= (1 - dx)
+
     # compute Plm
     if not deriv:
         # compute hyper-geometric: DLMF 14.3.1
         # Note this previously used DLMF 14.3.11
         # but this was unstable at low theta. 14.3.1 works fine for Plm
+        if sq_norm:
+            norm = ((1 + x) / (1 - x).clip(1e-40,))**(m/2)
+        else:
+            # this is for combining with Qlm due to numerical issues,
+            # the 1/(1-x)^m/2 term is added later
+            norm = (1 + x)**(m/2)
         norm = ((1 + x) / (1 - x))**(m/2)
         a, b, c = l+1, -l, 1-m
         P = hypF(a, b, c, (1-x)/2, high_prec=high_prec, keepdims=True)
         isf = np.isfinite(norm)
         P[isf] *= norm[isf]
+
         # orthonormalize: sqrt[ (2l+1)/(4pi)*(l-m)!/(l+m)! ]
         C = _log_legendre_norm(l, m)
+
         # gammaln(c+1) comes from extra factor in hypF!
         P *= np.exp(C + gammaln(np.abs(c)+1))
 
-        # remove (1-x^2)^(-m/2) term if requested: when combining with Qlm
-        if not sq_norm:
-            P /= (1-x**2)**(-m/2)
-
-        # handle singularity: 1st order Euler
-        if np.any(s):
-            P[:, s] += Plm(l, m, x[s], deriv=True, keepdims=True) * dx
+        # handle dims
         if not keepdims:
             if 1 in P.shape:
                 P = P.ravel()
@@ -108,12 +105,12 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         dPdx = norm * (term1 + term2)
-        # handle singularity: 1st order Euler
-        if np.any(s):
-            dPdx[:, s] += (dPdx[:, s] - Plm(l, m, x[s] * (1 - dx), deriv=True, keepdims=True, sq_norm=sq_norm, high_prec=high_prec))
+
         # correct for change of variables if requested
         if dtheta:
             dPdx *= -np.sin(np.arccos(x))
+
+        # handle keepdims
         if not keepdims:
             if 1 in dPdx.shape:
                 dPdx = dPdx.ravel()
