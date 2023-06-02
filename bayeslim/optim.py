@@ -9,7 +9,7 @@ import time
 import pickle
 from collections.abc import Iterable
 
-from . import utils, paramdict
+from . import utils, paramdict, linalg
 from .dataset import VisData, MapData, TensorData
 
 
@@ -571,7 +571,7 @@ class LogProb(utils.Module):
 
     def collect_main_params(self, inplace=True):
         """
-        Take existing value of self.main_params and using
+        Take existing values of submodule params and using metadata like
         _main_indices, ..., collect values and assign as self.main_params
 
         Parameters
@@ -632,7 +632,7 @@ class LogProb(utils.Module):
                 class Obj: pass
                 model = Obj()
                 for param in self._main_indices:
-                    setattr(model, param, getattr(self.model, param).clone())
+                    setattr(model, param, utils.get_model_attr(self.model, param).clone())
             else:
                 # otherwise use self.model
                 model = self.model
@@ -1451,7 +1451,7 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     return hess
 
 
-def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
+def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
                    rm_offdiag=False, rcond=1e-15, hermitian=True, return_hess=False):
     """
     Invert a Hessian (Fisher Information) matrix (H) to get a covariance
@@ -1461,6 +1461,11 @@ def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
     ----------
     hess : tensor or ParamDict
         The Hessian matrix (see compute_hessian)
+    inv : str, optional
+        If not diag, this is the inversion method. One of
+        'pinv' : use pseudo-inverse, takes kwargs: rcond, hermitian
+        'lstsq' : use least-squares, takes kwargs: rcond
+        'chol' : use cholesky
     diag : bool, optional
         If True, the input hess tensor represents the diagonal
         of the Hessian, regardless of its shape or ndim.
@@ -1538,7 +1543,15 @@ def invert_hessian(hess, diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
             return H
 
         # take inverse to get cov
-        C = torch.linalg.pinv(H, rcond=rcond, hermitian=hermitian)
+        if inv == 'pinv':
+            C = torch.linalg.pinv(H, rcond=rcond, hermitian=hermitian)
+        elif inv == 'lstsq':
+            C = torch.linalg.lstsq(H, torch.eye(len(H), dtype=H.dtype, device=H.device),
+                                   rcond=rcond)
+        elif inv == 'chol':
+            C = linalg.choleksy_inverse(H)[0]
+        else:
+            raise NameError("didn't recognize inv={}".format(inv))
 
         # fill cov with shape of hess
         cov = torch.eye(len(hess), device=hess.device, dtype=hess.dtype) * rm_fill
