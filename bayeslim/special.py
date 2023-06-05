@@ -100,7 +100,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     # compute derivative
     else:
         # DLMF 14.10.5
-        norm = 1 / (1 - x**2)
+        norm = 1 / (1 - x**2).clip(1e-40,)
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
