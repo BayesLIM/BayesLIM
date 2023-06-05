@@ -429,7 +429,7 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
     H_unq = legendre_func(x, l, m, method, x_crit=x_crit, high_prec=high_prec, bc_type=bc_type)
 
     # now broadcast across redundant theta values
-    H = H_unq[:, unq_idx]
+    H = H_unq[:, unq_idx].clone(memory_format=torch.contiguous_format)
 
     # compute azimuthal fourier term
     Phi = np.exp(1j * m * phi)
@@ -1255,7 +1255,7 @@ class AlmModel:
     def __call__(self, params, **kwargs):
         return self.forward_alm(params, **kwargs)
 
-    def forward_alm(self, params, Ylm=None, alm_mult=None):
+    def forward_alm(self, params, Ylm=None, alm_mult=None, ignoreLM=False):
         """
         Perform forward model from a_lm -> f(theta, phi)
 
@@ -1273,8 +1273,11 @@ class AlmModel:
             or a tuple holding (Theta, Phi) if separable
         alm_mult : tensor, optional
             Multiply params by this before taking forward transform
+        ignoreLM : bool, optional
+            If True, ignore self.LM if it exists, otherwise pass
+            params through it.
         """
-        if self.LM is not None:
+        if self.LM is not None and not ignoreLM:
             params = self.LM(params)
 
         if Ylm is None and self.multigrid is not None:
