@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import copy
 
-from . import utils, linalg, dataset, telescope_model, linear_model
+from . import utils, linalg, dataset, telescope_model, linear_model, optim
 
 
 class BaseResponse:
@@ -1236,6 +1236,9 @@ def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
     gain tensor. Default behavior is to multiply
     vis with gains, i.e. when undo = False. To divide
     vis by gains, set undo = True.
+    
+    Note: for a function that applies CalData objects
+    see VisData.apply_cal()
 
     .. math::
 
@@ -1716,4 +1719,65 @@ def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='chann
     if param_type == 'com':
         params = utils.viewreal(params)
     return RedVisModel(params, bl2red, R=R)
+
+
+def chisq(raw_data, forward_model, wgts, axis=None, dof=None, cov_axis=None, mode='vis'):
+    """
+    Compute chisq between two tensors.
+    For a function that operates on VisData objects, see VisData.chisq().
+
+    Parameters
+    ----------
+    raw_data : tensor
+        Raw vis data used as target in optimization
+    forward_model : tensor
+        Model vis data used as start in optimization
+        forward modeled through estimated gains
+        (i.e. g_1 g_2^* V^mdl_12)
+    wgts : tensor
+        Optimization weights applied to raw data during
+        optimization (i.e. the VisData.icov of the raw_data).
+        This is generally the inverse noise variance, with
+        the same shape as the raw_data (cov_axis=None).
+        However, this can have other shapes (such as a dense
+        inv covariance w/ off diagonal components), which
+        necessitates specifying the covariance axis.
+        See optim.apply_icov() for details on expected
+        shape.
+    axis : int or tuple, optional
+        The axis over which to sum the chisq. Default is no summing.
+        Note if wgts is supplied as a 2D covariance matrix then summing
+        is already performed implicitly via the innerproduct.
+    dof : float, optional
+        Degrees of freedom in fit. If not provided, this is the
+        un-normalized chisq, otherwise this is the reduced chisq.
+        This is generally the number of data points - N parameters
+    cov_axis : str, optional
+        If wgts is the inverse variance used in optimization
+        with the same shape as data, this should be None (default).
+        Otherwise, see optim.apply_icov() for values this can take
+        given more complex weighting schemes.
+    mode : str, optional
+        If supplying a covariance (w/ offdiagonal) as wgts, this is
+        the kwarg input to optim.apply_icov().
+
+    Returns
+    -------
+    tensor
+    """
+    # form residual
+    res = raw_data - forward_model
+
+    # apply wgts
+    chisq = optim.apply_icov(res, wgts, cov_axis, mode=mode)
+
+    # divide by dof
+    if dof is not None:
+        chisq /= dof
+
+    # perform sum
+    if axis is not None:
+        chisq = torch.sum(chisq, axis=axis)
+
+    return chisq
 
