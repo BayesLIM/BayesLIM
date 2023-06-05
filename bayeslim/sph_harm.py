@@ -429,7 +429,7 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
     H_unq = legendre_func(x, l, m, method, x_crit=x_crit, high_prec=high_prec, bc_type=bc_type)
 
     # now broadcast across redundant theta values
-    H = H_unq[:, unq_idx].clone(memory_format=torch.contiguous_format)
+    H = H_unq[:, unq_idx].copy()
 
     # compute azimuthal fourier term
     Phi = np.exp(1j * m * phi)
