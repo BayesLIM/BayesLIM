@@ -978,11 +978,15 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
     (Npol, Nvec, Nmodel, Ndeg, Ncoeff). Ncoeff is the number
     of lm modes. Ndeg is the number of linear mapping terms
     wrt freqs (or Nfreqs). Nmodel is the number of unique antenna models.
-    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix)
+    The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
+
+    Note that you must also run the self.setup_Ylm(...) method
+    before evaluating a params tensor.
 
     .. code-block:: python
 
         R = YlmResponse(l, m, **kwargs)
+        R.setup_Ylm(...)
         beam = R(params, zen, az, freqs)
 
     Warning: if mode = 'interpolate' and parameter = True,
@@ -1144,7 +1148,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
 
         # next forward to pixel space via slower dot product over Ncoeff
         # this also casts beam to real if real_beam
-        beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult)
+        beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult, ignoreLM=True)
 
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:

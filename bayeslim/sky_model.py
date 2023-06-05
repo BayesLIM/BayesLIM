@@ -592,6 +592,7 @@ class PixelSkyResponse:
         self.cosmo = cosmo
         self.log = log
         self.LM = LM
+        self.real_output = real_output
 
         self._spatial_setup(spatial_kwargs=spatial_kwargs)
         self._freq_setup(freq_kwargs=freq_kwargs)

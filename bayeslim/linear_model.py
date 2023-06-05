@@ -17,7 +17,7 @@ class LinearModel:
 
         y = Ax
     """
-    def __init__(self, linear_mode, dim=0, coeff=None,
+    def __init__(self, linear_mode, dim=0, coeff=None, diag=False,
                  out_dtype=None, out_shape=None, meta=None, **kwargs):
         """
         Parameters
@@ -30,6 +30,9 @@ class LinearModel:
         coeff : tensor, optional
             A tensor of params.shape to multiply with params before
             forward transform (e.g. alm_mult for sph. harm.)
+        diag : bool, optional
+            If True, assume A is diagonal and use element-wise product.
+            (only for linear_mode='custom'). Only stores diagonal of A.
         out_dtype : dtype, optional
             Cast output of forward as this dtype if desired
         out_shape : tuple, optional
@@ -64,6 +67,9 @@ class LinearModel:
 
         self.kwargs = kwargs
         self.A = gen_linear_A(linear_mode, **kwargs)
+        self.diag = diag
+        if diag and self.A.ndim == 2:
+            self.A = torch.diag(self.A)
         self.device = self.A.device
 
     def forward(self, params, A=None, coeff=None):
@@ -77,7 +83,8 @@ class LinearModel:
         A : tensor, optional
             Use this (Nsamples, Nfeatures) design
             matrix instead of self.A when taking
-            forward model
+            forward model. If self.diag = True,
+            this should be of shape (Nsamples,)
         coeff : tensor, optional
             Use this tensor with params.shape instead
             of self.coeff and multiply by params before
@@ -87,20 +94,28 @@ class LinearModel:
         -------
         tensor
         """
+        # get matrices and metadata
         A = A if A is not None else self.A
         coeff = coeff if coeff is not None else self.coeff
         if coeff is not None:
             params = params * coeff
         ndim = params.ndim
-        if self.dim in [ndim - 2, -2] or ndim == 1:
+
+        # forward model
+        if self.diag:
+            # if A is diagonal, this is just a element-wise product
+            if len(A) > 1:
+                pshape = [-1 if i == self.dim else 1 for i in range(ndim)]
+                A = A.reshape(pshape)
+            out = A * params
+        elif self.dim in [ndim - 2, -2] or ndim == 1:
             # trivial matmul
             out = A @ params
         elif self.dim in [ndim, -1]:
-            # trivial transpose
+            # trivial matmul of A-transpose
             out = params @ A.T
         else:
-            # would involve a transpose,
-            # dot, then re-transpose,
+            # otherwise would moveax, dot, moveax
             # so let's just use einsum
             t1 = 'ab'
             assert ndim <= 8
@@ -139,7 +154,12 @@ class LinearModel:
         """
         if y.dtype != self.A.dtype:
             y = y.to(self.A.dtype)
-        return linalg.least_squares(self.A, y, dim=self.dim, **kwargs)
+        A = self.A
+        if self.diag:
+            if len(A) != y.shape[self.dim]:
+                A = A.expand(y.shape[self.dim])
+            A = torch.diag(A)
+        return linalg.least_squares(A, y, dim=self.dim, **kwargs)
 
     def generate_A(self, x, **interp1d_kwargs):
         """
@@ -257,21 +277,28 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
     device : str, optional
         Device to push A to
     dtype : type, optional
-        data type to cast A to. Default is float
+        data type to cast A to. Default is utils._float() or
+        the existing dtype of A if passed.
 
     Returns
     -------
     A : tensor
         Design matrix of shape (Nsamples, Nfeatures)
     """
-    dtype = dtype if dtype is not None else utils._float()
+    if dtype is None:
+        if A is not None:
+            dtype = A.dtype
+        else:
+            dtype = utils._float()
     if linear_mode == 'poly':
         A = gen_poly_A(x, Ndeg, basis=basis, d0=d0, logx=logx, whiten=whiten,
                        x0=x0, dx=dx, qr=qr)
     elif linear_mode == 'custom':
         A = torch.as_tensor(A)
 
-    return A.to(dtype).to(device)
+    A = torch.atleast_1d(A).to(dtype).to(device)
+
+    return A
 
 
 def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
