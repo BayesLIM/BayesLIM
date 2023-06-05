@@ -137,14 +137,14 @@ class ArrayModel(utils.PixInterp, utils.Module):
     1. caching the unit pointing s vector (default)
         This recomputes the fringes exactly
     2. caching the fringe on the sky
-        This interpolates an existing fringe
+        This interpolates an existing fringe (experimental)
 
     Note that for performance reasons in the RIME object,
-    antpos is always kept on the CPU. If the model is pushed
+    self.antpos is always kept on the CPU. If the model is pushed
     to the GPU, the antpos tensor becomes pinned to speed
     up CPU -> GPU transfer.
     """
-    def __init__(self, antpos, freqs, pixtype='healpix', parameter=False,
+    def __init__(self, antpos, freqs=None, pixtype='healpix', parameter=False,
                  device=None, cache_s=True, cache_f=False, cache_f_angs=None,
                  cache_blv=True, cache_depth=None, redtol=0.1,
                  name=None, red_kwargs={}, pix_kwargs={}):
@@ -159,7 +159,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
             are len-3 float arrays with antenna
             position in East-North-Up coordinates,
             centered at telescope location.
-        freqs : tensor
+        freqs : tensor, optional
             Frequencies to evaluate fringe [Hz]
         pixtype : str, optional
             If using the interpolation functionality of PixInterp
@@ -287,7 +287,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
     def set_freqs(self, freqs):
         """set frequency array"""
-        self.freqs = torch.as_tensor(freqs, dtype=_float(), device=self.device)
+        self.freqs = freqs
+        if freqs is not None:
+            self.freqs = torch.as_tensor(self.freqs, dtype=_float(), device=self.device)
         self.clear_cache()
 
     def clear_cache(self, depth=None):
@@ -462,7 +464,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 self['antpos'] = self.antpos.pin_memory()
         # use PixInterp push for its cache
         super().push(device)
-        self.freqs = self.freqs.to(device)
+        if self.freqs is not None:
+            self.freqs = self.freqs.to(device)
         if not dtype: self.device = device
         # push fringe cache
         for k in self.fringe_cache:
@@ -516,12 +519,12 @@ class ArrayModel(utils.PixInterp, utils.Module):
         # pop autos
         if not keep_autos:
             match = np.isclose(redlens, 0, atol=self.redtol)
-            assert match.any()
-            i = np.where(match)[0][0]
-            reds.pop(i)
-            redlens.pop(i)
-            redangs.pop(i)
-            redvecs.pop(i)
+            if match.any():
+                i = np.where(match)[0][0]
+                reds.pop(i)
+                redlens.pop(i)
+                redangs.pop(i)
+                redvecs.pop(i)
 
         # baseline cuts
         keep = np.ones(len(reds), dtype=bool)
@@ -667,9 +670,14 @@ def JD2LST(jd, longitude):
 
 
 def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
-               min_EW_len=None, exclude_reds=None):
+               min_EW_len=None, exclude_reds=None, skip_reds=False):
     """
-    Build redundant groups
+    Build redundant groups. Note that this currently has sub-optimal
+    performance and probably scales ~O(N_bl^2), which could be improved.
+    For some use-cases (i.e. simple baseline selection), one can skip the
+    construction of redundant sets (i.e. each bl is its own redundant set)
+    which will improve speed to ~O(N_bl), which means bl2red loses
+    its meaning and is thus empty.
 
     Parameters
     ----------
@@ -679,9 +687,9 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
         holding antenna position in ENU (east-north-up)
     bls : list, optional
         List of baselines to sort into redundant groups using
-        antenna positions. Default is to compute all possible
-        redundancies from antpos. Uses first baseline in numerical
-        order as representative redundant baseline.
+        antenna positions (i.e. only use this subset of all possible bls).
+        Default is to compute all possible redundancies from antpos.
+        Uses first baseline in numerical order as representative redundant baseline.
     redtol : float, optional
         Redunancy tolerance [m]
     min_len : float, optional
@@ -695,6 +703,10 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
         redundant type will be excluded from the output.
         E.g. For a standard HERA array, [(0, 1)] would exclude
         all 14.6-meter East-West baselines.
+    skip_reds : bool, optional
+        If True, skip building the redundant sets and just return
+        each bl as its own redundant group (faster). In this case,
+        the bl2red dictionary is empty,
 
     Returns
     -------
@@ -713,6 +725,7 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
     redtags : list
         List of unique baseline length and angle str
     """
+    ## TODO: improve performance of rgroup enumeration, probably can be improved over current O(N^2)
     # get antenna names and vectors
     ants = list(antpos.keys())
     antvec = [antpos[a] for a in ants]
@@ -750,11 +763,12 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
 
         # check if this is a unique bl
         rgroup = None
-        for i, blv in enumerate(rvec):
-            ## TODO: handle conjugated baselines
-            if np.linalg.norm(blv - blvec) < redtol:
-                rgroup = i
-                break
+        if not skip_reds:
+            for i, blv in enumerate(rvec):
+                ## TODO: handle conjugated baselines
+                if np.linalg.norm(blv - blvec) < redtol:
+                    rgroup = i
+                    break
 
         if rgroup is None:
             # this a unique group, append to lists
@@ -788,10 +802,11 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
 
     # setup bl2red
     bl2red = {}
-    for bl in bls:
-        for i, rg in enumerate(reds):
-            if bl in rg:
-                bl2red[bl] = i
-                break
+    if not skip_reds:
+        for bl in bls:
+            for i, rg in enumerate(reds):
+                if bl in rg:
+                    bl2red[bl] = i
+                    break
 
     return reds, rvec, bl2red, bls, lens, angs, tags
