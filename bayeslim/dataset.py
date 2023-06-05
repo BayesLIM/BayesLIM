@@ -8,7 +8,7 @@ import os
 import copy
 import h5py
 
-from . import version, utils, telescope_model
+from . import version, utils
 
 
 class TensorData:
@@ -111,21 +111,21 @@ class TensorData:
         self.cov_ndim = sum(self.data.shape) if self.data is not None else None
         self.cov_logdet = cov_logdet
 
-    def compute_icov(self, pinv=True, rcond=1e-15):
+    def compute_icov(self, inv='pinv', **kwargs):
         """
         Compute and set inverse covariance as self.icov.
-        See optim.compute_cov and apply_icov() for shape.
+        See optim.compute_cov and apply_icov() for output
+        shapes, and linalg.invert_matrix() for expected kwargs.
 
         Parameters
         ----------
-        pinv : bool, optional
-            Use pseudo-inverse to compute covariance,
-            otherwise use direct inversion
-        rcond : float, optional
-            rcond kwarg for pinverse
+        inv : str, optional
+            Inversion method. See linalg.invert_matrix()
+        kwargs : dict, optional
+            Keyword args for invert_matrix()
         """
         from bayeslim import optim
-        self.icov = optim.compute_icov(self.cov, self.cov_axis, pinv=pinv, rcond=rcond)
+        self.icov = optim.compute_icov(self.cov, self.cov_axis, inv=inv, **kwargs)
 
     def __add__(self, other):
         assert self.data.shape == other.data.shape
@@ -137,7 +137,8 @@ class TensorData:
     def __iadd__(self, other):
         assert self.data.shape == other.data.shape
         self.data += other.data
-        self._propflags(out, other)
+        self._propflags(self, other)
+        return self
 
     def __sub__(self, other):
         assert self.data.shape == other.data.shape
@@ -150,6 +151,7 @@ class TensorData:
         assert self.data.shape == other.data.shape
         self.data -= other.data
         self._propflags(self, other)
+        return self
 
     def __mul__(self, other):
         assert self.data.shape == other.data.shape
@@ -162,6 +164,7 @@ class TensorData:
         assert self.data.shape == other.data.shape
         self.data *= other.data
         self._propflags(self, other)
+        return self
 
     def __truediv__(self, other):
         assert self.data.shape == other.data.shape
@@ -174,6 +177,7 @@ class TensorData:
         assert self.data.shape == other.data.shape
         self.data /= other.data
         self._propflags(self, other)
+        return self
 
     @staticmethod
     def _propflags(td1, td2):
@@ -183,6 +187,7 @@ class TensorData:
                 td1.flags = td2.flags.copy()
             else:
                 td1.flags += td2.flags
+
 
 class VisData(TensorData):
     """
@@ -195,7 +200,7 @@ class VisData(TensorData):
 
     def setup_meta(self, telescope=None, antpos=None):
         """
-        Set the telescope and antpos dict
+        Set the telescope and antpos dict.
 
         Parameters
         ----------
@@ -277,6 +282,88 @@ class VisData(TensorData):
     @property
     def bls(self):
         return [(ant1, ant2) for ant1, ant2 in zip(self.ant1, self.ant2)]
+
+    def get_bls(self, uniq_bls=False, keep_autos=True,
+                min_len=None, max_len=None,
+                min_EW=None, max_EW=None, min_NS=None, max_NS=None,
+                min_deg=None, max_deg=None, redtol=1.0):
+        """
+        Select a subset of baselines from the object.
+        Note if uniq_bls = True this will need to call build_reds()
+        which is slow.
+        Note this ignores the z-component of the antennas.
+
+        Parameters
+        ----------
+        uniq_bls : bool, optional
+            If True, return only the first baseline
+            in each redundant group. Otherwise return
+            all physical baselines (default)
+        keep_autos : bool, optional
+            If True (default) return auto-correlations.
+            Otherwise remove them.
+        min_len : float, optional
+            Sets minimum baseline length [m]
+        max_len : float, Optional
+            Sets maximum baseline length [m]
+        min_EW : float, optional
+            Sets min |East-West length| [m]
+        max_EW : float, optional
+            Sets max |East-West length| [m]
+        min_NS : float, optional
+            Sets min |North-South length| [m]
+        max_NS : float, optional
+            Sets max |North-South length| [m]
+        min_deg : float, optional
+            Sets min baseline angle (north of east) [deg]
+        max_deg : float, optional
+            Sets max baseline angle (north of east) [deg]
+        redtol : float, optional
+            Redundancy tolerance (meters) if uniq_bls = True 
+
+        Returns
+        -------
+        list
+            List of baseline antenna-pair tuples that fit selection
+        """
+        if uniq_bls:
+            # Just call the ArrayModel method
+            from bayeslim.telescope_model import ArrayModel
+            rk = dict(bls=self.bls)
+            array = ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
+            return array.get_bls(uniq_bls=uniq_bls, keep_autos=keep_autos, min_len=min_len,
+                                 max_len=max_len, min_EW=min_EW, max_EW=max_EW, min_NS=min_NS,
+                                 max_NS=max_NS, min_deg=min_deg, max_deg=max_deg)
+
+        else:
+            # generate bl_vec on the fly
+            bls = self.bls
+            bl_vecs = np.array([self.antpos[bl[1]] - self.antpos[bl[0]] for bl in bls])
+            bl_lens = np.linalg.norm(bl_vecs, axis=1)
+            bl_angs = np.arctan2(*bl_vecs[:, :2][:, ::-1].T) * 180 / np.pi
+            bl_angs[bl_vecs[:, 1] < 0] += 180.0
+            bl_angs[abs(bl_vecs[:, 1]) < redtol] = 0.0
+            keep = np.ones(len(bl_vecs), dtype=bool)
+            if not keep_autos:
+                keep = keep & (bl_lens > redtol)
+            if min_len is not None:
+                keep = keep & (bl_lens >= min_len)
+            if max_len is not None:
+                keep = keep & (bl_lens <= max_len)
+            if min_EW is not None:
+                keep = keep & (abs(bl_vecs[0]) >= min_EW)
+            if max_EW is not None:
+                keep = keep & (abs(bl_vecs[0]) <= max_EW)
+            if min_NS is not None:
+                keep = keep & (abs(bl_vecs[1]) >= min_NS)
+            if max_NS is not None:
+                keep = keep & (abs(bl_vecs[1]) <= max_NS)
+            if min_deg is not None:
+                keep = keep & (bl_angs >= min_deg)
+            if max_deg is not None:
+                keep = keep & (bl_angs <= max_deg)
+
+            return [bl for i, bl in enumerate(bls) if keep[i]]
 
     def copy(self, detach=True):
         """
@@ -802,11 +889,48 @@ class VisData(TensorData):
 
         return vd
 
+    def chisq(self, other_vis=None, dof=None, icov=None, cov_axis=None, axis=None):
+        """
+        Compute the chisquare statistic between this visibility data
+        and another set of visibilities, optionally weighted by degrees-of-freedom.
+
+        Parameters
+        ----------
+        other_vis : VisData, optional
+            Other visibility data to form residual with and weight
+            by icov. E.g. if self is raw_data, other_vis should be
+            the model data forward passed through calibration model.
+            Should have the same shape and ordering as self.data.
+            Default is to take chisq of self.data.
+        dof : float, optional
+            Degrees-of-freedom of fit to divide by. If provided
+            the output is the reduced chisq.
+        icov : tensor, optional
+            If provided, weight residual with this icov as oppossed to
+            self.icov (default).
+        cov_axis : str, optional
+            cov_axis parameter for provided icov, see optim.apply_icov() for details.
+        axis : int or tuple, optional
+            The axis over which to sum the chisq. Default is no summing.
+            Note if icov is a 2D covariance matrix then summing
+            is already performed implicitly via the innerproduct.
+
+        Returns
+        -------
+        tensor
+        """
+        from bayeslim import calibration
+        icov = self.icov if icov is None else icov
+        cov_axis = self.cov_axis if icov is None else cov_axis
+        other_data = other_vis.data if other_vis is not None else torch.zeros_like(self.data)
+        return calibration.chisq(self.data, other_data, icov, axis=axis, cov_axis=cov_axis, dof=dof)
+
     def inflate_by_redundancy(self, redtol=1.0, min_len=None, max_len=None):
         """
         If current data only includes unique redundant baseline types,
         copy over redundant types to all physical baselines and return
-        a new copy of the object.
+        a new copy of the object. Note this only inflates to redundant
+        groups that currently exist in the data.
 
         Parameters
         ----------
@@ -822,7 +946,9 @@ class VisData(TensorData):
         VisData
         """
         # get setup an array object
-        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol)
+        from bayeslim import telescope_model
+        rk = dict(bls=self.bls)
+        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
         # get redundant indices of current baselines
         redinds = [array.bl2red[bl] for bl in self.bls]
         
