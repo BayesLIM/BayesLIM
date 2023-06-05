@@ -401,9 +401,86 @@ def cholesky_inverse(A, check_errors=True):
     return Ainv, L
 
 
+def invert_matrix(A, inv='pinv', rcond=1e-15, hermitian=False, eps=None,
+                  driver=None):
+    """
+    Invert a matrix A. Note, you may not need to invert this matrix if
+    it is part of a linear system solving for x:
+        y = Ax
+    in which case see least_squares()
+
+    Parameters
+    ----------
+    A : tensor
+        A 2D matrix to invert.
+        If A.ndim == 1 we return 1 / A
+        If A.ndim > 2 we compute the inversion for
+        the first two dimensions for each element
+        in the higher dimensions. e.g. for A.ndim == 3:
+        invert_matrix(A[:,:,0]), invert_matrix(A[:,:,1]), ...
+    inv : str, optional
+        The options are
+        'inv'   : torch.linalg.inv
+        'pinv'  : torch.linalg.pinv, kwargs rcond, hermitian
+        'chol'  : cholesky-inverse
+        'lstsq' : least-squares inverse, kwargs rcond, driver
+        'diag'  : just invert the diagonal
+    rcond : float, optional
+        Relative condition to use in singular-value based inversion
+    hermitian : bool, optional
+        Whether A is symmetric
+    eps : float, optional
+        Diagonal * eps regularization to add to A before inversion.
+        Only used for 'inv', 'pinv', 'chol', 'lstsq'.
+        Note this edits the input A inplace.
+    driver : str, optional
+        Least-squares routine to use, see torch.linalg.lstsq()
+
+    Returns
+    -------
+    tensor
+    """
+    if inv == 'diag' or A.ndim == 1:
+        if A.ndim == 1:
+            return 1.0 / A
+        else:
+            return torch.diag(1.0 / torch.diag(A))
+
+    # get inversion method
+    def inverse(mat, inv=inv, rcond=rcond, eps=eps, hermitian=hermitian, driver=driver):
+        """
+        mat is assumed to be 2D (N, N) matrix
+        """
+        if eps is not None:
+            mat.diagonal().add_(eps)
+        if inv == 'inv':
+            return torch.linalg.inv(mat)
+        elif inv == 'pinv':
+            return torch.linalg.pinv(mat, rcond=rcond, hermitian=hermitian)
+        elif inv == 'chol':
+            return cholesky_inverse(mat)[0]
+        elif inv == 'lstsq':
+            return torch.linalg.lstsq(mat, torch.eye(len(mat), dtype=mat.dtype, device=mat.device),
+                                      rcond=rcond, driver=driver)
+        else:
+            raise NameError("didn't recognize inv='{}'".format(inv))
+
+    def recursive_inv(A, iA, inverse=inverse):
+        if A.ndim > 2:
+            for i in range(A.shape[-1]):
+                recursive_inv(A[:, :, i], iA[:, :, i])
+            return
+        iA[:, :] = inverse(A)
+
+    iA = torch.zeros_like(A)
+    recursive_inv(A, iA)
+
+    return iA
+
+
 def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                   eps=0, rcond=1e-15, hermitian=True, D=None,
-                  preconj=False, pretran=False):
+                  preconj=False, pretran=False, driver=None):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -531,23 +608,14 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                     # Ninv is diagonal
                     Dinv = torch.einsum("{},i,{}->jk".format(A_ein, A_ein2),
                                         Aconj, Ninv, A)
-            # add regularization if desired
-            if eps > 0:
-                Dinv += torch.eye(len(Dinv), device=Dinv.device, dtype=Dinv.dtype) * eps
 
             if torch.is_complex(Dinv):
                 Dinv = Dinv.real
 
             # invert
-            if norm == 'lstsq':
-                D = torch.linalg.lstsq(Dinv, torch.eye(len(Dinv), dtype=Dinv.dtype, device=Dinv.device),
-                    rcond=rcond, driver=driver)
-
-            else:
-                if pinv:
-                    D = torch.linalg.pinv(Dinv, rcond=rcond, hermitian=hermitian)
-                else:
-                    D = torch.inverse(Dinv)
+            if norm == 'inv' and pinv:
+                norm = 'pinv'
+            D = invert_matrix(Dinv, inv=norm, rcond=rcond, driver=driver, eps=eps)
 
         # apply D to un-normalized xhat
         xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
