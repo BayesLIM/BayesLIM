@@ -287,16 +287,22 @@ class LogGaussPrior(BaseLogPrior):
 
         return out
 
-    def compute_icov(self):
+    def compute_icov(self, **kwargs):
         """
         Takes self.cov and computes and sets self.icov
+
+        Parameters
+        ----------
+        kwargs : dict, optional
+            Keyword arguments for linalg.invert_matrix() if
+            not sparse_cov. hermitian=True is hard-coded.
         """
         if self.sparse_cov:
-            self.icov = 1 / self.cov
+            self.icov = 1. / self.cov
             self.logdet = torch.sum(torch.log(self.cov))
             self.ndim = sum(self.cov.shape)
         else:
-            self.icov = torch.linalg.pinv(self.cov, hermitian=True)
+            self.icov = linalg.invert_matrix(self.cov, hermitian=True, **kwargs)
             self.logdet = torch.slogdet(self.cov).logabsdet
             self.ndim = len(self.cov)
         self.norm = 0.5 * (self.ndim * torch.log(torch.tensor(2*np.pi)) + self.logdet)
@@ -1354,9 +1360,10 @@ def apply_icov(data, icov, cov_axis, mode='vis'):
     return out
 
 
-def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
+def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     """
-    Compute the inverse covariance
+    Compute the inverse covariance. Shallow wrapper
+    around linalg.invert_matrix()
 
     Parameters
     ----------
@@ -1364,34 +1371,22 @@ def compute_icov(cov, cov_axis, pinv=True, rcond=1e-15):
         data covariance. See optim.apply_icov() for shapes
     cov_axis : str
         covariance type. See optim.apply_icov() for options
-    pinv : bool, optional
-        Use pseudo inverse, otherwise use direct inverse
-    rcond : float, optional
-        rcond kwarg for pinverse
+    inv : str, optional
+        The kind of inversion method. See linalg.invert_matrix()
+    kwargs : dict, optional
+        Keyword arguments for linalg.invert_matrix()
 
     Returns
     -------
     tensor
     """
     # set inversion function
-    inv = lambda x: torch.pinverse(x, rcond=rcond) if pinv else torch.inverse
     if cov_axis is None:
         # this is just diagonal
         icov = 1 / cov
     elif cov_axis == 'full':
         # invert full covariance
-        icov = inv(cov)
-    else:
-        # only invert first two dims of cov
-        def recursive_inv(cov, icov):
-            if cov.ndim > 2:
-                for i in range(cov.shape[-1]):
-                    recursive_inv(cov[:, :, i], icov[:, :, i])
-                return
-            icov[:, :] = inv(cov)
-
-        icov = torch.zeros_like(cov)
-        recursive_inv(cov, icov)
+        icov = linalg.invert_matrix(cov, inv=inv, **kwargs)
 
     return icov
 
@@ -1449,113 +1444,4 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     prob.set_param(named_params)
 
     return hess
-
-
-def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
-                   rm_offdiag=False, rcond=1e-15, hermitian=True, return_hess=False):
-    """
-    Invert a Hessian (Fisher Information) matrix (H) to get a covariance
-    matrix
-
-    Parameters
-    ----------
-    hess : tensor or ParamDict
-        The Hessian matrix (see compute_hessian)
-    inv : str, optional
-        If not diag, this is the inversion method. One of
-        'pinv' : use pseudo-inverse, takes kwargs: rcond, hermitian
-        'lstsq' : use least-squares, takes kwargs: rcond
-        'chol' : use cholesky
-    diag : bool, optional
-        If True, the input hess tensor represents the diagonal
-        of the Hessian, regardless of its shape or ndim.
-    idx : array or slice object, optional
-        Only used if diag=False. Grab these indices of the 2D hess
-        matrix before inverting. Output covariance has rm_fill in
-        the diagonal of non-inverted components
-    rm_thresh : float, optional
-        For diagonal elements of hess below this
-        value, truncate these row/columns before inversion.
-        If passing idx, rm_thresh operates after applying idx.
-    rm_fill : float, optional
-        For row/columns that are truncated by rm_thresh,
-        this fills the diagonal of the output covariance
-    rm_offdiag : bool, optional
-        If True, remove the off-diagonal components of hess if
-        it has any.
-    rcond : float, optional
-        rcond parameter for pinverse
-    hermitian : bool, optional
-        Hermitian parameter for torch.pinverse
-    return_hess : bool, optional
-        If True, return downselected Hessian matrix
-    
-    Returns
-    -------
-    tensor
-    """
-    if isinstance(hess, paramdict.ParamDict):
-        cov = {}
-        for k in hess:
-            cov[k] = invert_hessian(hess[k], diag=diag, idx=idx,
-                                    rm_offdiag=rm_offdiag, hermitian=hermitian,
-                                    rm_thresh=rm_thresh, rm_fill=rm_fill)
-        return paramdict.ParamDict(cov)
-
-    if diag:
-        # assume hessian holds diagonal, can be any shape
-        cov = torch.ones_like(hess, device=hess.device, dtype=hess.dtype)
-        s = hess > rm_thresh
-        cov[s] = 1 / hess[s]
-        cov[~s] = rm_fill
-        if return_hess:
-            cov = hess
-
-        return cov
-
-    else:
-        # assume hessian is 2D
-        if rm_offdiag:
-            hess = torch.diag(hess.diag())
-
-        H = hess
-
-        # get idx array
-        if idx is None:
-            idx = np.arange(len(H))
-        elif isinstance(idx, slice):
-            start = idx.start if idx.start is not None else 0
-            stop = idx.stop if idx.stop is not None else len(H)
-            if stop < 0: stop = len(H)
-            step = idx.step if idx.step is not None else 1
-            idx = np.arange(start, stop, step)
-        elif isinstance(idx, (list, tuple)):
-            idx = np.asarray(idx)
-
-        # combine idx with rm_thresh
-        good_idx = np.where(H.diagonal() > rm_thresh)[0]
-        idx = np.array([i for i in idx if i in good_idx])
-
-        # select out indices
-        H = H[idx[:, None], idx[None, :]]
-
-        if return_hess:
-            return H
-
-        # take inverse to get cov
-        if inv == 'pinv':
-            C = torch.linalg.pinv(H, rcond=rcond, hermitian=hermitian)
-        elif inv == 'lstsq':
-            C = torch.linalg.lstsq(H, torch.eye(len(H), dtype=H.dtype, device=H.device),
-                                   rcond=rcond)
-        elif inv == 'chol':
-            C = linalg.choleksy_inverse(H)[0]
-        else:
-            raise NameError("didn't recognize inv={}".format(inv))
-
-        # fill cov with shape of hess
-        cov = torch.eye(len(hess), device=hess.device, dtype=hess.dtype) * rm_fill
-        cov[idx[:, None], idx[None, :]] = C
-
-        return cov
 

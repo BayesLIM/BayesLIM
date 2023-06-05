@@ -20,6 +20,7 @@ from . import fft
 from . import sph_harm
 from . import filt
 from . import linear_model
+from . import hessian
 
 from .paramdict import ParamDict
 from .dataset import VisData, Dataset
