@@ -64,6 +64,27 @@ class ParamDict:
                 self.params[k] *= other
         return self
 
+    def __matmul__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: self.params[k] @ other.params[k] for k in self.keys()})
+        else:
+            return ParamDict({k: self.params[k] @ other for k in self.keys()})
+
+    def __rmatmul__(self, other):
+        if isinstance(other, ParamDict):
+            return ParamDict({k: other.params[k] @ self.params[k] for k in self.keys()})
+        else:
+            return ParamDict({k: other @ self.params[k] for k in self.keys()})
+
+    def __imatmul__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys():
+                self.params[k] @= other.params[k]
+        else:
+            for k in self.keys():
+                self.params[k] @= other
+        return self
+
     def __div__(self, other):
         if isinstance(other, ParamDict):
             return ParamDict({k: self.params[k] / other.params[k] for k in self.keys()})
@@ -220,19 +241,28 @@ class ParamDict:
 
         return pd
 
-    def operator(self, func, inplace=False):
+    def operator(self, func, args=(), inplace=False):
         """
-        Apply a function operator to each value and
-        return the object e.g.
-            pd.operator(torch.log)
-            pd.operator(lambda x: torch.mean(x, dim=0))
+        Apply a function to each tensor value in self
+        and return the ParamDict object
+        e.g. 
+            ParamDict.operator(torch.log)
+            ParamDict.operator(lambda x: torch.mean(x, dim=0))
+
+        One can also feed additional arguments that are passed
+        to the func, including other ParamDict objects
+        which are iterated with the same keys as self.
+        func kwargs can be handled using lambda as shown above.
 
         Parameters
         ----------
         func : callable
+            Function to call on each tensor in self
+        args : iteratble, optional
+            Additional arguments to pass to func, note
+            that self is treated as first argument.
         inplace : bool, optional
-            Apply operation inplace
-            and return None
+            Apply operation inplace and return None
 
         Returns
         -------
@@ -240,9 +270,15 @@ class ParamDict:
         """
         if inplace:
             for k in self.keys():
-                self[k] = func(self[k])
+                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
+                self[k] = func(self[k], *_args)
         else:
-            return ParamDict({k: func(self[k]) for k in self.keys()})
+            out = {}
+            for k in self.keys():
+                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
+                out[k] = func(self[k], *_args)
+
+            return ParamDict(out)
 
 
 def model2pdict(model, parameters=True, clone=False, prefix=None):
