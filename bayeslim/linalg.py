@@ -461,7 +461,7 @@ def invert_matrix(A, inv='pinv', rcond=1e-15, hermitian=False, eps=None,
             return cholesky_inverse(mat)[0]
         elif inv == 'lstsq':
             return torch.linalg.lstsq(mat, torch.eye(len(mat), dtype=mat.dtype, device=mat.device),
-                                      rcond=rcond, driver=driver)
+                                      rcond=rcond, driver=driver).solution
         else:
             raise NameError("didn't recognize inv='{}'".format(inv))
 
@@ -522,10 +522,11 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         Normalization type, [None, 'inv', 'diag', 'lstsq']
         None : no normalization, assume D is identity
         'inv' : invert A.T Ninv A
+        'pinv' : use pseudo-inverse to inver A.T Ninv A
         'diag' : take inverse of diagonal of A.T Ninv A
         'lstsq' : use torch.linalg.lstsq to invert A.T Ninv A
     pinv : bool, optional
-        Use pseudo inverse if norm = 'inv'.
+        Use pseudo inverse if norm = 'inv' (same as inv='pinv').
         Can also specify regularization parameter instead.
     eps : float, optional
         Regularization parameter (default is None)
@@ -591,7 +592,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                         Aconj, y)
 
     # compute normalization matrix: (A.T Ninv A)^-1, multiply it into xhat
-    if norm in ['inv', 'lstsq']:
+    if norm in ['inv', 'pinv', 'lstsq']:
         if D is None:
             if preconj:
                 A = A.conj()
