@@ -433,7 +433,7 @@ class LBFGS(BFGS):
             if len(self._s) == self.history_size:
                 self._s.popleft()
                 self._y.popleft()
-                self._rho = self.rho[1:]
+                self._rho = self._rho[1:]
 
             self._s.append(s)
             self._y.append(y)
