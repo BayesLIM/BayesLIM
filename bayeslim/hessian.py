@@ -2,13 +2,49 @@
 Module for computing, storing, and updating
 Hessians and inverse Hessians
 """
+from abc import abstractmethod
 import numpy as np
 import torch
 
 from . import utils, paramdict, linalg
 
 
-class DenseMat(object):
+class BaseMat(object):
+
+    @abstractmethod
+    def shape(self):
+        pass
+
+    @abstractmethod
+    def mat_vec_mul(self, vec, transpose=False):
+        pass
+
+    @abstractmethod
+    def to_dense(self, **kwargs):
+        pass
+
+    @abstractmethod
+    def __call__(self):
+        pass
+
+    @abstractmethod
+    def push(self, device):
+        pass
+
+    @abstractmethod
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        pass
+
+
+class DenseMat(BaseMat):
     """
     A dense representation of a rectangular matrix
     """
@@ -71,10 +107,23 @@ class DenseMat(object):
         self.dtype = self.H.dtype
         self._complex = torch.is_complex(self.H)
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
 
-class DiagMat(object):
+        Parameters
+        ----------
+        scalar : float
+        """
+        self.H *= scalar
+
+
+class DiagMat(BaseMat):
     """
-    A diagonal (or scalar) representation of a matrix
+    A diagonal (or scalar) representation of a matrix.
+    This can also be a scalar matrix by passing
+    diag as a single element.
     """
     def __init__(self, size, diag):
         """
@@ -84,7 +133,7 @@ class DiagMat(object):
             Number of elements along the diagonal
         diag : tensor
             The diagonal elements. For a scalar matrix
-            this can be a len-0 tensor.
+            this can be a len-1 tensor.
         """
         self.size = size
         self.diag = diag
@@ -108,7 +157,11 @@ class DiagMat(object):
         """
         Return a dense representation of the matrix
         """
-        return torch.diag(self.diag)
+        diag = torch.atleast_1d(self.diag)
+        if len(diag) < self.size:
+            diag = torch.ones(self.size, dtype=self.dtype, device=self.device) * self.diag
+
+        return torch.diag(diag)
 
     def push(self, device):
         """
@@ -118,8 +171,19 @@ class DiagMat(object):
         self.dtype = self.diag.dtype
         self.device = self.diag.device
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
 
-class SparseMat(object):
+        Parameters
+        ----------
+        scalar : float
+        """
+        self.diag *= scalar
+
+
+class SparseMat(BaseMat):
     """
     An outer-product representation of a rectangular matrix
 
@@ -234,8 +298,19 @@ class SparseMat(object):
         self.dtype = self.U.dtype
         self.device = self.U.device
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
 
-class ZeroMat(object):
+        Parameters
+        ----------
+        scalar : float
+        """
+        self.U *= scalar
+
+
+class ZeroMat(BaseMat):
     """
     A zero matrix
     """
@@ -271,143 +346,19 @@ class ZeroMat(object):
         else:
             self.device = device
 
-
-class ImplicitMat(object):
-    """
-    An implicit representation of a symmetric square (inv)
-    Hessian matrix via position and gradient pairs, used in LBFGS.
-    Uses the two-loop recursion for the matrix-vector product.
-    See [1] Algorithm 7.4.
-
-    [1] Nocedal & Wright, "Numerical Optimization", (2000) 2nd Ed.
-    """
-    def __init__(self, size, Hstart=None, history_size=20, dtype=None, device=None):
+    def scalar_mul(self, scalar):
         """
-        Parameters
-        ----------
-        size : int
-            Side length of the square matrix (i.e. Nrows or Ncols)
-        Hstart : DiagMat, SparseMat, or PartitionedMat, optional
-            Initial model of the (inv) Hessian. Default is identity matrix.
-        history_size : int, optional
-            The maximum number of steps to save
-        """
-        self.size = size
-        self.dtype = dtype if dtype is not None else utils._float()
-        self.Hstart = Hstart
-        self.history_size = history_size
-        self.device = device
-
-        # implement a queue (i.e. w popleft)
-        from collections import deque
-        self.s = deque()    # position pairs
-        self.y = deque()    # gradient pairs
-        self.rho = deque()  # 1 / pos-grad inner-product
-
-    @property
-    def shape(self):
-        return (self.size, self.size)
-
-    def mat_vec_mul(self, vec, **kwargs):
-        """
-        Use two-loop recursion to get matrix-vector product
-        implicitly, Algorithm 7.4 from [1].
-        Note that the starting (diagonal) Hessian is self.Hdiag
-        if it exists, otherwise it uses Eqn. 7.20 from [1].
+        Multiply a scalar into the matrix
+        inplace
 
         Parameters
         ----------
-        vec : tensor
-
-        Returns
-        -------
-        tensor
+        scalar : float
         """
-        # get starting H
-        Hstart = self.Hstart
-        if Hstart is None:
-            if len(self.s) > 0:
-                # use Eqn 7.20 [1]
-                diag = 1 / (self.rho[-1] * (self.y[-1] @ self.y[-1]))
-            else:
-                # use identity
-                diag = torch.tensor(1.0, dtype=self.dtype, device=self.device)
-            Hstart = DiagMat(self.size, diag)
-
-        # first loop: iterate backwards from end of queue
-        q = vec
-        alpha = []
-        for i in range(len(self.s)-1, -1, -1):
-            alpha.append(self.rho[i] * (self.s[i] @ q))
-            q = q - alpha[-1] * self.y[i]
-
-        # dot q into starting H and then do second loop
-        r = Hstart(q)
-        for i in range(len(self.s)):
-            beta = self.rho[i] * (self.y[i] @ r)
-            r = r + self.s[i] * (alpha[i] - beta)
-
-        return r
-
-    def append(self, s, y):
-        """
-        Append a position-gradient pair to the queue.
-        If queue length exceeds history_size, pop
-        the oldest pair.
-
-        Parameters
-        ----------
-        s : tensor
-            Position difference tensor, x_k+1 - x_k
-        y : tensor
-            Gradient difference tensor, grad_k+1 - grad_k
-        """
-        # ensure they are raveled
-        y = y.view(-1)
-        s = s.view(-1)
-
-        # compute rho
-        rho = 1 / (y @ s)
-        self.s.append(s)
-        self.y.append(y)
-        self.rho.append(rho)
-
-        if len(self.s) > self.history_size:
-            self.s.popleft()
-            self.y.popleft()
-            self.rho.popleft()
-
-    def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec, **kwargs)
-
-    def to_dense(self, **kwargs):
-        """
-        Return a dense representation of the (inv) hessian
-        """
-        # get starting matrix
-        I = torch.diag(torch.ones(self.size, dtype=self.dtype, device=self.device))
-        H = self.Hstart.to_dense() if self.Hstart is not None else I.clone()
-
-        # now use [1] Eqn. 7.16 to construct final (inv) Hessian
-        for i in range(len(self.s)):
-            V_k = I - self.rho[i] * torch.outer(self.y[i], self.s[i])
-            H = V_k.T @ H @ V_k + self.rho[i] * torch.outer(self.s[i], self.s[i])
-
-        return H
-
-    def push(self, device):
-        if self.Hstart is not None:
-            self.Hstart.push(device)
-        for i in range(len(self.s)):
-            self.s[i] = utils.push(self.s[i], device)
-            self.y[i] = utils.push(self.y[i], device)
-            self.rho[i] = utils.push(self.rho[i], device)
-        if len(self.s) > 0:
-            self.device = self.s[0].device
-            self.dtype = self.s[0].dtype
+        pass
 
 
-class TransposedMat(object):
+class TransposedMat(BaseMat):
     """
     A shallow wrapper around a *Mat object to
     transpose its attributes and methods.
@@ -456,12 +407,26 @@ class TransposedMat(object):
     def __repr__(self):
         return "<TransposedMat({})>".format(str(self._matobj))
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
 
-class PartitionedMat(object):
+        Parameters
+        ----------
+        scalar : float
+        """
+        scalar = torch.as_tensor(scalar)
+        if scalar.is_complex():
+            scalar = scalar.conj()
+        self._matobj.scalar_mul(scalar)
+
+
+class PartitionedMat(BaseMat):
     """
     A square matrix that has been partitioned into
     on-diagonal blocks and their correponding off-diagonal
-    blocks, using DenseMat, DiagMat, SparseMat and ImplicitMat.
+    blocks, using DenseMat, DiagMat, SparseMat.
 
     Assume the matrix A and its product with p can be decomposed as
 
@@ -478,7 +443,7 @@ class PartitionedMat(object):
     the output vector. E.g. the first column computes
     [A11 @ p1, A21 @ p1] and the second computes
     [A12 @ p2, A22 @ p2]. Each component (A11, A12, A22)
-    can be stored as DenseMat, DiagMat, SparseMat or ImplicitMat.
+    can be stored as DenseMat, DiagMat, SparseMat.
     Note A21 is just a transpose of A12.
 
     The user should feed a blocks dictionary which holds
@@ -591,6 +556,18 @@ class PartitionedMat(object):
         self.dtype = self.matcols[0].dtype
         self.device = self.matcols[0].device
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        for matcol in self.matcols:
+            matcol.scalar_mul(scalar)
+
 
 class MatColumn:
     """
@@ -642,6 +619,18 @@ class MatColumn:
     def __repr__(self):
         return "<MatColumn of shape {}>".format(self.shape)
 
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        for mat in self.mats:
+            mat.scalar_mul(scalar)
+
 
 class MatSum:
     """
@@ -676,6 +665,18 @@ class MatSum:
     def push(self, device):
         for m in self.mats:
             m.push(device)
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        for mat in self.mats:
+            mat.scalar_mul(scalar)
 
 
 class MatDict:
