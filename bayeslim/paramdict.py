@@ -164,9 +164,9 @@ class ParamDict:
     def __iter__(self):
         return (p for p in self.params)
 
-    def clone(self):
+    def clone(self, **kwargs):
         """detach and clone object"""
-        return ParamDict({k: self.params[k].detach().clone() for k in self.keys()})
+        return ParamDict({k: self.params[k].detach().clone(**kwargs) for k in self.keys()})
 
     def copy(self):
         """copy object. preserves requires_grad"""
