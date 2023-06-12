@@ -1360,17 +1360,77 @@ def apply_icov(data, icov, cov_axis, mode='vis'):
     return out
 
 
+def cov_get_diag(cov, cov_axis, mode='vis', shape=None):
+    """
+    Get the diagonal of a covariance and reshape
+    into appropriate data shape, depending
+    on cov_axis and mode
+
+    Parameters
+    ----------
+    cov : tensor
+        The covariance or inv. covariance tensor
+    cov_axis : str
+        The covariance type.
+        None   : cov is variance w/ shape of data
+        'full' : cov is (N, N) matrix
+        'bl'   : cov is (Nbl, Nbl, Npol, Npol, Ntimes, Nfreqs)
+        'time' : cov is (Ntimes, Ntimes, Npol, Npol, Nbls, Nfreqs)
+        'freq' :
+            mode = 'vis' : cov is (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
+            mode = 'map' : cov is (Nfreqs, Nfreqs, Npol, 1, Npix)
+        'pix'  : cov is (Npix, Npix, Npol, 1, Nfreqs)
+        It is assumed that data is shape
+        mode = 'vis' : (Npol, Npol, Nbls, Ntimes, Nfreqs)
+        mode = 'map' : (Npol, 1, Nfreqs, Npix)
+        See optim.apply_cov() for more details. 
+    mode : str, optional
+        Either ['vis', 'map'], whether this cov is for a VisData
+        or MapData object.
+    shape : tuple, optional
+        Only needed for cov_axis = 'full', this is the
+        shape of the data.
+
+    Returns
+    -------
+    tensor
+    """
+    N = len(cov)
+    if cov_axis is None:
+        return cov
+    elif cov_axis == 'full':
+        diag = cov.diagonal()
+        return diag.reshape(shape)
+    elif cov_axis == 'bl':
+        diag = cov[range(N), range(N)]
+        return diag.moveaxis(0, 2)
+    elif cov_axis == 'time':
+        diag = cov[range(N), range(N)]
+        return diag.moveaxis(0, 3)
+    elif cov_axis == 'freq':
+        diag = cov[range(N), range(N)]
+        return diag.moveaxis(0, 4)
+    elif cov_axis == 'pix':
+        diag = cov[range(N), range(N)]
+        return diag.moveaxis(0, -1)
+    else:
+        raise NameError("didn't recognize cov_axis {}".format(cov_axis))
+
+
 def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     """
     Compute the inverse covariance. Shallow wrapper
-    around linalg.invert_matrix()
+    around linalg.invert_matrix().
 
     Parameters
     ----------
     cov : tensor
         data covariance. See optim.apply_icov() for shapes
     cov_axis : str
-        covariance type. See optim.apply_icov() for options
+        covariance type. See optim.apply_icov() for options.
+        If input covariance is dense, it is assumed that its
+        dense dimensions are the first two dimensions, and
+        extra dimensions are batch dimensions.
     inv : str, optional
         The kind of inversion method. See linalg.invert_matrix()
     kwargs : dict, optional

@@ -769,7 +769,7 @@ class VisData(TensorData):
 
     def select(self, bl=None, times=None, freqs=None, pol=None,
                bl_inds=None, time_inds=None, freq_inds=None,
-               inplace=True):
+               inplace=True, try_view=False):
         """
         Downselect on data tensor.
 
@@ -801,11 +801,21 @@ class VisData(TensorData):
         inplace : bool, optional
             If True downselect inplace, otherwise return
             a new VisData object
+        try_view : bool, optional
+            If inplace=False and the requested indexing
+            can be cast as slices, try to make the selected
+            data a view of self.data.
         """
         if inplace:
             obj = self
+            out = obj
         else:
-            obj = copy.deepcopy(self)
+            if try_view:
+                obj = self
+                out = copy.deepcopy(self)
+            else:
+                obj = copy.deepcopy(self)
+                out = obj
 
         if bl is not None or bl_inds is not None:
             assert not ((bl is not None) & (bl_inds is not None))
@@ -814,7 +824,7 @@ class VisData(TensorData):
             icov = obj.get_icov(bl, bl_inds=bl_inds, squeeze=False)
             flags = obj.get_flags(bl, bl_inds=bl_inds, squeeze=False)
             if bl_inds is not None: bl = [obj.bls[i] for i in bl_inds]
-            obj.setup_data(bl, obj.times, obj.freqs, pol=obj.pol, 
+            out.setup_data(bl, obj.times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -825,7 +835,7 @@ class VisData(TensorData):
             icov = obj.get_icov(times=times, time_inds=time_inds, squeeze=False)
             flags = obj.get_flags(times=times, time_inds=time_inds, squeeze=False)
             if time_inds is not None: times = obj.times[time_inds]
-            obj.setup_data(obj.bls, times, obj.freqs, pol=obj.pol, 
+            out.setup_data(obj.bls, times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -836,7 +846,7 @@ class VisData(TensorData):
             icov = obj.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             flags = obj.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
             if freq_inds is not None: freqs = obj.freqs[freq_inds]
-            obj.setup_data(obj.bls, obj.times, freqs, pol=obj.pol, 
+            out.setup_data(obj.bls, obj.times, freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -845,12 +855,12 @@ class VisData(TensorData):
             flags = obj.get_flags(pol=pol)
             cov = obj.get_cov(pol=pol)
             icov = obj.get_icov(pol=pol)
-            obj.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
+            out.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
         if not inplace:
-            return obj
+            return out
 
     def apply_cal(self, cd, undo=False, inplace=True, cal_2pol=False):
         """
@@ -924,6 +934,110 @@ class VisData(TensorData):
         cov_axis = self.cov_axis if icov is None else cov_axis
         other_data = other_vis.data if other_vis is not None else torch.zeros_like(self.data)
         return calibration.chisq(self.data, other_data, icov, axis=axis, cov_axis=cov_axis, dof=dof)
+
+    def bl_average(self, wgts=None, reds=None, redtol=1.0, inplace=True):
+        """
+        Average baselines together, weighted by inverse covariance. Note
+        this drops all baselines not present in reds from the object.
+
+        Parameters
+        ----------
+        wgts : tensor, optional
+            Weights to use, with the same shape as the data. Default
+            is to use diagonal component of self.icov, if it exists.
+        reds : list of baseline groups, optional
+            List of baseline groups to average.
+            E.g. [[(0, 1), (1, 2)], [(2, 5), (3, 6), (4, 7)], ...]
+            Default is to automatically build redundant groups
+        redtol : float, optional
+            Tolerance [meters] in building redundant groups
+        inplace : bool, optional
+            If True, edit arrays inplace, otherwise return a deepcopy
+
+        Notes
+        -----
+        If we are estimating a compressed basis x from a data basis y, such that
+            y = A x
+        where A is a matrix of 1's and 0's indicating the binning of y into x
+        and W is a diagonal matrix representing the data weights (i.e. inv var) then
+
+            G = (A^T W A)
+            x_avg = G^-1 A^T y
+            C_x = G^-1 A^T W C_y W A G^-1
+
+        which in the limit W = C_y^-1 reduces C_x to
+
+            C_x = G^-1
+        """
+        from bayeslim import optim
+
+        # setup reds
+        if reds is None:
+            from bayeslim import telescope_model
+            reds = telescope_model.build_reds(self.antpos, bls=self.bls, redtol=redtol)[0]
+
+        # iterate over reds: select, average, then append
+        avg_groups = []
+        for i, red in enumerate(reds):
+            # down select bls from self
+            obj = self.select(bl=red, inplace=False)
+
+            # setup weights
+            if wgts is None:
+                if obj.icov is not None:
+                    wgt = optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis')
+                else:
+                    wgt = torch.ones_like(obj.data)
+            else:
+                # select wgt given bl selection
+                wgt = wgts[self.get_inds(bl=red)]
+            assert wgt.shape == obj.data.shape
+            wgt = wgt.real
+
+            # average data
+            wgt_norm = torch.sum(wgt, dim=2, keepdims=True)
+            avg_data = torch.sum(obj.data * wgt, dim=2, keepdims=True) / wgt_norm.clip(1e-40)
+
+            # update flag array
+            avg_flags = abs(wgt_norm) > 1e-40
+
+            # update cov array
+            avg_cov = None
+            avg_icov = None
+            if obj.cov is not None:
+                # TODO: allow for propagation of dense covariances
+                if obj.cov_axis is None:
+                    # cov is just variances
+                    cov = obj.cov
+                else:
+                    # just grab variances
+                    cov = optim.cov_get_diag(cov, obj.cov_axis, mode='vis', shape=obj.data.shape)
+
+                # propagate covariance through weighted sum
+                avg_cov = torch.sum(cov * wgt**2, dim=2, keepdims=True) / (wgt_norm**2).clip(1e-40)
+
+            if obj.icov is not None and avg_cov is not None:
+                avg_icov = optim.compute_icov(avg_cov, None)
+
+            # setup data
+            obj.setup_data(red[:1], obj.times, obj.freqs, pol=obj.pol,
+                           data=avg_data, flags=avg_flags, cov=avg_cov,
+                           icov=avg_icov, cov_axis=None, history=obj.history)
+
+            avg_groups.append(obj)
+
+        # concatenate the averaged groups
+        out = concat_VisData(avg_groups, 'bl')
+
+        if inplace:
+            # overwrite self.data and appropriate metadata
+            self.setup_data(out.bls, out.times, out.freqs, pol=out.pol,
+                            data=out.data, flags=out.flags, cov=out.cov,
+                            cov_axis=out.cov_axis, icov=out.icov,
+                            history=out.history)
+
+        else:
+            return out
 
     def inflate_by_redundancy(self, redtol=1.0, min_len=None, max_len=None):
         """
@@ -1167,8 +1281,10 @@ class VisData(TensorData):
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
         if self.cov is not None:
-            assert self.cov_axis is not None, "full data-sized covariance not implemented"
-            if self.cov_axis == 'bl':
+            assert self.cov_axis is not 'full', "full data-sized covariance not implemented"
+            if self.cov_axis is None:
+                assert self.cov.shape == self.data.shape
+            elif self.cov_axis == 'bl':
                 assert self.cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,
                                           self.Ntimes, self.Nfreqs)
             elif self.cov_axis == 'time':
@@ -1539,11 +1655,21 @@ class MapData(TensorData):
         inplace : bool, optional
             If True downselect inplace, otherwise return
             a new VisData object
+        try_view : bool, optional
+            If inplace=False and the requested indexing
+            can be cast as slices, try to make the selected
+            data a view of self.data.
         """
         if inplace:
             obj = self
+            out = obj
         else:
-            obj = copy.deepcopy(self)
+            if try_view:
+                obj = self
+                out = copy.deepcopy(self)
+            else:
+                obj = copy.deepcopy(self)
+                out = obj
 
         if angs is not None or ang_inds is not None:
             data = obj.get_data(angs=angs, ang_inds=ang_inds, squeeze=False)
@@ -1554,7 +1680,7 @@ class MapData(TensorData):
             if ang_inds is not None:
                 if self.angs is not None:
                     angs = self.angs[:, ang_inds]
-            obj.setup_data(obj.freqs, df=obj.df, pols=obj.pols, data=data, angs=angs,
+            out.setup_data(obj.freqs, df=obj.df, pols=obj.pols, data=data, angs=angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
@@ -1569,7 +1695,7 @@ class MapData(TensorData):
                 df = obj.df[freq_inds] if obj.df is not None else None
             else:
                 df = obj.df[self._freq2ind(freqs)] if obj.df is not None else None
-            obj.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
+            out.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
@@ -1580,12 +1706,12 @@ class MapData(TensorData):
             icov = obj.get_icov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
             flags = obj.get_flags(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
             if pol_inds is not None: pols = [obj.pols[i] for i in pol_inds]
-            obj.setup_data(obj.freqs, df=obj.df, pols=pols, data=data, angs=obj.angs,
+            out.setup_data(obj.freqs, df=obj.df, pols=pols, data=data, angs=obj.angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
 
         if not inplace:
-            return obj
+            return out
 
     def write_hdf5(self, fname, overwrite=False):
         """
@@ -2189,18 +2315,28 @@ class CalData(TensorData):
             Polarization to downselect
         inplace : bool, optional
             If True downselect inplace, otherwise return a new object.
+        try_view : bool, optional
+            If inplace=False and the requested indexing
+            can be cast as slices, try to make the selected
+            data a view of self.data.
         """
         if inplace:
             obj = self
+            out = obj
         else:
-            obj = copy.deepcopy(self)
+            if try_view:
+                obj = self
+                out = copy.deepcopy(self)
+            else:
+                obj = copy.deepcopy(self)
+                out = obj
 
         if ants is not None:
             data = obj.get_data(ants, squeeze=False)
             cov = obj.get_cov(ants, squeeze=False)
             icov = obj.get_icov(ants, squeeze=False)
             flags = obj.get_flags(ants, squeeze=False)
-            obj.setup_data(ants, obj.times, obj.freqs, pol=obj.pol, 
+            out.setup_data(ants, obj.times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -2209,7 +2345,7 @@ class CalData(TensorData):
             cov = obj.get_cov(times=times, squeeze=False)
             icov = obj.get_icov(times=times, squeeze=False)
             flags = obj.get_flags(times=times, squeeze=False)
-            obj.setup_data(obj.ants, times, obj.freqs, pol=obj.pol, 
+            out.setup_data(obj.ants, times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -2218,7 +2354,7 @@ class CalData(TensorData):
             cov = obj.get_cov(freqs=freqs, squeeze=False)
             icov = obj.get_icov(freqs=freqs, squeeze=False)
             flags = obj.get_flags(freqs=freqs, squeeze=False)
-            obj.setup_data(obj.ants, obj.times, freqs, pol=obj.pol, 
+            out.setup_data(obj.ants, obj.times, freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
@@ -2227,12 +2363,12 @@ class CalData(TensorData):
             flags = obj.get_flags(pol=pol)
             cov = obj.get_cov(pol=pol)
             icov = obj.get_icov(pol=pol)
-            obj.setup_data(obj.ants, obj.times, obj.freqs, pol=pol, 
+            out.setup_data(obj.ants, obj.times, obj.freqs, pol=pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
         if not inplace:
-            return obj
+            return out
 
     def rephase_to_refant(self, refant):
         """
@@ -2545,7 +2681,7 @@ def concat_VisData(vds, axis, run_check=True):
         return vds[0]
     vd = vds[0]
     out = VisData()
-    flags, cov = None, None
+    flags, cov, icov = None, None, None
     if axis == 'bl':
         dim = 2
         times = vd.times
@@ -2554,8 +2690,6 @@ def concat_VisData(vds, axis, run_check=True):
         bls = []
         for o in vds:
             bls.extend(o.bls)
-        if vd.cov is not None:
-            raise NotImplementedError
 
     elif axis == 'time':
         dim = 3
@@ -2563,8 +2697,6 @@ def concat_VisData(vds, axis, run_check=True):
         freqs = vd.freqs
         pol = vd.pol
         bls = vd.bls
-        if vd.cov is not None:
-            raise NotImplementedError
 
     elif axis == 'freq':
         dim = 4
@@ -2572,16 +2704,23 @@ def concat_VisData(vds, axis, run_check=True):
         freqs = torch.cat([torch.as_tensor(o.freqs) for o in vds])
         pol = vd.pol
         bls = vd.bls
-        if vd.cov is not None:
-            raise NotImplementedError
 
+    # stack data and flags
     data = torch.cat([o.data for o in vds], dim=dim)
     if vd.flags is not None:
         flags = torch.cat([o.flags for o in vds], dim=dim)
 
+    # stack cov and icov
+    if vd.cov_axis is not None:
+        raise NotImplementedError
+    if vd.cov is not None:
+        cov = torch.cat([o.cov for o in vds], dim=dim)
+    if vd.icov is not None:
+        icov = torch.cat([o.icov for o in vds], dim=dim)
+
     out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
-                   data=data, flags=flags, cov=cov,
+                   data=data, flags=flags, cov=cov, icov=icov,
                    cov_axis=vd.cov_axis, history=vd.history)
 
     if run_check:
@@ -2600,6 +2739,27 @@ def concat_MapData(mds, axis, run_check=True):
 def concat_CalData(cds, axis, run_check=True):
     """
     Concatenate CalData bojects
+    """
+    raise NotImplementedError
+
+
+def average_TensorData(objs, wgts=None):
+    """
+    Average multiple TensorData subclasses together,
+    assuming they share the exact same shape and metadata
+    ordering.
+
+    Parameters
+    ----------
+    objs : list of TensorData objects
+        TensorData objects to average together
+    wgts : list of tensor
+        Weights for each TensorData.data tensor.
+        Default is to use their self.icov tensors.
+
+    Returns
+    -------
+    TensorData object
     """
     raise NotImplementedError
 
