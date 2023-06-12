@@ -637,18 +637,26 @@ class LogProb(utils.Module):
                 # use a dummy Python3 class object to set params
                 class Obj: pass
                 model = Obj()
-                for param in self._main_indices:
-                    setattr(model, param, utils.get_model_attr(self.model, param).clone())
+                for pname in self._main_indices:
+                    setattr(model, pname, utils.get_model_attr(self.model, pname).clone())
             else:
                 # otherwise use self.model
                 model = self.model
 
-            for param in self._main_indices:
+            for pname in self._main_indices:
+                # create sub-objects for Obj class if needed
+                if not inplace:
+                    pname_list = pname.split('.')
+                    _model = model
+                    for pn in pname_list[:-1]:
+                        setattr(_model, pn, Obj())
+                        _model = getattr(_model, pn)
+
                 # get metadata
-                inds = self._main_indices[param]
-                idx = self._main_index[param]
-                shape = self._main_shapes[param]
-                device = self._main_devices[param]
+                inds = self._main_indices[pname]
+                idx = self._main_index[pname]
+                shape = self._main_shapes[pname]
+                device = self._main_devices[pname]
 
                 if not isinstance(inds, list):
                     # turn single or no indexing into multi-index form
@@ -660,17 +668,17 @@ class LogProb(utils.Module):
                     value = value.to(device)
 
                     # only fill if this is first index of this param
-                    # only add if this is isn't first index of this param
+                    # only add if this isn't first index of this param
                     # only clobber existing param if first index
-                    utils.set_model_attr(model, param, value, idx=_idx,
+                    utils.set_model_attr(model, pname, value, idx=_idx,
                                          clobber_param=True if i == 0 else False,
                                          no_grad=False,
                                          fill=fill if i == 0 else None,
-                                         add=False)
+                                         add=i != 0)
 
             if not inplace:
-                # collect dictionary and return
-                return model.__dict__
+                # collect dictionary of params and return
+                return dict([items for items in model.__dict__.items() if isinstance(items[1], torch.Tensor)])
 
     @property
     def Nbatch(self):
