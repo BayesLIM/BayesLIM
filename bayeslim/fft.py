@@ -172,6 +172,38 @@ class PeakDelay(FFT):
         return out
 
 
+def vis_wedge(vd, **kwargs):
+    """
+    Given a VisData object, take its FFT along frequency
+    and average redundant groups to form a wedge
+
+    Parameters
+    ----------
+    vd : VisData object
+    kwargs : dict, optional
+        Additional keyword args to send to fft.FFT(**kwargs)
+
+    Returns
+    -------
+    VisData
+        Red-averaged and FFT'd data
+    FFT object
+        FFT object holding Fourier modes as FFT.freqs
+    """
+    # average redundancies
+    vd = vd.bl_average(inplace=False)
+
+    # setup FT object
+    dfreq = vd.freqs[1] - vd.freqs[0]
+    Nfreqs = vd.Nfreqs
+    FT = FFT(dim=4, ndim=5, dx=dfreq, N=Nfreqs, **kwargs)
+
+    # take FT
+    vd = FT(vd)
+
+    return vd, FT
+
+
 def gen_window(window, N, **kwargs):
     """
     Generate a window function of len N
