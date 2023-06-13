@@ -632,25 +632,32 @@ class LogProb(utils.Module):
         """
         main_params = main_params if main_params is not None else self.main_params
         if main_params is not None:
-
             if not inplace:
                 # use a dummy Python3 class object to set params
-                class Obj: pass
+                class Obj:
+                    def __getitem__(self, k):
+                        klist = k.split('.')
+                        if len(klist) == 1:
+                            return getattr(self, klist[0])
+                        else:
+                            return getattr(self, klist[0])['.'.join(klist[1:])]
                 model = Obj()
-                for pname in self._main_indices:
-                    setattr(model, pname, utils.get_model_attr(self.model, pname).clone())
             else:
                 # otherwise use self.model
                 model = self.model
 
             for pname in self._main_indices:
-                # create sub-objects for Obj class if needed
                 if not inplace:
+                    # create sub-objects for Obj class if needed
                     pname_list = pname.split('.')
                     _model = model
-                    for pn in pname_list[:-1]:
-                        setattr(_model, pn, Obj())
-                        _model = getattr(_model, pn)
+                    for j, pn in enumerate(pname_list):
+                        if j == len(pname_list) - 1:
+                            setattr(_model, pn, self.model[pname].detach().clone())
+                        else:
+                            if not hasattr(_model, pn):
+                                setattr(_model, pn, Obj())
+                            _model = getattr(_model, pn)
 
                 # get metadata
                 inds = self._main_indices[pname]
@@ -678,7 +685,7 @@ class LogProb(utils.Module):
 
             if not inplace:
                 # collect dictionary of params and return
-                return dict([items for items in model.__dict__.items() if isinstance(items[1], torch.Tensor)])
+                return {k: model[k] for k in self._main_indices}
 
     @property
     def Nbatch(self):
