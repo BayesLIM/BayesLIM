@@ -96,7 +96,7 @@ class BFGS:
         self._exit = None
 
         if H0 is not None:
-            if H0.ndim < 2:
+            if isinstance(H0, torch.Tensor) and H0.ndim < 2:
                 H0 = H0 * torch.eye(
                     self._numel(),
                     dtype=self.params[0].dtype,
