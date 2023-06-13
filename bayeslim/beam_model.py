@@ -1343,7 +1343,7 @@ class AlmBeam(utils.Module):
 
 
 def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0,
-              square=True, Ntau=100, brute_force=True):
+              square=True, Ntau=100, brute_force=False):
     """
     Generate a (asymmetric) airy disk function.
 

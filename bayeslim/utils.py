@@ -823,8 +823,11 @@ class PixInterp:
         if not dtype: self.device = device
         for k in self.interp_cache:
             cache = self.interp_cache[k]
-            self.interp_cache[k] = (cache[0].to(device),
-                                    push(cache[1], device))
+            if dtype:
+                cache = (cache[0], push(cache[1]))
+            else:
+                cache = (push(cache[0], device), push(cache[1], device))
+            self.interp_cache[k] = cache
 
 
 def clear_cache_depth(cache, depth):
