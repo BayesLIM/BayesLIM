@@ -473,7 +473,7 @@ class LogProb(utils.Module):
             print("Warning: overlapping module names in model could" \
                   " lead to conflicts in prior evaluation")
 
-    def set_main_params(self, model_params=None):
+    def set_main_params(self, model_params=None, LM=None):
         """
         Setup a single main parameter tensor that automatically
         interfaces with specified submodule tensors in models. This
@@ -506,6 +506,15 @@ class LogProb(utils.Module):
             Note that you can also feed two indexing tuples
             (must be wrapped in a list!) which will index the
             params tensor multiple times in that order.
+        main_LM : LinearModel object or BaseMat subclass
+            This is a linear model object that can act as a 
+            preconditioner to main_params. It is an R^N -> R^N
+            mapping that maps main_params to its expected
+            from given its various sub-params components.
+            This is acted upon in the self.send_main_params() call.
+            In principle, this should be the lower Cholesky
+            of the covariance matrix (i.e. inverse Hessian).
+            This is set as self._main_LM.
         """
         # if main_params already exists, turn keys back into Parameters
         if hasattr(self, "_main_indices") and self._main_indices is not None:
@@ -518,6 +527,7 @@ class LogProb(utils.Module):
         self._main_shapes = None
         self._main_devices = None
         self._main_index = None
+        self._main_LM = LM
         if model_params is not None:
             # setup main_params metadata
             N = 0
@@ -630,8 +640,15 @@ class LogProb(utils.Module):
             with their existing values. Otherwise, fill them with
             this value before returning.
         """
+        # get main_params
         main_params = main_params if main_params is not None else self.main_params
+
         if main_params is not None:
+            # pass it through LM if desired
+            if self._main_LM is not None:
+                main_params = self._main_LM(main_params)
+            
+            # setup holding container needed for inplace = False
             if not inplace:
                 # use a dummy Python3 class object to set params
                 class Obj:
