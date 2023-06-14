@@ -478,8 +478,8 @@ def invert_matrix(A, inv='pinv', rcond=1e-15, hermitian=False, eps=None,
     return iA
 
 
-def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
-                  eps=0, rcond=1e-15, hermitian=True, D=None,
+def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
+                  pinv=True, eps=0, rcond=1e-15, hermitian=True, D=None,
                   preconj=False, pretran=False, driver=None):
     """
     Solve a linear equation via generalized least squares.
@@ -504,6 +504,16 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
     If A is large this can be sped up by moving A and y
     to the GPU first.
 
+    Notes
+    -----
+    mode = 'matrix' works well when the number of
+        Nvariables is small, i.e., computational
+        scaling is largely independent of y batch dimensions,
+        but has poor scaling for Nvariables.
+    mode = 'lstsq' works well when Nvariables is large,
+        and has good scaling with Nvariables but has
+        bad scaling for Nbatch dimensions.
+
     Parameters
     ----------
     A : tensor
@@ -511,6 +521,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         of shape (Nsamples, Nvariables)
     y : tensor
         Observation tensor of shape (..., Nsamples, ...)
+        where ... are batch dimensions
     dim : int, optional
         Dimension in y to multiply into A. Default is 0th axis.
     Ninv : tensor, optional
@@ -518,13 +529,16 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
          of shape (N, N), or just its diagonal of shape (N,),
          where N = Nsamples.
          Default is identity matrix.
+    mode : str, optional
+        Whether to use iterative least-squares to solve normal equations for x_hat,
+        or to compute D via matrix operations to get x_hat. Default is matrix mode.
+        options = ['matrix', 'lstsq']
     norm : str, optional
-        Normalization type, [None, 'inv', 'diag', 'lstsq']
-        None : no normalization, assume D is identity
-        'inv' : invert A.T Ninv A
-        'pinv' : use pseudo-inverse to inver A.T Ninv A
-        'diag' : take inverse of diagonal of A.T Ninv A
-        'lstsq' : use torch.linalg.lstsq to invert A.T Ninv A
+        Normalization type for matrix mode, [None, 'inv', 'diag']
+            None : no normalization, assume D is identity
+            'inv' : invert A.T Ninv A
+            'pinv' : use pseudo-inverse to inver A.T Ninv A
+            'diag' : take inverse of diagonal of A.T Ninv A
     pinv : bool, optional
         Use pseudo inverse if norm = 'inv' (same as inv='pinv').
         Can also specify regularization parameter instead.
@@ -561,7 +575,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
         estimated parameters
     D : tensor
         derived normalization matrix, depending
-        on choice of pinv and eps
+        on choice of norm and eps
     """
     assert y.ndim <= 8
     # sum over 'i' for y tensor
@@ -574,14 +588,44 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
     # weight the data vector by inverse covariance
     if Ninv is not None:
         if Ninv.ndim == 2:
+            # turn Ninv into cholesky if in lstsq mode
+            if mode == 'lstsq': Ninv = torch.linalg.cholesky(Ninv)
             # Ninv is a matrix
-            y = torch.einsum("ki,{}->{}".format(y_ein, y_ein.replace('i', 'k'),
-                             Ninv, y))
+            y = torch.einsum("ki,{}->{}".format(y_ein, y_ein.replace('i', 'k')), Ninv, y)
         else:
             # Ninv is diagonal
             shape = [1 for i in range(y.ndim)]
             shape[dim] = len(Ninv)
+            if mode == 'lstsq': Ninv = torch.sqrt(Ninv)
             y = Ninv.reshape(shape) * y
+
+    # check if we are in lstsq mode
+    if mode == 'lstsq':
+        # weight A by Ninv cholesky if needed
+        if Ninv is not None:
+            if Ninv.ndim == 2:
+                if pretran:
+                    A = A.T.conj()
+                A = L @ A
+            else:
+                A = A * Ninv[:, None]
+
+        # make sure A has enough dims
+        if A.ndim < y.ndim:
+            A = A.reshape(torch.Size([1]*(y.ndim - A.ndim)) + A.shape)
+        # make sure dim of y is in -2 dim
+        if y.ndim > 1:
+            y = y.moveaxis(dim, -2)
+
+        # now do solve
+        xhat = torch.linalg.lstsq(A, y, driver=driver).solution
+        if y.ndim > 1:
+            xhat = xhat.moveaxis(-2, dim)
+
+        return xhat, None
+
+    # otherwise assume we are in matrix mode
+    assert mode == 'matrix'
 
     # get A.T y: un-normalized hat(x)
     if preconj:
@@ -592,7 +636,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
                         Aconj, y)
 
     # compute normalization matrix: (A.T Ninv A)^-1, multiply it into xhat
-    if norm in ['inv', 'pinv', 'lstsq']:
+    if norm in ['inv', 'pinv', 'chol']:
         if D is None:
             if preconj:
                 A = A.conj()
@@ -616,7 +660,7 @@ def least_squares(A, y, dim=0, Ninv=None, norm='inv', pinv=True,
             # invert
             if norm == 'inv' and pinv:
                 norm = 'pinv'
-            D = invert_matrix(Dinv, inv=norm, rcond=rcond, driver=driver, eps=eps)
+            D = invert_matrix(Dinv, inv=norm, rcond=rcond, eps=eps, hermitian=hermitian)
 
         # apply D to un-normalized xhat
         xhat = torch.einsum("kj,{}->{}".format(y_ein.replace('i', 'j'), y_ein.replace('i', 'k')),
