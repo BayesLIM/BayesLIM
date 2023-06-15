@@ -601,11 +601,11 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
 
     # check if we are in lstsq mode
     if mode == 'lstsq':
+        if pretran:
+            A = A.T.conj()
         # weight A by Ninv cholesky if needed
         if Ninv is not None:
             if Ninv.ndim == 2:
-                if pretran:
-                    A = A.T.conj()
                 A = L @ A
             else:
                 A = A * Ninv[:, None]
