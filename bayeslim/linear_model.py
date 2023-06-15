@@ -5,6 +5,7 @@ y = Ax
 import numpy as np
 import torch
 from scipy.interpolate import interp1d
+from scipy import special as scispc
 import copy
 
 from . import utils, linalg
@@ -314,12 +315,13 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
     Parameters
     ----------
     x : ndarray
+        vector of independent axis values
     Ndeg : int
         Polynomial degree
     device : str, optional
         device to send A matrix to before return
     basis : str, optional
-        Polynomial basis to use. See emupy.linear.setup_polynomial
+        Polynomial basis to use.
         ['direct', 'legendre', 'chebyshevt', 'chebyshevu']
         direct (default) is a standard polynomial (x^0 + x^1 + ...)
     d0 : float, optional
@@ -347,8 +349,18 @@ def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
     x, _, _ = utils.prep_xarr(x, d0=d0, logx=logx, whiten=whiten, x0=x0, dx=dx)
 
     # setup the polynomial
-    from emupy.linear import setup_polynomial
-    A = setup_polynomial(x[:, None], Ndeg - 1, basis=basis)[0]
+    if basis == 'direct':
+        A = np.vstack([x**i for i in range(Ndeg)]).T
+    elif basis == 'legendre':
+        A = np.vstack([scispc.eval_legendre(i, x) for i in range(Ndeg)]).T
+    elif basis == 'chebyshevt':
+        A = np.vstack([scispc.eval_chebyt(i, x) for i in range(Ndeg)]).T
+    elif basis == 'chebyshevu':
+        A = np.vstack([scispc.eval_chebyu(i, x) for i in range(Ndeg)]).T
+    elif basis == 'laguerre':
+        A = np.vstack([scispc.eval_laguerre(i, x) for i in range(Ndeg)]).T
+    else:
+        raise NameError("didn't recognize basis {}".format(basis))
 
     if qr:
         A = np.linalg.qr(A)[0]
