@@ -818,7 +818,7 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
     if isinstance(hess, paramdict.ParamDict):
         cov = {}
         for k in hess:
-            cov[k] = invert_hessian(hess[k], diag=diag, idx=idx,
+            cov[k] = invert_hessian(hess[k], diag=diag, idx=idx, eps=eps,
                                     rm_offdiag=rm_offdiag, hermitian=hermitian,
                                     rm_thresh=rm_thresh, rm_fill=rm_fill)
         return paramdict.ParamDict(cov)
