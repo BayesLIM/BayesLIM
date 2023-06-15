@@ -991,7 +991,7 @@ class VisData(TensorData):
             else:
                 # select wgt given bl selection
                 wgt = wgts[self.get_inds(bl=red)]
-            assert wgt.shape == obj.data.shape
+            assert wgt.shape[2] == obj.data.shape[2]
             wgt = wgt.real
 
             # average data
