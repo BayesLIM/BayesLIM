@@ -472,6 +472,12 @@ class VisMapper:
     where D can take multiple values but is in the general case
 
     D = (A^T W A)^-1
+
+    Notes
+    -----
+    First run self.build_A() to build the A matrix given visibility
+    metadata (irrespective of the visibility data itself), then
+    run self.build_v() 
     """
     def __init__(self, vis, ra, dec, beam=None, fov=180):
         """
@@ -511,13 +517,13 @@ class VisMapper:
     @torch.no_grad()
     def build_A(self):
         """
-        Build A matrix and associated weights and visibility vector
+        Build the A matrix, this is generally the slowest part of the (dirty)
+        map making, as well as the most memory intensive.
         """
         Ntimes = self.vis.Ntimes
         Nbls = self.vis.Nbls
         Nfreqs = self.vis.Nfreqs
         self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
-        self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
         # build A matrix
         for i, time in enumerate(self.vis.times):
             # get alt, az
@@ -536,32 +542,26 @@ class VisMapper:
                 cut = zen <= self.fov/2
                 zen, az = zen[cut], az[cut]
 
-            # get conjugate of fringe (for vis sim we use fr, for mapping we use fr.conj)
+            # get conjugate of fringe (for vis simulation we use fr, for mapping we use fr.conj)
             fr = self.array.gen_fringe(self.vis.bls, zen, az, conj=True)
 
             # multiply in beam
             if beam is not None:
-                fr *= beam
+                if beam.shape[0] != fr.shape[1]:
+                    # different Nfreqs between the two, pick out nearest beam freqs
+                    beam = beam[[np.argmin(abs(self.beam.freqs - f)) for f in self.vis.freqs]]
 
-            # get weights
-            if self.vis.icov is not None and self.vis.cov_axis is None:
-                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
-            else:
-                wgt = torch.tensor(1.0, device=self.device)
+                fr *= beam
 
             # insert
             self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
-            self.w[i*Nbls:(i+1)*Nbls] = wgt
-
-        # normalize weight sum
-        self.w /= self.w.sum(0)
 
     @torch.no_grad()
     def build_v(self, vis=None):
         """
         Build the visibility tensor that is dotted
-        into self.A to form dirty map.
-        Sets self.v
+        into self.A to form dirty map and its associated weight vector.
+        Sets self.v and self.w
 
         Parameters
         ----------
@@ -576,23 +576,32 @@ class VisMapper:
         Nbls = vis.Nbls
         Nfreqs = vis.Nfreqs
         self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=vis.data.dtype, device=self.device)
+        self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
         for i, time in enumerate(vis.times):
+            # insert into v vector
             self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
-    def make_map(self, vis=None, clip=1e-5, norm_sqbeam=False):
+            # get weights
+            if self.vis.icov is not None and self.vis.cov_axis is None:
+                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
+            else:
+                wgt = torch.tensor(1.0, device=self.device)
+
+            # insert into w vector
+            self.w[i*Nbls:(i+1)*Nbls] = wgt
+
+        # normalize weights by sum
+        self.w /= self.w.sum(0).clip(1e-40)
+
+    def make_map(self, clip=1e-5, norm_sqbeam=False):
         """
         Given A matrix and other products from build_A()
-        and build_v(), make and normalize a dirty map
+        and build_v(), make and normalize a dirty map.
 
         Parameters
         ----------
-        vis : VisData, optional
-            Use this VisData instead of self.vis
-            for making map. Default is self.vis.
-            This must match self.vis in shape
-            and in metadata.
         clip : float, optional
-            Clip DI matrix at this value
+            Clip DI matrix (weighted beam) at this value
         norm_sqbeam : bool, optional
             If True, normalize map with two factors
             of the powerbeam (standard least squares)
@@ -611,7 +620,7 @@ class VisMapper:
             # normalize by two factors of beam (standard least squares)
             self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(clip)
         else:
-            # normalize by one factor of beam (prevents overshoot far from fov)
+            # normalize by one factor of beam (prevents overshoot far from fov center)
             self.DI = (torch.abs(self.A)**1 * self.w[:, :, None]).sum(0).clip(clip)
 
         # normalize map
