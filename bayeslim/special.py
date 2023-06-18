@@ -71,12 +71,6 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         # compute hyper-geometric: DLMF 14.3.1
         # Note this previously used DLMF 14.3.11
         # but this was unstable at low theta. 14.3.1 works fine for Plm
-        if sq_norm:
-            norm = ((1 + x) / (1 - x).clip(1e-40,))**(m/2)
-        else:
-            # this is for combining with Qlm due to numerical issues,
-            # the 1/(1-x)^m/2 term is added later
-            norm = (1 + x)**(m/2)
         norm = ((1 + x) / (1 - x))**(m/2)
         a, b, c = l+1, -l, 1-m
         P = hypF(a, b, c, (1-x)/2, high_prec=high_prec, keepdims=True)
@@ -89,6 +83,10 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         # gammaln(c+1) comes from extra factor in hypF!
         P *= np.exp(C + gammaln(np.abs(c)+1))
 
+        # divide by (1-x^2)^(-m/2) term if requested: when combining with Qlm
+        if not sq_norm:
+            P /= (1-x**2)**(-m/2)
+
         # handle dims
         if not keepdims:
             if 1 in P.shape:
@@ -100,7 +98,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
     # compute derivative
     else:
         # DLMF 14.10.5
-        norm = 1 / (1 - x**2).clip(1e-40,)
+        norm = 1 / (1 - x**2)
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
