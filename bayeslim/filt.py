@@ -171,9 +171,11 @@ class GPFilter(BaseFilter):
         return y_filt
 
 
-def rbf_cov(x, ls, dtype=None, device=None):
+def rbf_cov(x, ls, amp=1, dtype=None, device=None):
     """
     Generate a Gaussian (aka RBF) covariance
+
+    amp * exp(-.5 dx^2 / ls^2)
 
     Parameters
     ----------
@@ -183,12 +185,14 @@ def rbf_cov(x, ls, dtype=None, device=None):
     ls : float
         Length-scale of the covariance (i.e. 1 / filter half-width)
         in units of [x]
+    amp : float, optional
+        Multiplicative variance, default is 1
 
     Returns
     -------
     tensor
     """
-    cov = torch.exp(-.5 * (x[:, None] - x[None, :])**2 / ls**2)
+    cov = amp * torch.exp(-.5 * (x[:, None] - x[None, :])**2 / ls**2)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
@@ -196,7 +200,36 @@ def rbf_cov(x, ls, dtype=None, device=None):
     return cov
 
 
-def sinc_cov(x, ls, dtype=None, device=None):
+def exp_cov(x, ls, amp=1, dtype=None, device=None):
+    """
+    Generate an exponential covariance
+
+    amp * exp(-dx / ls)
+
+    Parameters
+    ----------
+    x : tensor
+        Independent axis labels of the data
+        e.g. frequencies, times, etc
+    ls : float
+        Length-scale of the covariance (i.e. 1 / filter half-width)
+        in units of [x]
+    amp : float, optional
+        Multiplicative variance, default is 1
+
+    Returns
+    -------
+    tensor
+    """
+    cov = amp * torch.exp(-torch.abs(x[:, None] - x[None, :]) / ls)
+    cov = cov.to(device)
+    if dtype is not None:
+        cov = cov.to(dtype)
+
+    return cov
+
+
+def sinc_cov(x, ls, amp=1, dtype=None, device=None):
     """
     Generate a Sinc covariance
 
@@ -208,12 +241,14 @@ def sinc_cov(x, ls, dtype=None, device=None):
     ls : float
         Length-scale of the covariance (i.e. 1 / filter half-width)
         in units of [x]
+    amp : float, optional
+        Multiplicative variance, default is 1
 
     Returns
     -------
     tensor
     """
-    cov = torch.sinc(2 * (x[:, None] - x[None, :]) / ls)
+    cov = amp * torch.sinc((x[:, None] - x[None, :]) / ls)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
