@@ -14,7 +14,7 @@ class FFT(utils.Module):
     """
     def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None,
                  ndim=None, window=None, fftshift=True, ifft=False,
-                 edgecut=None, square=False):
+                 edgecut=None, square=False, **kwargs):
         """
         Parameters
         ----------
@@ -46,6 +46,8 @@ class FFT(utils.Module):
             to edge channels).
         square : bool, optional
             If True, take abs(fft)**2 before output
+        kwargs : dict, optional
+            Kwargs to pass to gen_window()
         """
         super().__init__()
         self.dim = dim
@@ -73,7 +75,7 @@ class FFT(utils.Module):
             assert N is not None
             assert ndim is not None
             Nwin = N - self.edgecut[0] - self.edgecut[1]
-            win = gen_window(window, Nwin)
+            win = gen_window(window, Nwin, **kwargs)
             win = torch.cat([torch.zeros(self.edgecut[0]),
                              win,
                              torch.zeros(self.edgecut[1])])
