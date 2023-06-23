@@ -1092,7 +1092,7 @@ class NUTS(HMC):
                     )
 
             # continue with base_tree, unless this happened close to origin, restart from a new place in the chain 
-            if tree_depth < 2:
+            if Nchain > 0 and tree_depth < 2:
                 i = np.random.randint(0, Nchain)
                 self._U = self.Uchain[i]
                 self._gradU = None
