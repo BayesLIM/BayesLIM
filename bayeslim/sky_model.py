@@ -182,7 +182,7 @@ class PointSky(SkyBase):
         angs : tensor
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
-            last two axes are RA and Dec [deg].
+            first axis holds RA and Dec [deg], respectively.
         freqs : tensor
             Frequency array of sky model [Hz].
         R : callable, optional
@@ -820,31 +820,77 @@ class CompositeModel(utils.Module):
     To keep graph memory as small as possible, place
     sky models that don't have parameters first in "models"
     """
-    def __init__(self, models, sum_output=False, device=None):
+    def __init__(self, models, sum_output=False, device=None,
+                 index=None):
         """
         Multiple sky models to be evaluated
         and returned in a list
 
         Parameters
         ----------
-        models : OrderedDict
+        models : dict
             Dictionary of SkyBase objects to evaluate
+            and stack together.
+            E.g. {'diff': PointSky, 'eor': PixelSky}
         sum_output : bool, optional
             If True, sum output sky model from
             each model before returning. This only
-            works if each input model is of the
-            same kind, and if they have the same
-            shape.
+            works if each successive sky object in models
+            can be summed with its predecessor, optionally
+            with an indexing along the Npix axis.
         device : str, optional
             Device to move all outputs to before summing
             if sum_output
+        index : dict, optional
+            This holds indexing arrays used when sum_output=True
+            for combining the SkyBase objects in models when
+            they are of different shapes. The keys are the same
+            as keys in models (the first entry in models doesn't need
+            any indexing, and should have the highest spatial resolution
+            of all input sky models), and the values are tuples holding
+            (predecessor_indexing, this_indexing), where the predecessor_indexing
+            indexes the previous sky model data array along its Npix axis
+            and this_indexing reshapes the current sky model along its Npix axis.
+            E.g. #1 models = {'diff': PixelSky(nside=64), 'eor': PixelSky(nside=64)}
+            Both are healpix maps of the same NSIDE but 'eor' has truncated
+            spatial extent.
+                index = {'eor': ([0, 1, 3, ...], None)}
+            In this case we do diff().data[..., [0, 1, 3, ...]] += eor().data[..., :],
+            where diff is indexed and eor needs no reshaping. Another way this could
+            be achieved is to reshape eor such that missing pixels are created as zero,
+            which can then just be directly summed with diff() without indexing it.
+            E.g. #2 models = {'diff1': PixelSky(nside=64), 'diff2': PixelSky(nside=32)}
+            Here the second model is of lower resolution, so its values need to be copied
+            onto the higher resolution map and then directly summed w/ its predecessor
+                index = {'diff2': (None, [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, ....])}
         """
         super().__init__()
-        self.models = list(models.keys())
+        self.eval_models = list(models.keys())
         for k in models:
             setattr(self, k, models[k])
         self.sum_output = sum_output
         self.device = device
+        self.index = index
+
+    @property
+    def models(self):
+        return [child[0] for child in self.named_children()]
+
+    def set_eval_models(self, models=None):
+        """
+        Set the sky models to evaluate upon forward call.
+        Default is to use all named_children()
+
+        Parameters
+        ----------
+        models : list, optional
+            List of str names for sky models to evaluate
+            upon successive forward() calls. Sets self.eval_models
+        """
+        if models is None:
+            self.eval_models = self.models
+        else:
+            self.eval_models = models
 
     def forward(self, *args, prior_cache=None):
         """
@@ -854,7 +900,7 @@ class CompositeModel(utils.Module):
         """
         # forward each sky model
         sky_components = []
-        for mod in self.models:
+        for mod in self.eval_models:
             skycomp = self[mod].forward(prior_cache=prior_cache)
             sky_components.append(skycomp)
 
@@ -862,8 +908,26 @@ class CompositeModel(utils.Module):
             # use first sky_component as placeholder
             output = sky_components[0]
             sky = torch.zeros_like(output.data, device=self.device)
-            for comp in sky_components:
-                sky += comp.data.to(self.device)
+
+            # iterate over sky components and sum with sky
+            for i, (comp, mod) in enumerate(zip(sky_components, self.eval_models)):
+                # check if we need to index sky or comp
+                if self.index is not None and mod in self.index and i > 0:
+                    data = comp.data
+                    idx = self.index[mod]
+                    assert isinstance(idx, (tuple, list))
+                    # check if indexing is provided for comp
+                    if idx[1] is not None:
+                        data = comp.data.index_select(-1, idx[1])
+                    # check if indexing is provided for sky
+                    if idx[0] is not None:
+                        sky = sky.index_add(-1, idx[0], data)
+                    else:
+                        sky += data.to(self.device)
+                else:
+                    sky += comp.data.to(self.device)
+
+            # assign sky to output
             output.data = sky
             # make sure other keys are on the same device
 #            for k in output:
@@ -890,13 +954,51 @@ class CompositeModel(utils.Module):
             see scipy.interp1d for options
         """
         for model in self.models:
-            model.freq_interp(freqs, kind)
+            self[model].freq_interp(freqs, kind)
 
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
         for model in self.models:
             self[model].push(device)
-        if not dtype: self.device = device
+        if not dtype:
+            self.device = device
+            if self.index is not None:
+                for k, v in self.index.items():
+                    self.index[k] = (utils.push(v[0], device),
+                                     utils.push(v[1], device))
+
+
+def ang_index(theta, phi, theta_min=None, theta_max=None, phi_min=None, phi_max=None):
+    """
+    Given two theta (co-lat) and phi (azimuth) arrays and possible cuts in theta and phi,
+    return an integer indexing tensor on the theta, phi arrays
+
+    Parameters
+    ----------
+    theta : array
+        Colatitude in rad or degree
+    phi : array
+        Azimuth in rad or degree
+    theta_min, theta_max : float
+        Constraints on theta
+    phi_min, phi_max : float
+        Constraints on phi
+
+    Returns
+    -------
+    tensor
+    """
+    idx = torch.ones(len(theta), dtype=bool)
+    if phi_min:
+        idx = idx & (phi >= phi_min)
+    if phi_max:
+        idx = idx & (phi <= phi_max)
+    if theta_min:
+        idx = idx & (theta >= theta_min)
+    if theta_max:
+        idx = idx & (theta <= theta_max)
+
+    return torch.where(idx)[0]
 
 
 def read_catalogue(catfile, freqs=None, device=None,
