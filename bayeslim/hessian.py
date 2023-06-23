@@ -20,6 +20,10 @@ class BaseMat(object):
         pass
 
     @abstractmethod
+    def mat_mat_mul(self, mat, transpose=False):
+        pass
+
+    @abstractmethod
     def to_dense(self, **kwargs):
         pass
 
@@ -86,6 +90,28 @@ class DenseMat(BaseMat):
         H = H.conj() if transpose and self._complex else H
         return H @ vec
 
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        """
+        Matrix-matrix multiplication
+
+        Parameters
+        ----------
+        mat : tensor
+            Must have shape of (self.shape[1], M)
+            where M is any integer if right == False
+            otherwise of shape (M, self.shape[0])
+        transpose : bool, optional
+            If True, take (complex) transpose of self.H
+            before multiplication
+
+        Returns
+        -------
+        tensor
+        """
+        H = self.H.T if transpose else self.H
+        H = H.conj() if transpose and self._complex else H
+        return H @ mat
+
     def to_dense(self, transpose=False):
         """
         Return a dense form of the matrix
@@ -96,7 +122,10 @@ class DenseMat(BaseMat):
         return H
 
     def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec, **kwargs)
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, **kwargs)
 
     def push(self, device):
         """
@@ -137,6 +166,7 @@ class DiagMat(BaseMat):
         """
         self.size = size
         self.diag = diag
+        self._complex = torch.is_complex(diag)
         self.dtype = diag.dtype
         self.device = diag.device
 
@@ -144,22 +174,50 @@ class DiagMat(BaseMat):
     def shape(self):
         return (self.size, self.size)
 
-    def mat_vec_mul(self, vec, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, **kwargs):
         """
         Matrix-vector multiplication
         """
-        return self.diag * vec
+        diag = self.diag
+        if transpose and self._complex:
+            diag = diag.conj()
+        return diag * vec
+
+    def mat_mat_mul(self, mat, **kwargs):
+        """
+        Matrix-matrix multiplication
+
+        Parameters
+        ----------
+        mat : tensor
+            Must have shape of (self.size, M)
+            where M is any integer
+
+        Returns
+        -------
+        tensor
+        """
+        diag = self.diag
+        if transpose and self._complex:
+            diag = diag.conj()
+        return diag[:, None] * mat
 
     def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec)
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec)
+        else:
+            return self.mat_mat_mul(vec)
 
-    def to_dense(self, **kwargs):
+    def to_dense(self, transpose=False, **kwargs):
         """
         Return a dense representation of the matrix
         """
         diag = torch.atleast_1d(self.diag)
         if len(diag) < self.size:
             diag = torch.ones(self.size, dtype=self.dtype, device=self.device) * self.diag
+
+        if transpose and self._complex:
+            diag = diag.conj()
 
         return torch.diag(diag)
 
@@ -201,7 +259,8 @@ class SparseMat(BaseMat):
             The right-hand eigenmodes of shape (Ncols, Nmodes),
             if hermitian, will throw this away and use U.T instead
         Hdiag : tensor, optional
-            The starting diagonal of the matrix, default is zeros
+            The starting diagonal of the matrix, default is zeros.
+            This should have ndim=1 and length of min(Nrows, Ncols).
         hermitian : bool, optional
             If the underlying matrix being modeled can be assumed
             to be hermitian.
@@ -266,6 +325,50 @@ class SparseMat(BaseMat):
 
         return out
 
+    def mat_mat_mul(self, mat, transpose=False):
+        """
+        Matrix-matrix multiplication
+
+        Parameters
+        ----------
+        mat : tensor
+            Must have shape (self.shape[1], M)
+        transpose : bool, optional
+            If True, take (complex) transpose of self.U
+            before multiplication, in which case mat
+            must have shape of (self.shape[0], M)
+
+        Returns
+        -------
+        tensor
+        """
+        if not transpose:
+            # get right-hand modes
+            V = self.V if not self.hermitian else self.U.T
+            V = V.conj() if self.hermitian and self._complex else V
+
+            # get left-hand modes
+            U = self.U
+
+        else:
+            # get right-hand modes
+            V = self.U.T
+            V = V.conj() if self._complex else V
+
+            # get left-hand modes
+            U = self.V.T if not self.hermitian else self.U
+            U = U.conj() if self.hermitian and self._complex else U
+
+        # multiply by left-hand and right-hand modes
+        assert V is not None
+        out = U @ (V @ mat)
+
+        if self.Hdiag is not None:
+            N = len(self.Hdiag)
+            out[:N] += self.Hdiag[:, None] * mat[:N]
+
+        return out
+
     def to_dense(self, transpose=False):
         """
         Return a dense form of the matrix
@@ -283,7 +386,10 @@ class SparseMat(BaseMat):
         return out
 
     def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec, **kwargs)
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, **kwargs)
 
     def push(self, device):
         """
@@ -333,8 +439,15 @@ class ZeroMat(BaseMat):
         size = self.shape[0] if not transpose else self.shape[1]
         return torch.zeros(size, device=self.device, dtype=self.dtype)
 
+    def mat_mat_mul(self, mat, transpose=False):
+        size = self.shape[0] if not transpose else self.shape[1]
+        return torch.zeros((size, mat.shape[1]), device=self.device, dtype=self.dtype)
+
     def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec, **kwargs)
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, **kwargs)
 
     def to_dense(self, transpose=False):
         shape = self.shape if not transpose else self.shape[::-1]
@@ -387,8 +500,17 @@ class TransposedMat(BaseMat):
         """
         return self._matobj.mat_vec_mul(vec, transpose=transpose==False)
 
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        """
+        Matrix-matrix multiplication
+        """
+        return self._matobj.mat_mat_mul(mat, transpose=transpose==False)
+
     def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec, **kwargs)
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, **kwargs)
 
     def to_dense(self, transpose=False):
         """
@@ -424,7 +546,7 @@ class TransposedMat(BaseMat):
 
 class PartitionedMat(BaseMat):
     """
-    A square matrix that has been partitioned into
+    A square (possibly symmetric) matrix that has been partitioned into
     on-diagonal blocks and their correponding off-diagonal
     blocks, using DenseMat, DiagMat, SparseMat.
 
@@ -444,14 +566,14 @@ class PartitionedMat(BaseMat):
     [A11 @ p1, A21 @ p1] and the second computes
     [A12 @ p2, A22 @ p2]. Each component (A11, A12, A22)
     can be stored as DenseMat, DiagMat, SparseMat.
-    Note A21 is just a transpose of A12.
+    Note if symmetric=True then A21 is just a transpose of A12.
 
     The user should feed a blocks dictionary which holds
     as a key each unique component str (e.g. '11', '22', '12', '33', ...)
     and its value is a *Mat object.
     If an off-diagonal component is missing it is assumed zero.
     """
-    def __init__(self, blocks):
+    def __init__(self, blocks, symmetric=True):
         """
         Setup the matrix columns given a blocks dictionary
         e.g. of the form
@@ -471,6 +593,14 @@ class PartitionedMat(BaseMat):
         ----------
         blocks : dict
             A dictionary holding the various independent blocks of the matrix.
+            with 'ij' string key and BaseMat value
+        symmetric : bool, optional
+            If True (default), then blocks should only hold one of the
+            off-diagonal components per unique 'ij' combination.
+            I.e. you should only provide '12' and not '21', and
+            '13' and not '31', and so on.
+            If False, you should provide all off-diagonal components,
+            otherwise missing ones are assumed ZeroMat.
         """
         # get all the on-diagonal matrices
         ondiag_keys = sorted([k for k in blocks if k[0] == k[1]])
@@ -481,6 +611,7 @@ class PartitionedMat(BaseMat):
         self._shape = (length, length)
         self.dtype = blocks[ondiag_keys[0]].dtype
         self.device = blocks[ondiag_keys[0]].device
+        self.symmetric = symmetric
 
         self.matcols, self.vec_idx = [], []
         size = 0
@@ -494,18 +625,21 @@ class PartitionedMat(BaseMat):
             block_keys = ["{}{}".format(j[0], k[1]) for j in ondiag_keys]
 
             # now fill a list with these matrix objects
-            mats, opts = [], []
+            mats = []
             for j, bk in enumerate(block_keys):
-                # if this is an off-diag and its not here, make it a zeromat
-                if bk not in blocks and bk[::-1] not in blocks:
+                if bk in blocks:
+                    # append this block to mats
+                    mats.append(blocks[bk])
+
+                elif bk[::-1] in blocks and self.symmetric:
+                    # transpose this block b/c self is symmetric
+                    mats.append(TransposedMat(blocks[bk[::-1]]))
+
+                else:
+                    # make this a ZeroMat
                     shape = (blocks["{}{}".format(bk[0],bk[0])].shape[0], blocks[k].shape[0])
                     blocks[bk] = ZeroMat(shape, dtype=self.dtype, device=self.device)
-
-                # append this block to mats
-                if bk in blocks:
                     mats.append(blocks[bk])
-                else:
-                    mats.append(TransposedMat(blocks[bk[::-1]]))
 
             # now append the entire MatColumn to matcols
             self.matcols.append(MatColumn(mats))
@@ -514,7 +648,7 @@ class PartitionedMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, **kwargs):
         """
         Return the matrix multiplied by a vector
 
@@ -526,19 +660,49 @@ class PartitionedMat(BaseMat):
         -------
         tensor
         """
+        if transpose:
+            return self.to_transpose()(vec)
+
         out = torch.zeros(len(vec), dtype=vec.dtype, device=vec.device)
         for i, matcol in enumerate(self.matcols):
             out += matcol(vec[self.vec_idx[i]])
 
         return out
 
-    def __call__(self, vec, **kwargs):
-        return self.mat_vec_mul(vec)
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        """
+        Return the matrix multiplied by a matrix
 
-    def to_dense(self, **kwargs):
+        Parameters
+        ----------
+        mat : tensor
+            ndim=2 matrix of shape (self.shape[1], M)
+
+        Returns
+        -------
+        tensor
+        """
+        if transpose:
+            return self.to_transpose()(mat)
+
+        out = torch.zeros(mat.shape, dtype=mat.dtype, device=mat.device)
+        for i, matcol in enumerate(self.matcols):
+            out += matcol(mat[self.vec_idx[i]])
+
+        return out
+
+    def __call__(self, vec, transpose=False, **kwargs):
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, transpose=transpose, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, transpose=transpose, **kwargs)
+
+    def to_dense(self, transpose=False, **kwargs):
         """
         Return a dense representation of the matrix
         """
+        if transpose:
+            return self.to_transpose().to_dense()
         out = torch.zeros(self.shape, dtype=self.dtype, device=self.device)
         size = 0
         for i, matcol in enumerate(self.matcols):
@@ -546,6 +710,22 @@ class PartitionedMat(BaseMat):
             size += matcol.shape[1]
 
         return out
+
+    def to_transpose(self):
+        """
+        Return a transposed copy of self, having re-ordered
+        the ColMat objects such that the object is transposed
+
+        Returns
+        -------
+        ParitionedMat object
+        """
+        blocks = {}
+        for i, matcol in enumerate(self.matcols):
+            for j, mat in enumerate(matcol.mats):
+                blocks['{}{}'.format(i+1, j+1)] = TransposedMat(mat)
+
+        return PartitionedMat(blocks, symmetric=self.symmetric)
 
     def push(self, device):
         """
@@ -584,8 +764,9 @@ class MatColumn:
         Parameters
         ----------
         mats : list
-            A list of *Mat objects that represent
-            a single column of a partitioned matrix
+            A list of BaseMat subclasses that represent
+            a single column of a partitioned matrix.
+            Each object must have the same Ncols.
         """
         self.mats = mats
 
