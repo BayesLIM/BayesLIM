@@ -597,7 +597,7 @@ def legendre_func(x, l, m, method, x_crit=None, high_prec=True, bc_type=2, deriv
         if m.ndim == 1:
             m = m[:, None]
         # multiply sq_norm back in
-        H *= (1 - x**2)**(-np.atleast_1d(m)/2)
+        H *= (1 - x**2).clip(1e-40)**(-np.atleast_1d(m)/2)
 
     else:
         H = P
