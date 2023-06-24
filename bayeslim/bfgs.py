@@ -4,7 +4,6 @@ loosely modeled after PyTorch's LBFGS implementation [2].
 
 [1] Nocedal & Wright, "Numerical Optimization", (2000) 2nd Ed.
 [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
-[3] Jiang, Byrd, Eskow & Schnabel, "Preconditioned LBFGS", (2004)
 """
 from abc import abstractmethod
 from collections import deque
@@ -25,7 +24,7 @@ class BFGS:
         - no per-parameter options
         - all parameters must be on a single device
 
-    At each optimization step, we update the approx inverse Hessian (H) as
+    For each optimization step, we update the inverse Hessian (H) as
 
         H_k+1 = V_k^T H_k V_k + rho_k s_k s_k^T
 
@@ -51,7 +50,6 @@ class BFGS:
 
     [1] Nocedal & Wright, "Numerical Optimization", (2000) 2nd Ed.
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
-    [3] Jiang, Byrd, Eskow & Schnabel, "Preconditioned LBFGS", (2004)
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
                  tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn=None):
@@ -92,7 +90,7 @@ class BFGS:
         self._numel_cache = None
         self._alpha = None
         self._rho = None
-        self._s, self._y = None, None
+        self._s, self._y, self._g = None, None, None
         self._exit = None
 
         if H0 is not None:
@@ -180,6 +178,7 @@ class BFGS:
 
         # cache these for debugging, generally of negligible size
         self._s, self._y, self._rho, self._alpha = s, y, rho, alpha
+        self._g = self.gather_flat_grad()
 
         # apply H update: requires sufficient curvature
         if (1. / rho) > 1e-10:
@@ -242,6 +241,7 @@ class BFGS:
             flat_grad = self.gather_flat_grad()
         else:
             loss, flat_grad = self._loss, self._flat_grad
+        prev_loss, prev_grad = None, None
 
         # evaluate optimum condition
         opt_cond = flat_grad.abs().max() <= self.tolerance_grad
@@ -276,7 +276,7 @@ class BFGS:
 
             # now do the line search
             prev_loss = loss
-            prev_flat_grad = flat_grad
+            prev_grad = flat_grad
             if self.line_search_fn is None:
                 # no search function: just use fixed learning rate
                 self.update_params(alpha, p)
@@ -329,7 +329,7 @@ class BFGS:
             # update inverse hessian
             #############################
             s = alpha * p
-            y = flat_grad - prev_flat_grad
+            y = flat_grad - prev_grad
             self.update_hessian(s, y, alpha=alpha)
 
             n_iter += 1
@@ -348,7 +348,6 @@ class LBFGS(BFGS):
 
     [1] Nocedal & Wright, "Numerical Optimization", (2000) 2nd Ed.
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
-    [3] Jiang, Byrd, Eskow & Schnabel, "Preconditioned LBFGS", (2004)
 
     Notes:
         - no per-parameter options
@@ -396,6 +395,7 @@ class LBFGS(BFGS):
         self.history_size = history_size
         # deque has O(1) popleft() and append(), but O(n) index, good for storing s, y
         self._s, self._y = deque(), deque()
+        # note that self._Hy (H_k @ y_k)is only needed if update_Hdiag=True
         # rho and alpha will be float-lists, so performance isn't as critical
         self._rho, self._alpha = [], []
         self._Hdiag = None
@@ -417,7 +417,6 @@ class LBFGS(BFGS):
         """
         # compute rho
         rho = 1 / (y @ s)
-        self._alpha.append(alpha)
 
         # check if starting Hessian needs defining
         if self.H is None:
@@ -434,10 +433,14 @@ class LBFGS(BFGS):
                 self._s.popleft()
                 self._y.popleft()
                 self._rho = self._rho[1:]
+                self._alpha = self._alpha[1:]
 
+            # store new items
             self._s.append(s)
             self._y.append(y)
             self._rho.append(rho)
+            self._alpha.append(alpha)
+            self._g = self.gather_flat_grad()
 
             # check if we should update diagonal
             if self.update_Hdiag:
@@ -561,6 +564,303 @@ def implicit_to_dense(H0, s, y):
         B.update_hessian(s_k, y_k)
 
     return B.H
+
+
+class FactoredInvHessian:
+    """
+    An object for storing an implicitly factored inverse Hessian via
+    [1] Brodlie et al. 1973, "Rank One and Rank Two Corrections..."
+    """
+    def __init__(self, s, y, g_end, alpha, Hy, H0=None, L0=None, rank2=True):
+        """
+        Parameters
+        ----------
+        s : list
+            List of positional pairs, x_{k+1} - x_{k}
+        y : list
+            List of gradient pairs, g_{k+1} - g_{k}
+        g_end : tensor
+            Ending gradient at x_{k+1}
+        alpha : list
+            List of line search parameters, alpha_{k}
+        Hy : list
+            List of inv. hessian vector products
+        H0 : tensor or BaseMat object
+            Initial inv. hessian
+        L0 : tensor or BaseMat object
+            Initial cholesky of inv. hessian
+        rank2 : bool, optional
+            If True use symmetric rank-2 updates (BFGS),
+            otherwise use rank-1 updates (SR1)
+        """
+        self.H0, self.L0, self.rank2 = H0, L0, rank2
+        self.m = len(s)
+        self.N = len(s[0])
+        assert len(s) == len(y) == len(alpha) == len(Hy)
+
+        # get gradients given y and g_end
+        g = []
+        for i in range(self.m):
+            g.append(g_end - y[self.m-i-1])
+            g_end = g[-1]
+        g = g[::-1]
+
+        # populate u and v
+        self.u, self.v = [], []
+        for i, (_s, _y, _g, _Hy, _a) in enumerate(zip(s, y, g, Hy, alpha)):
+            _u, _v, spd = factor_pairs(_s, _y, _g, _a, _Hy, rank2=rank2)
+            if spd:
+                self.u.append(_u)
+                self.v.append(_v)
+        
+    def hvp(self, vec):
+        """
+        Take inv. hessian vector product
+
+        Parameters
+        ----------
+        vec : tensor
+
+        Returns
+        -------
+        tensor
+        """
+        return factored_hvp(vec, self.H0, self.u, self.v)
+
+    def lvp(self, vec):
+        """
+        Take cholesky vector product
+
+        Parameters
+        ----------
+        vec : tensor
+
+        Returns
+        -------
+        tensor
+        """
+        return factored_lvp(vec, self.L0, self.u, self.v)
+
+    def to_dense(self, hess=True):
+        """
+        Create a fully dense copy of the inv. hessian or its (dense) cholesky
+
+        Parameters
+        ----------
+        hess : bool, optional
+            If True, return dense copy of inv. hessian, otherwise
+            return dense copy of its cholesky
+
+        Returns
+        -------
+        tensor
+        """
+        if hess:
+            if self.H0 is None:
+                H = torch.eye(self.N)
+            else:
+                H = self.H0.to_dense()
+            for u, v in zip(self.u, self.v):
+                V = torch.eye(self.N) + torch.outer(u, v)
+                H = V @ H @ V.T
+            return H
+        else:
+            if self.L0 is None:
+                L = torch.eye(self.N)
+            else:
+                L = self.L0.to_dense()
+            for u, v in zip(self.u, self.v):
+                V = torch.eye(self.N) + torch.outer(u, v)
+                L = V @ L
+            return L
+
+    def __call__(self, vec):
+        """Cholesky vector product"""
+        return self.lvp(vec)
+
+
+
+def factor_pairs(s_k, y_k, g_k, alpha_k, Hy_k, pos=True, rank2=True):
+    """
+    Convert s and y pairs to u, v pairs following
+    [1], of the real-product form
+
+        H_{k+1} = (I + u v^T) H_{k} (I + u v^T)^T
+
+    [1] Brodlie et al. 1973, "Rank One and Rank Two Corrections..."
+    
+    Parameters
+    ----------
+    s_k : tensor
+        Positional difference pair, x_{k+1} - x_{k}
+    y_k : tensor
+        Gradient difference pair, g_{k+1} - g_{k}
+    g_k : tensor
+        Gradient tensor, g_{k}
+    alpha_k : float
+        Estimated line search parameter from x_{k} -> x_{k+1}
+    Hy_k : tensor
+        The inv. hessian vector product of H_k @ y_k
+    pos : bool, optional
+        Whether we take the positive or negative quadratic solution,
+        see [3].
+    rank2 : bool, optional
+        If True, use the rank-2 (aka BFGS) inverse Hessian update,
+        otherwise use the rank-1 (aka SR1) inverse Hess update.
+
+    Returns
+    -------
+    u : tensor
+    v : tensor
+    spd : bool
+        If True, this update is symmetric positive definite
+    """
+    # get s dot y (this is also just 1 / rho_k, but its usually trivial...)
+    sy_k = s_k @ y_k
+
+    # get H^-1 s and s^T H^-1 s
+    Hs_k = -alpha_k * g_k
+    sHs_k = s_k @ Hs_k
+
+    # compute y dot H dot y
+    yHy_k = y_k @ Hy_k
+
+    # get positive definite update checks
+    if rank2:
+        # make sure update is SPD
+        spd = sy_k > 0
+        spd = spd & ((sy_k - yHy_k) <= sy_k)
+
+        # get u_k
+        u_k = s_k / sy_k
+
+        # get v_k
+        sign = 1 if pos else -1
+        v_k = sign * torch.sqrt(sy_k / sHs_k) * Hs_k - y_k
+
+    else:
+        # make sure update is SPD
+        spd = ((sHs_k - sy_k) / (sy_k - yHy_k)) >= 0
+
+        # get u_k
+        sign = 1 if pos else -1
+        numer = -1 + sign * torch.sqrt((sHs_k - sy_k) / (sy_k - yHy_k))
+        denom = sHs_k - 2 * sy_k + yHy_k
+        u_k = numer / denom * (s_k - Hy_k)
+
+        # get v_k
+        v_k = Hs_k - y_k
+
+    return u_k, v_k, spd
+
+
+def factored_hvp(vec, H0, u, v):
+    """
+    Computed the hessian vector product of an implicitly
+    modeled, factored hessian via [3].
+
+    Parameters
+    ----------
+    vec : tensor
+        1-dim tensor (or 2-dim matrix)
+    H0 : tensor or BaseMat object
+        Starting hessian
+    u : list
+        List of length m (memory) holding u vectors
+        See factor_pairs()
+    v : list
+        List of length m (memory) holding v vectors
+        See factor_pairs()
+
+    Returns
+    -------
+    tensor
+    """
+    is_vec = vec.ndim == 1
+
+    # traverse right-onion shell
+    for u_k, v_k in zip(reversed(u), reversed(v)):
+        if is_vec:
+            # treat vec as ndim=1 vector
+            vec = vec + v_k * (u_k @ vec)
+        else:
+            # treat vec as ndim=2 matrix
+            vec = vec + v_k[:, None] * (u_k @ vec)
+
+    # compute product with H0
+    if H0 is None:
+        pass
+    elif isinstance(H0, torch.Tensor):
+        if H0.ndim < 2:
+            if is_vec:
+                vec = H0 * vec
+            else:
+                vec = H0[:, None] * vec
+        else:
+            vec = H0 @ vec
+    else:
+        vec = H0(vec)
+
+    # traverse left-onion shell
+    for u_k, v_k in zip(u, v):
+        if is_vec:
+            vec = vec + u_k * (v_k @ vec)
+        else:
+            vec = vec + u_k[:, None] * (v_k @ vec)
+
+    return vec
+
+
+def factored_lvp(vec, L0, u, v):
+    """
+    Computed the (dense) cholesky vector product of an
+    implicitly modeled, factored (dense) cholesky via [3].
+    Note that we use the term "dense" cholesky b/c while
+    we decompose H = L L^T, the A is often in practice 
+    not triangular but is dense.
+
+    Parameters
+    ----------
+    vec : tensor
+        1-dim tensor (or 2-dim matrix)
+    L0 : tensor or BaseMat object
+        Starting (dense) cholesky. Note this should match
+        H0 used to construct the u, v chain.
+    u : list
+        List of length m (memory) holding u vectors
+        See factor_pairs()
+    v : list
+        List of length m (memory) holding v vectors
+        See factor_pairs()
+
+    Returns
+    -------
+    tensor
+    """
+    is_vec = vec.ndim == 1
+
+    # compute product with L0
+    if L0 is None:
+        pass
+    elif isinstance(L0, torch.Tensor):
+        if L0.ndim < 2:
+            if is_vec:
+                vec = L0 * vec
+            else:
+                vec = L0[:, None] * vec
+        else:
+            vec = L0 @ vec
+    else:
+        vec = L0(vec)
+
+    # traverse left-onion shell
+    for u_k, v_k in zip(u, v):
+        if is_vec:
+            vec = vec + u_k * (v_k @ vec)
+        else:
+            vec = vec + u_k[:, None] * (v_k @ vec)
+
+    return vec
 
 
 def cubic_interpolate(x1, f1, g1, x2, f2, g2, bounds=None):
