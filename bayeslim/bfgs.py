@@ -52,7 +52,8 @@ class BFGS:
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
-                 tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn=None):
+                 tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn=None,
+                 store_Hy=False):
         """
         Parameters
         ----------
@@ -75,6 +76,9 @@ class BFGS:
             value/parameter changes
         line_search_fn : str, optional
             Either 'strong_wolfe' or None (just use lr)
+        store_Hy : bool, optional
+            If True, compute and store the Hessian-y vector product
+            as self._Hy. Needed for Factored LBFGS.
         """
         self.lr = lr
         self.max_iter = max_iter
@@ -82,6 +86,7 @@ class BFGS:
         self.tolerance_grad = tolerance_grad
         self.tolerance_change = tolerance_change
         self.line_search_fn = line_search_fn
+        self.store_Hy = store_Hy
         self.params = list(params)
         self.func_evals = 0
         self.n_iter = 0
@@ -90,7 +95,7 @@ class BFGS:
         self._numel_cache = None
         self._alpha = None
         self._rho = None
-        self._s, self._y, self._g = None, None, None
+        self._s, self._y, self._g, self._Hy = None, None, None, None
         self._exit = None
 
         if H0 is not None:
@@ -176,10 +181,6 @@ class BFGS:
 
         rho = 1. / (y @ s)
 
-        # cache these for debugging, generally of negligible size
-        self._s, self._y, self._rho, self._alpha = s, y, rho, alpha
-        self._g = self.gather_flat_grad()
-
         # apply H update: requires sufficient curvature
         if (1. / rho) > 1e-10:
             # perform BFGS update
@@ -193,6 +194,13 @@ class BFGS:
             # re-use allocated V for bias update
             torch.outer(rho * s, s, out=V)
             self.H += V
+
+            # cache these for debugging, generally of negligible size
+            self._s, self._y, self._rho, self._alpha = s, y, rho, alpha
+            if self.store_Hy:
+                self._Hy = self.hvp(y)
+            self._g = self.gather_flat_grad()
+
 
     def hvp(self, vec):
         """
@@ -355,7 +363,7 @@ class LBFGS(BFGS):
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
                  history_size=100, tolerance_grad=1e-10, tolerance_change=1e-12,
-                 line_search_fn=None, update_Hdiag=True):
+                 line_search_fn=None, store_Hy=False, update_Hdiag=True):
         """
         Parameters
         ----------
@@ -384,18 +392,20 @@ class LBFGS(BFGS):
             value/parameter changes
         line_search_fn : str, optional
             Either 'strong_wolfe' or None (just use lr)
+        store_Hy : bool, optional
+            If True, compute and store the Hessian-y vector product as self._Hy.
+            Needed for factored LBFGS.
         update_Hdiag : bool, optional
             If True, multiply the starting Hessian with Eqn. 7.20 of [1]
             for every step.
         """
         assert not isinstance(H0, torch.Tensor), "H0 should be a hessian.BaseMat subclass"
         super().__init__(params, H0=H0, lr=lr, max_iter=max_iter,
-                         max_ls_eval=max_ls_eval, tolerance_grad=tolerance_grad,
+                         max_ls_eval=max_ls_eval, tolerance_grad=tolerance_grad, store_Hy=store_Hy,
                          tolerance_change=tolerance_change, line_search_fn=line_search_fn)
         self.history_size = history_size
         # deque has O(1) popleft() and append(), but O(n) index, good for storing s, y
-        self._s, self._y = deque(), deque()
-        # note that self._Hy (H_k @ y_k)is only needed if update_Hdiag=True
+        self._s, self._y, self._Hy = deque(), deque(), deque()
         # rho and alpha will be float-lists, so performance isn't as critical
         self._rho, self._alpha = [], []
         self._Hdiag = None
@@ -428,12 +438,18 @@ class LBFGS(BFGS):
 
         # only update if sufficient curvature
         if (1. / rho) > 1e-10:
+            # compute hvp
+            if self.store_Hy:
+                Hy = self.hvp(y)
+
             # if memory limit reached, pop oldest entry
             if len(self._s) == self.history_size:
                 self._s.popleft()
                 self._y.popleft()
                 self._rho = self._rho[1:]
                 self._alpha = self._alpha[1:]
+                if self.store_Hy:
+                    self._Hy.popleft()
 
             # store new items
             self._s.append(s)
@@ -441,6 +457,8 @@ class LBFGS(BFGS):
             self._rho.append(rho)
             self._alpha.append(alpha)
             self._g = self.gather_flat_grad()
+            if self.store_Hy:
+                self._Hy.append(Hy)
 
             # check if we should update diagonal
             if self.update_Hdiag:
@@ -569,9 +587,9 @@ def implicit_to_dense(H0, s, y):
 class FactoredInvHessian:
     """
     An object for storing an implicitly factored inverse Hessian via
-    [1] Brodlie et al. 1973, "Rank One and Rank Two Corrections..."
+    Brodlie et al. 1973, "Rank One and Rank Two Corrections..."
     """
-    def __init__(self, s, y, g_end, alpha, Hy, H0=None, L0=None, rank2=True):
+    def __init__(self, s, y, g_end, alpha, Hy=None, H0=None, L0=None, rank2=True):
         """
         Parameters
         ----------
@@ -583,8 +601,11 @@ class FactoredInvHessian:
             Ending gradient at x_{k+1}
         alpha : list
             List of line search parameters, alpha_{k}
-        Hy : list
-            List of inv. hessian vector products
+        Hy : list, optional
+            List of inv. hessian vector products with y.
+            If rank2 = True this only checks that updates
+            are SPD, but is not strictly necessary, although
+            it is recommended. For rank2=False this is needed.
         H0 : tensor or BaseMat object
             Initial inv. hessian
         L0 : tensor or BaseMat object
@@ -593,10 +614,15 @@ class FactoredInvHessian:
             If True use symmetric rank-2 updates (BFGS),
             otherwise use rank-1 updates (SR1)
         """
+        ## TODO: still not sure why this doesn't exactly match
+        ## implicit_to_dense() for LBFGS s, y lists that exceed
+        ## initial history_size
         self.H0, self.L0, self.rank2 = H0, L0, rank2
+        if H0 is not None and L0 is None:
+            raise ValueError("If H0 is fed, L0 should be too")
         self.m = len(s)
         self.N = len(s[0])
-        assert len(s) == len(y) == len(alpha) == len(Hy)
+        assert len(s) == len(y) == len(alpha)
 
         # get gradients given y and g_end
         g = []
@@ -606,13 +632,15 @@ class FactoredInvHessian:
         g = g[::-1]
 
         # populate u and v
+        if Hy is None:
+            Hy = [None for _s in s]
         self.u, self.v = [], []
-        for i, (_s, _y, _g, _Hy, _a) in enumerate(zip(s, y, g, Hy, alpha)):
-            _u, _v, spd = factor_pairs(_s, _y, _g, _a, _Hy, rank2=rank2)
+        for i, (_s, _y, _g, _a, _Hy) in enumerate(zip(s, y, g, alpha, Hy)):
+            _u, _v, spd = factor_pairs(_s, _y, _g, _a, _Hy, rank2=rank2, pos=False)
             if spd:
                 self.u.append(_u)
                 self.v.append(_v)
-        
+
     def hvp(self, vec):
         """
         Take inv. hessian vector product
@@ -679,7 +707,6 @@ class FactoredInvHessian:
         return self.lvp(vec)
 
 
-
 def factor_pairs(s_k, y_k, g_k, alpha_k, Hy_k, pos=True, rank2=True):
     """
     Convert s and y pairs to u, v pairs following
@@ -723,13 +750,17 @@ def factor_pairs(s_k, y_k, g_k, alpha_k, Hy_k, pos=True, rank2=True):
     sHs_k = s_k @ Hs_k
 
     # compute y dot H dot y
-    yHy_k = y_k @ Hy_k
+    if Hy_k is not None:
+        yHy_k = y_k @ Hy_k
+    else:
+        assert rank2 == True
 
     # get positive definite update checks
     if rank2:
         # make sure update is SPD
         spd = sy_k > 0
-        spd = spd & ((sy_k - yHy_k) <= sy_k)
+        if Hy_k is not None:
+            spd = spd & ((sy_k - yHy_k) <= sy_k)
 
         # get u_k
         u_k = s_k / sy_k
