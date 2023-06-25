@@ -47,6 +47,18 @@ class BaseMat(object):
         """
         pass
 
+    @abstractmethod
+    def __mul__(self, other):
+        pass
+
+    @abstractmethod
+    def __rmul__(self, other):
+        pass
+
+    @abstractmethod
+    def __imul__(self, other):
+        pass
+
 
 class DenseMat(BaseMat):
     """
@@ -147,6 +159,16 @@ class DenseMat(BaseMat):
         """
         self.H *= scalar
 
+    def __mul__(self, other):
+        return DenseMat(self.H * other)
+
+    def __rmul__(self, other):
+        return DenseMat(other * self.H)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
 
 class DiagMat(BaseMat):
     """
@@ -183,7 +205,7 @@ class DiagMat(BaseMat):
             diag = diag.conj()
         return diag * vec
 
-    def mat_mat_mul(self, mat, **kwargs):
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
         """
         Matrix-matrix multiplication
 
@@ -239,6 +261,16 @@ class DiagMat(BaseMat):
         scalar : float
         """
         self.diag *= scalar
+
+    def __mul__(self, other):
+        return DiagMat(self.size, self.diag * other)
+
+    def __rmul__(self, other):
+        return DiagMat(self.size, other * self.diag)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
 
 
 class SparseMat(BaseMat):
@@ -414,6 +446,41 @@ class SparseMat(BaseMat):
         scalar : float
         """
         self.U *= scalar
+        if self.Hdiag is not None:
+            self.Hdiag *= scalar
+
+    def __mul__(self, other):
+        U = self.U
+        V = self.V
+        Hdiag = self.Hdiag
+        if V is not None:
+            V = V * other
+        else:
+            if isinstance(other, torch.Tensor):
+                U = other[:, None] * U
+            else:
+                U = U * other
+        if Hdiag is not None:
+            Hdiag = Hdiag * other
+        return SparseMat(self.shape, U, V=V, Hdiag=Hdiag,
+                         hermitian=self.hermitian)
+
+    def __rmul__(self, other):
+        U = self.U
+        V = self.V
+        Hdiag = self.Hdiag
+        if isinstance(other, torch.Tensor):
+            U = other[:, None] * U
+        else:
+            U = U * other
+        if Hdiag is not None:
+            Hdiag = Hdiag * other
+        return SparseMat(self.shape, U, V=V, Hdiag=Hdiag,
+                         hermitian=self.hermitian)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
 
 
 class ZeroMat(BaseMat):
@@ -469,6 +536,15 @@ class ZeroMat(BaseMat):
         scalar : float
         """
         pass
+
+    def __mul__(self, other):
+        return ZeroMat(self.shape, device=self.device, dtype=self.dtype)
+
+    def __rmul__(self, other):
+        return ZeroMat(self.shape, device=self.device, dtype=self.dtype)
+
+    def __imul__(self, other):
+        return self
 
 
 class TransposedMat(BaseMat):
@@ -542,6 +618,16 @@ class TransposedMat(BaseMat):
         if scalar.is_complex():
             scalar = scalar.conj()
         self._matobj.scalar_mul(scalar)
+
+    def __mul__(self, other):
+        return TransposedMat(self._matobj * other)
+
+    def __rmul__(self, other):
+        return TransposedMat(other * self._matobj)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
 
 
 class PartitionedMat(BaseMat):
@@ -748,6 +834,24 @@ class PartitionedMat(BaseMat):
         for matcol in self.matcols:
             matcol.scalar_mul(scalar)
 
+    def __mul__(self, other):
+        blocks = {}
+        for i, matcol in enumerate(self.matcols):
+            for j, mat in enumerate(matcol.mats):
+                blocks['{}{}'.format(j+1, i+1)] = mat * other
+        return PartitionedMat(blocks, symmetric=self.symmetric)
+
+    def __rmul__(self, other):
+        blocks = {}
+        for i, matcol in enumerate(self.matcols):
+            for j, mat in enumerate(matcol.mats):
+                blocks['{}{}'.format(j+1, i+1)] = other * mat
+        return PartitionedMat(blocks, symmetric=self.symmetric)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
 
 class MatColumn:
     """
@@ -812,6 +916,16 @@ class MatColumn:
         for mat in self.mats:
             mat.scalar_mul(scalar)
 
+    def __mul__(self, other):
+        return MatColumn([m * other for m in self.mats])
+
+    def __rmul__(self, other):
+        return MatColumn([other * m for m in self.mats])
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
 
 class MatSum:
     """
@@ -858,6 +972,16 @@ class MatSum:
         """
         for mat in self.mats:
             mat.scalar_mul(scalar)
+
+    def __mul__(self, other):
+        return MatSum([m * other for m in self.mats])
+
+    def __rmul__(self, other):
+        return MatSum([other * m for m in self.mats])
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
 
 
 class MatDict:
