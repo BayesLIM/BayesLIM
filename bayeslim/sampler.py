@@ -287,25 +287,25 @@ class HMC(SamplerBase):
                     hess[k] = linalg.cholesky_inverse(cov[k])[0]
                 elif inv == 'inv':
                     hess[k] = torch.linalg.pinv(cov[k], hermitian=True, rcond=rcond)
+                else:
+                    raise NameError("didn't recognize inv={}".format(inv))
 
         # if passed nothing, assign hess as identity
         elif cov is None and hess is None:
-            # assign hess as identity
+            # assign hess as identity (assign as None)
             hess = ParamDict({})
             for k, sparse in sparse_cov.items():
-                if sparse:
-                    hess[k] = torch.ones_like(self.x[k])
-                else:
-                    _x = self.x[k]
-                    hess[k] = torch.eye(_x.nelement(), device=_x.device, dtype=_x.dtype)
+                hess[k] = None
 
         # now get cholesky of hessian
         self.sparse_cov = sparse_cov
         self.chol = ParamDict({})
         self.cov = ParamDict({})
-        self.logdetM = 0
+        self.logdetM = torch.tensor(0.)
         for k in hess:
-            if sparse_cov[k]:
+            if hess[k] is None:
+                _cov, _L = None, None
+            elif sparse_cov[k]:
                 _cov, _L = linalg.cholesky_inverse(hess[k].ravel())
                 _cov, _L = _cov.reshape(hess[k].shape), _L.reshape(hess[k].shape)
             else:
@@ -314,15 +314,21 @@ class HMC(SamplerBase):
             self.chol[k] = _L
             if cov is None:
                 # assign cov if not passed
-                if inv == 'chol':
+                if hess[k] is None:
+                    self.cov[k] = None
+                elif inv == 'chol':
                     self.cov[k] = _cov
                 elif inv == 'pinv':
                     self.cov[k] = torch.linalg.pinv(hess[k], hermitian=True, rcond=rcond)
+                else:
+                    raise NameError("didn't recognize inv={}".format(inv))
             else:
                 # passed cov in function call
                 self.cov[k] = cov[k]
 
-            if sparse_cov[k]:
+            if hess[k] is None:
+                pass
+            elif sparse_cov[k]:
                 self.logdetM += torch.log(torch.prod(hess[k]))
             else:
                 self.logdetM += torch.log(torch.linalg.det(hess[k]))
@@ -348,7 +354,9 @@ class HMC(SamplerBase):
         else:
             K = 0
             for k in p:
-                if self.sparse_cov[k]:
+                if self.cov[k] is None:
+                    K = torch.sum(p[k]**2 / 2)
+                elif self.sparse_cov[k]:
                     K += torch.sum(self.cov[k] * p[k]**2 / 2)
                 else:
                     prav = p[k].ravel()
@@ -408,7 +416,9 @@ class HMC(SamplerBase):
             x = self.x[k]
             N = x.shape.numel()
             momentum = torch.randn(N, device=x.device)
-            if self.sparse_cov[k]:
+            if self.chol[k] is None:
+                p[k] = momentum.reshape(x.shape)
+            elif self.sparse_cov[k]:
                 p[k] = self.chol[k] * momentum.reshape(x.shape)
             else:
                 p[k] = (self.chol[k] @ momentum).reshape(x.shape)
@@ -1284,9 +1294,12 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
     def pos_step(q, p, invmass, eps, sparse_mass):
         if isinstance(q, ParamDict):
             for k in q:
-                pos_step(q[k], p[k], invmass[k], eps[k], sparse_mass[k])
+                imass = None if invmass is None else invmass[k]
+                pos_step(q[k], p[k], imass, eps[k], sparse_mass[k])
         else:
-            if sparse_mass:
+            if invmass is None:
+                q += eps * p
+            elif sparse_mass:
                 q += eps * (invmass * p)
             else:
                 q += eps * (invmass @ p.ravel()).reshape(p.shape)
