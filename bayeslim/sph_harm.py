@@ -135,8 +135,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         # setup multiprocessing
         import multiprocessing
         start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None:
-            multiprocessing.set_start_method('fork') 
+        if start_method is None: multiprocessing.set_start_method('spawn') 
         Njobs = len(m) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -360,8 +359,7 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
         # setup multiprocessing
         import multiprocessing
         start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None:
-            multiprocessing.set_start_method('fork') 
+        if start_method is None: multiprocessing.set_start_method('spawn') 
         Njobs = len(l) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -1007,8 +1005,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         assert kbins is None, "no multiproc necessary if passing kbins"
         import multiprocessing
         start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None:
-            multiprocessing.set_start_method('fork') 
+        if start_method is None: multiprocessing.set_start_method('spawn') 
         Njobs = len(ul) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
