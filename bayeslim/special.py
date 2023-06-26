@@ -104,7 +104,7 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         dPdx = (term1 + term2)
         isf = np.isfinite(norm)
-        dPdx[isf] *= norm[isf]
+        dPdx[:, isf] *= norm[isf]
 
         # correct for change of variables if requested
         if dtheta:
