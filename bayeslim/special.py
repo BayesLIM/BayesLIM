@@ -102,7 +102,9 @@ def Plm(l, m, x, deriv=False, dtheta=True, keepdims=False, high_prec=True,
         term1 = (m - l - 1) * Plm(l+1, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
         term1 *= np.exp(_log_legendre_norm(l, m) - _log_legendre_norm(l+1, m))
         term2 = (l+1) * x * Plm(l, m, x, keepdims=True, sq_norm=sq_norm, high_prec=high_prec)
-        dPdx = norm * (term1 + term2)
+        dPdx = (term1 + term2)
+        isf = np.isfinite(norm)
+        dPdx[isf] *= norm[isf]
 
         # correct for change of variables if requested
         if dtheta:
