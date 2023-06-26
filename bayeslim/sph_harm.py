@@ -134,6 +134,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     if Nproc is not None:
         # setup multiprocessing
         import multiprocessing
+        multiprocessing.set_start_method('fork') 
         Njobs = len(m) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
