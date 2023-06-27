@@ -515,7 +515,7 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
             # this is separable
             T, P = Ylm
             # inflate
-            Y = inflate_Ylm(Ylm, True)
+            Y = inflate_Ylm(Ylm)
             if theta is not None:
                 theta = np.repeat(theta[:, None], P.shape[1], 1).ravel()
         else:
