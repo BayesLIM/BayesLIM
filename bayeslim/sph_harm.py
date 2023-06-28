@@ -477,7 +477,7 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
 
     Parameters
     ----------
-    Ylm : tensor
+    Ylm : tensor or tuple
         Forward model tensor of shape (Ncoeff, Npix)
         encoding transfrom from a_lm -> map.
         Can also be a tuple of two tensors (Theta, Phi)
@@ -518,6 +518,8 @@ def normalize_Ylm(Ylm, norm=None, theta=None, dtheta=None, dphi=None,
             Y = inflate_Ylm(Ylm)
             if theta is not None:
                 theta = np.repeat(theta[:, None], P.shape[1], 1).ravel()
+            if dtheta is not None and isinstance(dtheta, np.ndarray) and dtheta.size != theta.size:
+                dtheta = np.repeat(dtheta[:, None], P.shape[1], 1).ravel()
         else:
             Y = Ylm
         if renorm_idx is None:
