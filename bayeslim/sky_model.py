@@ -1376,3 +1376,30 @@ def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None
             obj.p0 = obj.p0[..., s, :]
         obj.params.data = obj.params.data[..., s, :]
 
+
+def eqarea_grid(resol):
+    """
+    Create an equal-area grid in phi, theta (longitude, colatitude)
+    given a specified d_phi resolution at the equator. The pixel area
+    of all cells in resol^2
+
+    Parameters
+    ----------
+    resol : float
+        Resolution of grid in radians (i.e. sidelength of cell at equator)
+
+    Returns
+    -------
+    theta : ndarray
+        Theta samples (colat) in radians
+    phi : ndarray
+        Phi samples (lat) in radians
+    """
+    n = int(2*np.pi / (resol * np.pi/180))
+    phi, dphi = np.linspace(0, 2*np.pi, n, endpoint=False, retstep=True)
+
+    t = np.arange(0, 1, dphi)
+    t = np.concatenate([t[::-1], -t[1:]])
+    theta = np.arccos(t)
+
+    return theta, phi
