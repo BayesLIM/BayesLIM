@@ -390,7 +390,10 @@ class VisData(TensorData):
         """
         if isinstance(bl, list):
             return [self._bl2ind(b) for b in bl]
-        return np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0][0]
+        idx = np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0]
+        if len(idx) == 0:
+            raise ValueError("Couldn't find {}".format(bl))
+        return idx[0]
 
     def _bl2uniq_blpol(self, bl):
         """
@@ -1071,7 +1074,7 @@ class VisData(TensorData):
 
         return new_vis
 
-    def inflate_by_redundancy(self, redtol=1.0, min_len=None, max_len=None):
+    def inflate_by_redundancy(self, bls=None, redtol=1.0, **kwargs):
         """
         If current data only includes unique redundant baseline types,
         copy over redundant types to all physical baselines and return
@@ -1080,8 +1083,15 @@ class VisData(TensorData):
 
         Parameters
         ----------
+        bls : list, optional
+            If provided, only inflate to these physical baselines. Note
+            all baselines in bls must have a redundant dual in self.bls,
+            otherwise its dropped.
         redtol : float, optional
             Redundancy tolerance in meters
+        kwargs : dict, optional
+            Additional kwargs to pass to ArrayModel.get_bls(),
+            such as min_len, max_len, min_EW, max_EW, etc.
         min_len : float, optional
             Minimum baseline length to keep in meters
         max_len : float, optional
@@ -1093,20 +1103,24 @@ class VisData(TensorData):
         """
         # setup an array object
         from bayeslim import telescope_model
-        rk = dict(bls=self.bls)
+        rk = dict(bls=bls)
         array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
-        # get redundant indices of current baselines
-        redinds = [array.bl2red[bl] for bl in self.bls]
-        
+
         # get all new baselines
-        new_bls = array.get_bls(min_len=min_len, max_len=max_len)
-        _bls = []
-        for bl in new_bls:
-            redidx = array.bl2red[bl]
-            if redidx in redinds:
-                _bls.append(self.bls[redinds.index(redidx)])
+        if bls is None:
+            bls = array.get_bls(**kwargs)
+
+        # get redundant indices of current baselines
+        red_inds = [array.bl2red[bl] for bl in self.bls]
         
-        return _inflate_by_redundancy(new_bls, _bls)
+        new_bls, red_bls = [], []
+        for bl in bls:
+            red_idx = array.bl2red[bl]
+            if red_idx in red_inds:
+                new_bls.append(bl)
+                red_bls.append(self.bls[red_inds.index(red_idx)])
+        
+        return self._inflate_by_redundancy(new_bls, red_bls)
 
     def write_hdf5(self, fname, overwrite=False):
         """
