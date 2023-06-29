@@ -1057,7 +1057,7 @@ class VisModelResponse(BaseResponse):
     taking params of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, bls=None, freq_mode='channel', time_mode='channel',
-                 param_type='com', device=None,
+                 param_type='real', device=None,
                  freq_kwargs={}, time_kwargs={}, LM=None):
         """
         Parameters
@@ -1095,24 +1095,42 @@ class VisModelResponse(BaseResponse):
         return params
 
 
-class VisCoupling(utils.Module):
+class VisCoupling(utils.Module, IndexCache):
     """
     A visibility coupling module, describing
-    a Nbls x Nbls coupling matrix
+    an Nbls x Nbls coupling transformation
     """
-    def __init__(self, params, bls, R=None, parameter=True, p0=None,
-                 name=None, atol=1e-4):
+    def __init__(self, params, freqs, antpos, coupling_terms, bls_in, bls_out,
+                 R=None, parameter=True, p0=None, name=None, atol=1e-4):
         """
-        Visibility coupling model
+        Visibility coupling model. Note this does not support baseline
+        minibatching (all baselines must exist in the input VisData object).
+        Must run self.setup_coupling() before using this model.
 
         Parameters
         ----------
         params : tensor
-            (Npol, Npol, Nbls, Nbls, Ntimes, Nfreqs) tensor
-            describing coupling between baselines
-        bls : list
-            List of antenna pair tuples (i.e. baselines) of
-            params along its Nbls axis
+            (Npol, Npol, Ncoupling, Ntime_coeff, Nfreq_coeff) tensor
+            describing coupling between antennas
+        freqs : tensor
+            Observing frequencies [Hz]
+        antpos : dict
+            Antenna position dictionary, ant integer as key, ENU baseline vec
+            as value
+        coupling_terms : list
+            A list of antenna-integer pairs denoting the coupling coefficients
+            to be modeled, matching the ordering in params along its Ncoupling axis.
+            e.g. [(0, 0), (1, 0), (0, 1), (2, 0), (0, 2), (1, 2), (2, 1)]
+            where (0, 1) means antenna0 -> antenna1 (eps_0_1).
+        bls_in : list
+            The baseline ordering (ant-pair tuples) of the VisData object that is
+            input to this forward pass. E.g. [(0, 1), (1, 2), (2, 3), ...]
+        bls_out : list
+            The baseline ordering (ant-pair tuples) of the VisData object that is
+            output from the forward pass. E.g. [(0, 1), (1, 2), (2, 3), ...]
+        use_reds : bool
+            If True, bls_in represents unique redundant model baselines, otherwise
+            it represents all physical baselines.
         R : callable, optional
             Response object for params, mapping it from
             sparse basis to its (Npol, Npol, ... Nfreqs) shape
@@ -1129,10 +1147,20 @@ class VisCoupling(utils.Module):
             Absolute tolerance for time index caching
         """
         super().__init__(name=name)
+        ## TODO: support multi-pol coupling
+        ## TODO: support frequency batching (for IndexCache and beam, sky objects too)
+        self.freqs = freqs
+        self.Nfreqs = len(freqs)
+        self.antpos = antpos
+        self.coupling_terms = coupling_terms
+        self._coupling_idx = {c: i for i, c in enumerate(coupling_terms)}
+        self.Nterms = len(coupling_terms)
+        self.c = 2.99792458e8
+        self.bls_in = bls_in
+        self.bls_out = bls_out
         self.params = params
         self.device = params.device
-        self.bls = bls
-        self.Nbls = len(bls)
+        self.Npol = params.shape[0]
         if parameter:
             self.params = torch.nn.Parameter(self.params)
         if R is None:
@@ -1140,10 +1168,108 @@ class VisCoupling(utils.Module):
             R = VisModelResponse()
         self.R = R
         self.p0 = p0
+
+        # IndexCache.__init__
         super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
                                               bls=R.bls if hasattr(R, 'bls') else None,
                                               atol=atol)
         self.clear_cache()
+
+    def setup_coupling(self, use_reds=True, redtol=1.0, no_autos=True,
+                       min_len=None, max_len=None, max_EW=None, max_NS=None):
+        """
+        Setup fixed coupling parameters (e.g. delay term and matrix indexing)
+
+        Parameters
+        ----------
+        use_reds : bool, optional
+            If True assume self.bls_in represents unique redundant baselines,
+            otherwise assume it represents physical baselines
+        redtol : float, optional
+            Red tolerance for use_reds in meters
+        no_autos : bool, optional
+            If True, exclude all ant_i -> ant_i coupling terms (i.e. signal chain reflections)
+        min_len : float, optional
+            Minimum ant-ant vector length for coupling terms
+        max_len : float, optional
+            Maximum ant-ant vector length for coupling terms
+        max_EW : float, optional
+            Maximum ant-ant East-West vector length for coupling terms
+        max_NS: float, optional
+            Maximum ant-ant North-South vector length for coupling terms
+        """
+        if use_reds:
+            # build redundancies
+            reds, rvec, bl2red, all_bls, lens, angs, _ = telescope_model.build_reds(self.antpos, redtol=redtol)
+
+        # setup time delay phasor between coupled antennas
+        self.dly = torch.ones(1, 1, self.Nterms, 1, self.Nfreqs, dtype=utils._cfloat(), device=self.device)
+        freqs = self.freqs.to(self.device)
+        for i, (ant1, ant2) in enumerate(self.coupling_terms):
+            bl_len = np.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
+            self.dly[0, 0, i, 0] = torch.exp(2j*np.pi*freqs/self.c*bl_len)
+
+        # get the rows of the A matrix, mapping input bls to output bls
+        Arows = configure_coupling_matrix_1order(self.antpos, bls=self.bls_out,
+            min_len=min_len, max_len=max_len, max_EW=max_EW, max_NS=max_NS, no_autos=no_autos)
+        if use_reds: 
+            self.red_bls = [reds[bl2red[bl]][0] for bl in self.bls_out]
+        else:
+            self.red_bls = self.bls_out
+        self.mat_shape = (len(self.bls_out), len(self.bls_in))
+        self.mat_len = np.prod(self.mat_shape)
+
+        # Create indexing lists for the two matrix operations that need to be performed
+        # 1. (coupling + coupling.conj) @ vis, 2. (coupling + coupling.conj) @ vis.conj.
+        # Below, the first list indexes the raveled coupling matrix
+        # the second list indexes params tensor along its Ncoupling axis
+        self.unconj_param_unconj_vis = ([], [])
+        self.unconj_param_conj_vis = ([], [])
+        self.conj_param_unconj_vis = ([], [])
+        self.conj_param_conj_vis = ([], [])
+
+        k = 0
+        for i, blo in enumerate(self.bls_out):
+            Arow = Arows[blo]
+            for j, bli in enumerate(self.bls_in):
+                if bli in Arow:
+                    # unconj vis is in this row
+                    for eps in Arow[bli]:
+                        c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
+                        if c_id not in self._coupling_idx: break
+                        c_idx = self._coupling_idx[c_id]
+                        if 'conj' in eps:
+                            # this is unconj_vis, conj_param
+                            self.conj_param_unconj_vis[1].append(c_idx)
+                            self.conj_param_unconj_vis[0].append(k)
+                        else:
+                            # this is unconj_vis, unconj_param
+                            self.unconj_param_unconj_vis[1].append(c_idx)
+                            self.unconj_param_unconj_vis[0].append(k)
+                elif bli[::-1] in Arow:
+                    # conj vis is in this row
+                    for eps in Arow[bli[::-1]]:
+                        c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
+                        if c_id not in self._coupling_idx: break
+                        c_idx = self._coupling_idx[c_id]
+                        if 'conj' in eps:
+                            # this is conj_vis, conj_param
+                            self.conj_param_conj_vis[1].append(c_idx)
+                            self.conj_param_conj_vis[0].append(k)
+                        else:
+                            # this is conj_vis, unconj_param
+                            self.unconj_param_conj_vis[1].append(c_idx)
+                            self.unconj_param_conj_vis[0].append(k)
+                k += 1
+
+        self.unconj_param_unconj_vis = (torch.tensor(self.unconj_param_unconj_vis[0]),
+                                        torch.tensor(self.unconj_param_unconj_vis[1]))
+        self.unconj_param_conj_vis = (torch.tensor(self.unconj_param_conj_vis[0]),
+                                        torch.tensor(self.unconj_param_conj_vis[1]))
+        self.conj_param_unconj_vis = (torch.tensor(self.conj_param_unconj_vis[0]),
+                                        torch.tensor(self.conj_param_unconj_vis[1]))
+        self.conj_param_conj_vis = (torch.tensor(self.conj_param_conj_vis[0]),
+                                        torch.tensor(self.conj_param_conj_vis[1]))
 
     def forward(self, vd, prior_cache=None, **kwargs):
         """
@@ -1164,7 +1290,8 @@ class VisCoupling(utils.Module):
             The predicted visibilities, having pushed input
             through coupling matrix
         """
-        vout = vd.copy(detach=False)
+        # this is the inflated 0th order visibilities
+        vout = vd._inflate_by_redundancy(self.bls_out, self.red_bls)
 
         # forward model
         if self.p0 is not None:
@@ -1182,24 +1309,58 @@ class VisCoupling(utils.Module):
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=coupling)
 
-        # down select on times and bls
-        coupling = self.index_params(coupling, times=vd.times, bls=vd.bls)
+        # down select on times
+        coupling = self.index_params(coupling, times=vd.times)
+        Ntimes = coupling.shape[3]
 
-        # multiply coupling tensor
-        vout.data = torch.einsum("iijk...,iik...->iij...", coupling, vout.data)
+        # multiply by delay term
+        coupling = coupling * self.dly
+        Nfreqs = coupling.shape[4]
+
+        # construct coupling matrix for unconjugated data
+        mat_shape = (1, 1, self.mat_shape[0], self.mat_shape[1], Ntimes, Nfreqs)
+        if len(self.unconj_param_unconj_vis[0]) > 0 or len(self.conj_param_unconj_vis[0]) > 0:
+            mat = torch.zeros((1, 1, self.mat_len, Ntimes, Nfreqs), dtype=vd.data.dtype, device=self.device)
+
+            # add in unconjugated params and conjugated params
+            if len(self.unconj_param_unconj_vis[0]) > 0:
+                mat[:, :, self.unconj_param_unconj_vis[0]] += torch.index_select(coupling, 2, self.unconj_param_unconj_vis[1])
+
+            if len(self.conj_param_unconj_vis[0]) > 0:
+                mat[:, :, self.conj_param_unconj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_unconj_vis[1])
+
+            # take product with vis and add to output
+            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat.reshape(mat_shape), vd.data)
+
+        # construct coupling matrix for conjugated data
+        if len(self.unconj_param_conj_vis[0]) > 0 or len(self.conj_param_conj_vis[0]) > 0:
+            mat = torch.zeros((1, 1, self.mat_len, Ntimes, Nfreqs), dtype=vd.data.dtype, device=self.device)
+
+            # add in unconjugated params and conjugated params
+            if len(self.unconj_param_conj_vis[0]) > 0:
+                mat[:, :, self.unconj_param_conj_vis[0]] += torch.index_select(coupling, 2, self.unconj_param_conj_vis[1])
+            if len(self.conj_param_conj_vis[0]) > 0:
+                mat[:, :, self.conj_param_conj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_conj_vis[1])
+
+            # take product with vis and add to output
+            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat.reshape(mat_shape), vd.data.conj())
 
         return vout
 
     def index_params(self, params, times=None, bls=None):
         """overload IndexCache index_params b/c of double bl-bl axis"""
         if times is not None:
-            idx = self.get_time_idx(times)
-            if idx is None:
-                params = params
-            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-2]:
-                params = params
+            # if only 1 time bin in params, assume we want to broadcast
+            if params.shape[-2] == 1:
+                pass
             else:
-                params = params[..., idx, :]
+                idx = self.get_time_idx(times)
+                if idx is None:
+                    params = params
+                elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-2]:
+                    params = params
+                else:
+                    params = params[..., idx, :]
         if bls is not None:
             idx = self.get_bl_idx(bls)
             if idx is None:
@@ -1218,6 +1379,7 @@ class VisCoupling(utils.Module):
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
+        self.dly = utils.push(self.dly, device)
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         # push prior functions
@@ -1781,3 +1943,131 @@ def chisq(raw_data, forward_model, wgts, axis=None, dof=None, cov_axis=None, mod
 
     return chisq
 
+
+def configure_coupling_matrix_1order(antpos, bls, bl2red=None, no_autos=True,
+                                     min_len=None, max_len=None, max_EW=None, max_NS=None):
+    """
+    Configure the visibility bl-to-bl coupling matrix for 1st order
+    mutual coupling terms.
+
+    Parameters
+    ----------
+    antpos : dict
+        Antenna position dictionary
+    bls : list
+        List of baseline tuples to compute coupling for (i.e. these
+        are the output baselines)
+    bl2red : dict, optional
+        If provided, assume that the starting vis model is a redundant
+        group, such that this is the bl2red mapping (see telescope_model.build_reds).
+        Otherwise, we assume that the starting vis model are all physical baselines.
+    no_autos : bool, optional
+        If True, exclude ant_i -> ant_i coupling terms (i.e. signal chain reflections)
+    min_len : float, optional
+        If provided, cut all coupling terms with bl vector shorter than this.
+    max_len : float, optional
+        If provided, cut all coupling terms with bl vector longer than this.
+    max_EW : float, optional
+        If provided, cut all coupling terms with east-west length longer than this.
+    max_NS : float, optional
+        If provided, cut all coupling terms with north-south length longer than this.
+
+    Returns
+    -------
+    Arows : dict
+        A dictionary holding the coupling matrix configuration.
+        The keys are each row of the matrix indexed by the output
+        baseline tuple. The values hold the appropriate coupling
+        terms for each input baseline.
+    """
+    assert isinstance(antpos, dict)
+    # build rows of A for each bl output
+    Arows = {}
+    for bl in bls:
+        Arows[bl] = {}
+        # iterate over all antennas
+        for ant in antpos:
+            # iterate over two antennas in bl
+            for i in range(2):
+                # get antenna numbers and coupled vis tuple
+                ant_i = bl[i]
+                ant_j = bl[(i+1)%2]
+                if no_autos and ant == ant_i: continue
+                coupled_vis = (ant, ant_j) if i == 0 else (ant_j, ant)
+                if bl2red is not None:
+                    try:
+                        coupled_vis = reds[bl2red[coupled_vis]][0]
+                    except:
+                        # account for conjugated bls
+                        coupled_vis = reds[bl2red[coupled_vis[::-1]]][0][::-1]
+
+                # compute coupling vector for ant->anti to make V_ant,antj
+                vec = antpos[ant] - antpos[ant_i]
+                if max_len is not None and np.linalg.norm(vec) > max_len:
+                    continue
+                elif min_len is not None and np.linalg.norm(vec) < min_len:
+                    continue
+                elif max_EW is not None and abs(vec[0]) > max_EW:
+                    continue
+                elif max_NS is not None and abs(vec[1]) > max_NS:
+                    continue
+
+                # append coupling coefficient to Arows
+                if coupled_vis not in Arows[bl]:
+                    Arows[bl][coupled_vis] = []
+                coupling_coeff = "eps_{}_{}{}".format(ant, ant_i, '' if i==0 else '_conj')
+                Arows[bl][coupled_vis].append(coupling_coeff)
+
+    return Arows
+
+
+def gen_coupling_pairs(antpos, min_len=None, max_len=None, max_EW=None, max_NS=None, ants=None, no_autos=True):
+    """
+    Given a dict of antennas and antenna vectors, generate a list of ant1->ant2 coupling
+    pairs to model. Assumes single pol.
+
+    Parameters
+    ----------
+    antpos : dict
+        Antenna vector dictionary, ant_int key and ENU ant_vec value
+    min_len : float, optional
+        Minimum ant-ant vector length for coupling terms
+    max_len : float, optional
+        Maximum ant-ant vector length for coupling terms
+    max_EW : float, optional
+        Maximum ant-ant East-West vector length for coupling terms
+    max_NS: float, optional
+        Maximum ant-ant North-South vector length for coupling terms
+    ants : list, optional
+        Of all antennas listed in antpos, only generate coupling terms that
+        end up in antennas in this ants list.
+        E.g. if ants = [0], then only produce coupling terms [(1, 0), (2, 0), (3, 0), ...]
+        Default is to use all antennas in antpos.
+    no_autos : bool, optional
+        If True, don't include ant_i -> ant_i coupling terms (default).
+
+    Returns
+    --------
+    coupling_terms : list
+        List of coupling terms, e.g. [(0, 1), (1, 0), (0, 2), (2, 0), ...]
+        where (0, 1) denotes coupling of ant0 -> ant1
+    """
+    assert isinstance(antpos, dict)
+    coupling_terms = []
+    for ant_i in antpos:
+        for ant_j in antpos:
+            if no_autos and ant_i == ant_j: continue
+            if ants is not None and ant_j not in ants: continue
+            vec = antpos[ant_j] - antpos[ant_i]
+            vlen = np.linalg.norm(vec)
+            if min_len is not None and vlen < min_len:
+                continue
+            elif max_len is not None and vlen > max_len:
+                continue
+            elif max_EW is not None and abs(vec[0]) > max_EW:
+                continue
+            elif max_NS is not None and abs(vec[1]) > max_NS:
+                continue
+            coupling_terms.append((ant_i, ant_j))
+
+    return coupling_terms
