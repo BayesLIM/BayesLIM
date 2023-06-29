@@ -365,6 +365,27 @@ class VisData(TensorData):
 
             return [bl for i, bl in enumerate(bls) if keep[i]]
 
+    def get_bl_vecs(self, bls):
+        """
+        Return a tensor holding baseline
+        vectors in ENU frame
+
+        Parameters
+        ----------
+        bls : list
+            List of baseline tuples e.g. [(0, 1), (1, 2), ...]
+            to compute baseline vectors
+
+        Returns
+        -------
+        tensor
+        """
+        blvecs = []
+        for bl in bls:
+            blvecs.append(self.antpos[bl[1]] - self.antpos[bl[0]])
+
+        return torch.as_tensor(blvecs)
+
     def copy(self, detach=True):
         """
         Copy and return self. This is equivalent
