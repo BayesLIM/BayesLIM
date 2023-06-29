@@ -1039,6 +1039,38 @@ class VisData(TensorData):
         else:
             return out
 
+    def _inflate_by_redundancy(self, new_bls, old_bls):
+        """
+        Inflate data by redundancies and return a new object
+
+        Parameters
+        ----------
+        new_bls : list
+            List of new baseline tuples for inflated data
+            e.g. [(0, 1), (1, 2), (1, 3), ...]
+        old_bls : list
+            List of redundant baseline tuple for each bl tuples in new_bls
+            e.g. [(0, 1), (0, 1), (1, 3), ...]
+
+        Returns
+        -------
+        VisData
+        """
+        # expand data across redundant baselines
+        data = self.get_data(bl=old_bls, squeeze=False)
+        flags = self.get_flags(bl=old_bls, squeeze=False)
+        cov = self.get_cov(bl=old_bls, squeeze=False)
+        icov = self.get_icov(bl=old_bls, squeeze=False)
+
+        # setup new object
+        new_vis = VisData()
+        new_vis.setup_meta(telescope=self.telescope, antpos=self.antpos)
+        new_vis.setup_data(new_bls, self.times, self.freqs, pol=self.pol,
+                           data=data, flags=flags, cov=cov, icov=icov,
+                           history=self.history)
+
+        return new_vis
+
     def inflate_by_redundancy(self, redtol=1.0, min_len=None, max_len=None):
         """
         If current data only includes unique redundant baseline types,
@@ -1059,7 +1091,7 @@ class VisData(TensorData):
         -------
         VisData
         """
-        # get setup an array object
+        # setup an array object
         from bayeslim import telescope_model
         rk = dict(bls=self.bls)
         array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
@@ -1074,20 +1106,7 @@ class VisData(TensorData):
             if redidx in redinds:
                 _bls.append(self.bls[redinds.index(redidx)])
         
-        # expand data across redundant baselines
-        data = self.get_data(bl=_bls, squeeze=False)
-        flags = self.get_flags(bl=_bls, squeeze=False)
-        cov = self.get_cov(bl=_bls, squeeze=False)
-        icov = self.get_icov(bl=_bls, squeeze=False)
-        
-        # setup new object
-        new_vis = VisData()
-        new_vis.setup_meta(telescope=self.telescope, antpos=self.antpos)
-        new_vis.setup_data(new_bls, self.times, self.freqs, pol=self.pol,
-                           data=data, flags=flags, cov=cov, icov=icov,
-                           history=self.history)
-        
-        return new_vis
+        return _inflate_by_redundancy(new_bls, _bls)
 
     def write_hdf5(self, fname, overwrite=False):
         """
@@ -1628,7 +1647,7 @@ class MapData(TensorData):
 
     def select(self, angs=None, freqs=None, pols=None,
                ang_inds=None, freq_inds=None, pol_inds=None,
-               inplace=True):
+               inplace=True, try_view=False):
         """
         Downselect on data tensor.
 
@@ -2298,7 +2317,7 @@ class CalData(TensorData):
 
         arr[inds] = val
 
-    def select(self, ants=None, times=None, freqs=None, pol=None, inplace=True):
+    def select(self, ants=None, times=None, freqs=None, pol=None, inplace=True, try_view=False):
         """
         Downselect on data tensor.
         Operates in place.
