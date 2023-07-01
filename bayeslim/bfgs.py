@@ -51,7 +51,7 @@ class BFGS:
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
-                 tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn=None,
+                 tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn='strong_wolfe',
                  store_Hy=False):
         """
         Parameters
@@ -361,7 +361,7 @@ class LBFGS(BFGS):
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
                  history_size=100, tolerance_grad=1e-10, tolerance_change=1e-12,
-                 line_search_fn=None, store_Hy=False, update_Hdiag=True):
+                 line_search_fn='strong_wolfe', store_Hy=False, update_Hdiag=True):
         """
         Parameters
         ----------
