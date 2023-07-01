@@ -1149,6 +1149,7 @@ class VisCoupling(utils.Module, IndexCache):
         super().__init__(name=name)
         ## TODO: support multi-pol coupling
         ## TODO: support frequency batching (for IndexCache and beam, sky objects too)
+        ## TODO: support redundant coupling vectors
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.antpos = antpos
@@ -1201,17 +1202,21 @@ class VisCoupling(utils.Module, IndexCache):
         if use_reds:
             # build redundancies
             reds, rvec, bl2red, all_bls, lens, angs, _ = telescope_model.build_reds(self.antpos, redtol=redtol)
+        else:
+            bl2red = None
+            reds = None
 
         # setup time delay phasor between coupled antennas
         self.dly = torch.ones(1, 1, self.Nterms, 1, self.Nfreqs, dtype=utils._cfloat(), device=self.device)
         freqs = self.freqs.to(self.device)
+        freqs = freqs - freqs[0]
         for i, (ant1, ant2) in enumerate(self.coupling_terms):
             bl_len = np.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
             self.dly[0, 0, i, 0] = torch.exp(2j*np.pi*freqs/self.c*bl_len)
 
         # get the rows of the A matrix, mapping input bls to output bls
-        Arows = configure_coupling_matrix_1order(self.antpos, bls=self.bls_out,
-            min_len=min_len, max_len=max_len, max_EW=max_EW, max_NS=max_NS, no_autos=no_autos)
+        Arows = configure_coupling_matrix_1order(self.antpos, bls=self.bls_out, bl2red=bl2red,
+            reds=reds, min_len=min_len, max_len=max_len, max_EW=max_EW, max_NS=max_NS, no_autos=no_autos)
         if use_reds: 
             self.red_bls = [reds[bl2red[bl]][0] for bl in self.bls_out]
         else:
@@ -1246,7 +1251,7 @@ class VisCoupling(utils.Module, IndexCache):
                             # this is unconj_vis, unconj_param
                             self.unconj_param_unconj_vis[1].append(c_idx)
                             self.unconj_param_unconj_vis[0].append(k)
-                elif bli[::-1] in Arow:
+                if bli[::-1] in Arow:
                     # conj vis is in this row
                     for eps in Arow[bli[::-1]]:
                         c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
@@ -1330,7 +1335,8 @@ class VisCoupling(utils.Module, IndexCache):
                 mat[:, :, self.conj_param_unconj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_unconj_vis[1])
 
             # take product with vis and add to output
-            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat.reshape(mat_shape), vd.data)
+            mat = mat.reshape(mat_shape)
+            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat, vd.data)
 
         # construct coupling matrix for conjugated data
         if len(self.unconj_param_conj_vis[0]) > 0 or len(self.conj_param_conj_vis[0]) > 0:
@@ -1343,7 +1349,8 @@ class VisCoupling(utils.Module, IndexCache):
                 mat[:, :, self.conj_param_conj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_conj_vis[1])
 
             # take product with vis and add to output
-            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat.reshape(mat_shape), vd.data.conj())
+            mat = mat.reshape(mat_shape)
+            vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat, vd.data.conj())
 
         return vout
 
@@ -1944,7 +1951,7 @@ def chisq(raw_data, forward_model, wgts, axis=None, dof=None, cov_axis=None, mod
     return chisq
 
 
-def configure_coupling_matrix_1order(antpos, bls, bl2red=None, no_autos=True,
+def configure_coupling_matrix_1order(antpos, bls, bl2red=None, reds=None, no_autos=True,
                                      min_len=None, max_len=None, max_EW=None, max_NS=None):
     """
     Configure the visibility bl-to-bl coupling matrix for 1st order
@@ -1961,6 +1968,9 @@ def configure_coupling_matrix_1order(antpos, bls, bl2red=None, no_autos=True,
         If provided, assume that the starting vis model is a redundant
         group, such that this is the bl2red mapping (see telescope_model.build_reds).
         Otherwise, we assume that the starting vis model are all physical baselines.
+    reds : list, optional
+        If providing bl2red, these are the nested set of redundant baseline groups,
+        output from telescope_model.build_reds.
     no_autos : bool, optional
         If True, exclude ant_i -> ant_i coupling terms (i.e. signal chain reflections)
     min_len : float, optional
