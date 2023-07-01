@@ -384,7 +384,7 @@ class VisData(TensorData):
         for bl in bls:
             blvecs.append(self.antpos[bl[1]] - self.antpos[bl[0]])
 
-        return torch.as_tensor(blvecs)
+        return torch.as_tensor(np.array(blvecs))
 
     def copy(self, detach=True):
         """
@@ -416,6 +416,31 @@ class VisData(TensorData):
             raise ValueError("Couldn't find {}".format(bl))
         return idx[0]
 
+    def _bl2blpol(self, bl):
+        """
+        Given an antpair of antpair pol tuple "bl",
+        or a list of such, return all separated bls
+        and pols
+        """
+        assert isinstance(bl, (tuple, list))
+        if isinstance(bl, tuple):
+            # this is a single antpair or antpairpol
+            return self._bl2uniq_blpol(bl)
+
+        else:
+            bls, pols = [], []
+            for _bl in bl:
+                b, p = self._bl2uniq_blpol(_bl)
+                bls.extend(b)
+                if p is not None:
+                    pols.append(p)
+            if len(pols) == 0:
+                pols = None
+            else:
+                assert len(pols) == 1, "can only index 1 pol at a time"
+                pols = pols[0]
+            return bls, pols
+
     def _bl2uniq_blpol(self, bl):
         """
         Given an antpair or antpair pol tuple "bl",
@@ -428,21 +453,25 @@ class VisData(TensorData):
                 bl, pol = [bl], None
             elif len(bl) == 3:
                 bl, pol = [bl[:2]], bl[2]
-        elif isinstance(bl, list):
-            # this is a list of antpairs or antpairpols
-            bl_list, pol_list = [], []
-            for b in bl:
-                _bl, _pol = self._bl2uniq_blpol(b)
-                if _bl not in bl_list:
-                    bl_list.extend(_bl)
-                if _pol not in pol_list:
-                    pol_list.append(_pol)
-            bl = bl_list
-            pol = pol_list
-            if len(pol) > 1 and None in pol:
-                pol.remove(None)
-            assert len(pol) == 1, "can only index 1 pol at a time"
-            pol = pol[0]
+        else:
+            # bl is a list of antpairs or antpairpols
+            hbl = [hash(_bl) for _bl in bl]
+            uniq_h, uniq_idx = np.unique(hbl, return_index=True)
+            ubls, upls = [], []  # uniq bls and uniq pols
+            for i in sorted(uniq_idx):
+                b, p = self._bl2uniq_blpol(bl[i])
+                ubls.extend(b)
+                if p is not None:
+                    upls.append(p)
+            bl = ubls
+            pol = upls
+            if len(pol) == 0:
+                pol = None
+            else:
+                if len(pol) > 1 and None in pol:
+                    pol.remove(None)
+                assert len(pol) == 1, "can only index 1 pol at a time"
+                pol = pol[0]
 
         return bl, pol
 
@@ -548,7 +577,7 @@ class VisData(TensorData):
         if bl is not None:
             assert bl_inds is None
             # special case for antpairpols
-            bl, _pol = self._bl2uniq_blpol(bl)
+            bl, _pol = self._bl2blpol(bl)
             bl_inds = self._bl2ind(bl)
             if pol is not None:
                 if _pol is not None:
@@ -589,7 +618,7 @@ class VisData(TensorData):
 
     def get_data(self, bl=None, times=None, freqs=None, pol=None,
                  bl_inds=None, time_inds=None, freq_inds=None,
-                 squeeze=True, data=None):
+                 squeeze=True, data=None, try_view=False, **kwargs):
         """
         Slice into data tensor and return values.
         Only one axis can be specified at a time.
@@ -610,6 +639,9 @@ class VisData(TensorData):
             If True, squeeze array before return
         data : tensor, optional
             Tensor to index. default is self.data
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         data = self.data if data is None else data
         if data is None:
@@ -620,6 +652,8 @@ class VisData(TensorData):
                              bl_inds=bl_inds, time_inds=time_inds,
                              freq_inds=freq_inds)
         data = data[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            data = data.clone()
 
         # squeeze if desired
         if squeeze:
@@ -629,7 +663,7 @@ class VisData(TensorData):
 
     def get_flags(self, bl=None, times=None, freqs=None, pol=None,
                   bl_inds=None, time_inds=None, freq_inds=None,
-                  squeeze=True, flags=None):
+                  squeeze=True, flags=None, try_view=False, **kwargs):
         """
         Slice into flag tensor and return values.
         Only one axis can be specified at a time.
@@ -650,6 +684,9 @@ class VisData(TensorData):
             If True, squeeze array before return
         flags : tensor, optional
             flag array to index. default is self.flags
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         flags = self.flags if flags is None else flags
         if flags is None:
@@ -660,6 +697,8 @@ class VisData(TensorData):
                              bl_inds=bl_inds, time_inds=time_inds,
                              freq_inds=freq_inds)
         flags = flags[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            flags = flags.clone()
 
         # squeeze if desired
         if squeeze:
@@ -669,7 +708,7 @@ class VisData(TensorData):
 
     def get_cov(self, bl=None, times=None, freqs=None, pol=None,
                 bl_inds=None, time_inds=None, freq_inds=None,
-                squeeze=True, cov=None):
+                squeeze=True, cov=None, try_view=False, **kwargs):
         """
         Slice into cov tensor and return values.
         Only one axis can be specified at a time.
@@ -691,6 +730,9 @@ class VisData(TensorData):
             If True, squeeze array before return
         cov : tensor, optional
             Cov tensor to index. default is self.cov
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         cov = self.cov if cov is None else cov
         if cov is None:
@@ -739,16 +781,19 @@ class VisData(TensorData):
         if squeeze:
             cov = cov.squeeze()
 
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            cov = cov.clone()
+
         return cov
 
-    def get_icov(self, bl=None, icov=None, **kwargs):
+    def get_icov(self, bl=None, icov=None, try_view=False, **kwargs):
         """
         Slice into cached inverse covariance.
         Same kwargs as get_cov()
         """
         if icov is None:
             icov = self.icov
-        return self.get_cov(bl=bl, cov=icov, **kwargs)
+        return self.get_cov(bl=bl, cov=icov, try_view=try_view, **kwargs)
 
     def __getitem__(self, bl):
         return self.get_data(bl, squeeze=True)
@@ -833,52 +878,52 @@ class VisData(TensorData):
         if inplace:
             obj = self
             out = obj
+            try_view = True
         else:
-            if try_view:
-                obj = self
-                out = copy.deepcopy(self)
-            else:
-                obj = copy.deepcopy(self)
-                out = obj
+            obj = self
+            out = copy.deepcopy(self)
 
         if bl is not None or bl_inds is not None:
             assert not ((bl is not None) & (bl_inds is not None))
-            data = obj.get_data(bl, bl_inds=bl_inds, squeeze=False)
-            cov = obj.get_cov(bl, bl_inds=bl_inds, squeeze=False)
-            icov = obj.get_icov(bl, bl_inds=bl_inds, squeeze=False)
-            flags = obj.get_flags(bl, bl_inds=bl_inds, squeeze=False)
+            data = obj.get_data(bl, bl_inds=bl_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(bl, bl_inds=bl_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(bl, bl_inds=bl_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(bl, bl_inds=bl_inds, squeeze=False, try_view=try_view)
             if bl_inds is not None: bl = [obj.bls[i] for i in bl_inds]
             out.setup_data(bl, obj.times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if times is not None or time_inds is not None:
             assert not ((times is not None) & (time_inds is not None))
-            data = obj.get_data(times=times, time_inds=time_inds, squeeze=False)
-            cov = obj.get_cov(times=times, time_inds=time_inds, squeeze=False)
-            icov = obj.get_icov(times=times, time_inds=time_inds, squeeze=False)
-            flags = obj.get_flags(times=times, time_inds=time_inds, squeeze=False)
+            data = obj.get_data(times=times, time_inds=time_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(times=times, time_inds=time_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(times=times, time_inds=time_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(times=times, time_inds=time_inds, squeeze=False, try_view=try_view)
             if time_inds is not None: times = obj.times[time_inds]
             out.setup_data(obj.bls, times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if freqs is not None or freq_inds is not None:
             assert not ((freqs is not None) & (freq_inds is not None))
-            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            cov = obj.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            icov = obj.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            flags = obj.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
             if freq_inds is not None: freqs = obj.freqs[freq_inds]
             out.setup_data(obj.bls, obj.times, freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if pol is not None:
-            data = obj.get_data(pol=pol)
-            flags = obj.get_flags(pol=pol)
-            cov = obj.get_cov(pol=pol)
-            icov = obj.get_icov(pol=pol)
+            data = obj.get_data(pol=pol, try_view=try_view)
+            flags = obj.get_flags(pol=pol, try_view=try_view)
+            cov = obj.get_cov(pol=pol, try_view=try_view)
+            icov = obj.get_icov(pol=pol, try_view=try_view)
             out.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
@@ -1081,10 +1126,10 @@ class VisData(TensorData):
         VisData
         """
         # expand data across redundant baselines
-        data = self.get_data(bl=old_bls, squeeze=False)
-        flags = self.get_flags(bl=old_bls, squeeze=False)
-        cov = self.get_cov(bl=old_bls, squeeze=False)
-        icov = self.get_icov(bl=old_bls, squeeze=False)
+        data = self.get_data(bl=old_bls, squeeze=False, try_view=False)
+        flags = self.get_flags(bl=old_bls, squeeze=False, try_view=False)
+        cov = self.get_cov(bl=old_bls, squeeze=False, try_view=False)
+        icov = self.get_icov(bl=old_bls, squeeze=False, try_view=False)
 
         # setup new object
         new_vis = VisData()
@@ -1218,23 +1263,23 @@ class VisData(TensorData):
             data, flags, cov, icov = None, None, None, None
             if read_data:
                 data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
-                                     squeeze=False, data=f['data'])
+                                     squeeze=False, data=f['data'], try_view=True)
                 data = torch.as_tensor(data)
                 if 'flags' in f and not suppress_nonessential:
                     flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
-                                          squeeze=False, flags=f['flags'])
+                                          squeeze=False, flags=f['flags'], try_view=True)
                     flags = torch.as_tensor(flags)
                 else:
                     flags = None
                 if 'cov' in f and not suppress_nonessential:
                     cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
-                                       squeeze=False, cov=f['cov'])
+                                       squeeze=False, cov=f['cov'], try_view=True)
                     cov = torch.as_tensor(cov)
                 else:
                     cov = None
                 if 'icov' in f:
                     icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
-                                         squeeze=False, icov=f['icov'])
+                                         squeeze=False, icov=f['icov'], try_view=True)
                     icov = torch.as_tensor(icov)
                 else:
                     icov = None
@@ -1553,7 +1598,8 @@ class MapData(TensorData):
 
     def get_data(self, data=None, squeeze=True, angs=None,
                  freqs=None, pols=None, ang_inds=None,
-                 freq_inds=None, pol_inds=None):
+                 freq_inds=None, pol_inds=None,
+                 try_view=False, **kwargs):
         """
         Get map data given selections
 
@@ -1563,7 +1609,11 @@ class MapData(TensorData):
             Data tensor to index, default is self.data
         squeeze : bool, optional
             If True squeeze output
-        See get_inds for more details
+        angs : tensor, optional
+            See get_inds for more details
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
 
         Returns
         -------
@@ -1578,6 +1628,8 @@ class MapData(TensorData):
                              ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         data = data[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            data = data.clone()
 
         # squeeze if desired
         if squeeze:
@@ -1587,7 +1639,8 @@ class MapData(TensorData):
 
     def get_flags(self, flags=None, squeeze=True, angs=None,
                   freqs=None, pols=None, ang_inds=None,
-                  freq_inds=None, pol_inds=None):
+                  freq_inds=None, pol_inds=None,
+                  try_view=False, **kwargs):
         """
         Get flag data given selections
 
@@ -1596,6 +1649,9 @@ class MapData(TensorData):
         flags : tensor, optional
             Flag tensor to index. Default is self.flags.
         See self.get_data()
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         flags = self.flags if flags is None else flags
         if flags is None:
@@ -1606,6 +1662,8 @@ class MapData(TensorData):
                              ang_inds=ang_inds, freq_inds=freq_inds,
                              pol_inds=pol_inds)
         flags = flags[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            flags = flags.clone()
 
         # squeeze if desired
         if squeeze:
@@ -1615,7 +1673,7 @@ class MapData(TensorData):
 
     def get_cov(self, cov=None, cov_axis=None, squeeze=True, angs=None,
                 freqs=None, pols=None, ang_inds=None,
-                freq_inds=None, pol_inds=None):
+                freq_inds=None, pol_inds=None, try_view=False, **kwargs):
         """
         Index covariance given selections
 
@@ -1626,6 +1684,9 @@ class MapData(TensorData):
         cov_axis : str, optional
             Covariance axis of cov. Default is self.cov_axis
         See get_data() for details
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         cov = self.cov if cov is None else cov
         cov_axis = self.cov_axis if cov_axis is None else cov_axis
@@ -1669,16 +1730,19 @@ class MapData(TensorData):
         if squeeze:
             cov = cov.squeeze()
 
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            cov = cov.clone()
+
         return cov
 
-    def get_icov(self, icov=None, **kwargs):
+    def get_icov(self, icov=None, try_view=False, **kwargs):
         """
         Slice into cached inverse covariance.
         Same kwargs as get_cov()
         """
         if icov is None:
             icov = self.icov
-        return self.get_cov(cov=icov, **kwargs)
+        return self.get_cov(cov=icov, try_view=try_view, **kwargs)
 
     def select(self, angs=None, freqs=None, pols=None,
                ang_inds=None, freq_inds=None, pol_inds=None,
@@ -1717,33 +1781,31 @@ class MapData(TensorData):
         if inplace:
             obj = self
             out = obj
+            try_view = True
         else:
-            if try_view:
-                obj = self
-                out = copy.deepcopy(self)
-            else:
-                obj = copy.deepcopy(self)
-                out = obj
+            obj = self
+            out = copy.deepcopy(self)
 
         if angs is not None or ang_inds is not None:
-            data = obj.get_data(angs=angs, ang_inds=ang_inds, squeeze=False)
-            norm = obj.get_data(data=self.norm, angs=angs, ang_inds=ang_inds, squeeze=False)
-            cov = obj.get_cov(angs=angs, ang_inds=ang_inds, squeeze=False)
-            icov = obj.get_icov(angs=angs, ang_inds=ang_inds, squeeze=False)
-            flags = obj.get_flags(angs=angs, ang_inds=ang_inds, squeeze=False)
+            data = obj.get_data(angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
+            norm = obj.get_data(data=self.norm, angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
             if ang_inds is not None:
                 if self.angs is not None:
                     angs = self.angs[:, ang_inds]
             out.setup_data(obj.freqs, df=obj.df, pols=obj.pols, data=data, angs=angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
+            obj = out
 
         if freqs is not None or freq_inds is not None:
-            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            norm = obj.get_data(data=self.norm, freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            cov = obj.get_cov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            icov = obj.get_icov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
-            flags = obj.get_flags(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False)
+            data = obj.get_data(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            norm = obj.get_data(data=self.norm, freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(angs=angs, freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
             if freq_inds is not None:
                 freqs = obj.freqs[freq_inds]
                 df = obj.df[freq_inds] if obj.df is not None else None
@@ -1752,13 +1814,14 @@ class MapData(TensorData):
             out.setup_data(freqs, df=df, pols=obj.pols, data=data, angs=obj.angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
                            norm=norm, history=obj.history)
+            obj = out
 
         if pols is not None or pol_inds is not None:
-            data = obj.get_data(pols=pols, pol_inds=pol_inds, squeeze=False)
-            norm = obj.get_data(data=self.norm, pols=pols, pol_inds=pol_inds, squeeze=False)
-            cov = obj.get_cov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
-            icov = obj.get_icov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
-            flags = obj.get_flags(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False)
+            data = obj.get_data(pols=pols, pol_inds=pol_inds, squeeze=False, try_view=try_view)
+            norm = obj.get_data(data=self.norm, pols=pols, pol_inds=pol_inds, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(angs=angs, pols=pols, pol_inds=pol_inds, squeeze=False, try_view=try_view)
             if pol_inds is not None: pols = [obj.pols[i] for i in pol_inds]
             out.setup_data(obj.freqs, df=obj.df, pols=pols, data=data, angs=obj.angs,
                            flags=flags, cov=cov, cov_axis=obj.cov_axis, icov=icov,
@@ -1841,25 +1904,25 @@ class MapData(TensorData):
             # read-in data if needed
             data, norm, flags, cov, icov = None, None, None, None, None
             if read_data:
-                data = self.get_data(data=f['data'], squeeze=False, **kwargs)
+                data = self.get_data(data=f['data'], squeeze=False, try_view=True, **kwargs)
                 data = torch.as_tensor(data)
                 if 'flags' in f and not suppress_nonessential:
-                    flags = self.get_flags(flags=f['flags'], squeeze=False, **kwargs)
+                    flags = self.get_flags(flags=f['flags'], squeeze=False, try_view=True, **kwargs)
                     flags = torch.as_tensor(flags)
                 else:
                     flags = None
                 if 'cov' in f and not suppress_nonessential:
-                    cov = self.get_cov(cov=f['cov'], squeeze=False, **kwargs)
+                    cov = self.get_cov(cov=f['cov'], squeeze=False, try_view=True, **kwargs)
                     cov = torch.as_tensor(cov)
                 else:
                     cov = None
                 if 'icov' in f:
-                    icov = self.get_icov(icov=f['icov'], squeeze=False, **kwargs)
+                    icov = self.get_icov(icov=f['icov'], squeeze=False, try_view=True, **kwargs)
                     icov = torch.as_tensor(icov)
                 else:
                     icov = None
                 if 'norm' in f and not suppress_nonessential:
-                    norm = self.get_data(data=f['norm'], squeeze=False, **kwargs)
+                    norm = self.get_data(data=f['norm'], squeeze=False, try_view=True, **kwargs)
                     norm = torch.as_tensor(norm)
                 else:
                     norm = None
@@ -2164,7 +2227,7 @@ class CalData(TensorData):
         return inds
 
     def get_data(self, ant=None, times=None, freqs=None, pol=None,
-                 squeeze=True, data=None):
+                 squeeze=True, data=None, try_view=False, **kwargs):
         """
         Slice into data tensor and return values.
         Only one axis can be specified at a time.
@@ -2183,6 +2246,9 @@ class CalData(TensorData):
             If True, squeeze array before return
         data : tensor, optional
             Tensor to index. default is self.data
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         data = self.data if data is None else data
         if data is None:
@@ -2191,6 +2257,8 @@ class CalData(TensorData):
         # get indexing
         inds = self.get_inds(ant=ant, times=times, freqs=freqs, pol=pol)
         data = data[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            data = data.clone()
 
         # squeeze if desired
         if squeeze:
@@ -2199,7 +2267,7 @@ class CalData(TensorData):
         return data
 
     def get_flags(self, ant=None, times=None, freqs=None, pol=None,
-                  squeeze=True, flags=None):
+                  squeeze=True, flags=None, try_view=False, **kwargs):
         """
         Slice into flag tensor and return values.
         Only one axis can be specified at a time.
@@ -2218,6 +2286,9 @@ class CalData(TensorData):
             If True, squeeze array before return
         flags : tensor, optional
             flag array to index. default is self.flags
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         flags = self.flags if flags is None else flags
         if flags is None:
@@ -2226,6 +2297,8 @@ class CalData(TensorData):
         # get indexing
         inds = self.get_inds(ant=ant, times=times, freqs=freqs, pol=pol)
         flags = flags[inds]
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            flags = flags.clone()
 
         # squeeze if desired
         if squeeze:
@@ -2234,7 +2307,7 @@ class CalData(TensorData):
         return flags
 
     def get_cov(self, ant=None, times=None, freqs=None, pol=None,
-                squeeze=True, cov=None):
+                squeeze=True, cov=None, try_view=False, **kwargs):
         """
         Slice into cov tensor and return values.
         Only one axis can be specified at a time.
@@ -2254,6 +2327,9 @@ class CalData(TensorData):
             If True, squeeze array before return
         cov : tensor, optional
             Cov tensor to index. default is self.cov
+        try_view : bool, optional
+            If True, if selections can be cast as slices
+            then return a view of original data.
         """
         cov = self.cov if cov is None else cov
         if cov is None:
@@ -2300,16 +2376,19 @@ class CalData(TensorData):
         if squeeze:
             cov = cov.squeeze()
 
+        if not try_view and all([isinstance(ind, slice) for ind in inds]):
+            cov = cov.clone()
+
         return cov
 
-    def get_icov(self, ant=None, icov=None, **kwargs):
+    def get_icov(self, ant=None, icov=None, try_view=False, **kwargs):
         """
         Slice into cached inverse covariance.
         Same kwargs as get_cov()
         """
         if icov is None:
             icov = self.icov
-        return self.get_cov(ant=ant, cov=icov, **kwargs)
+        return self.get_cov(ant=ant, cov=icov, try_view=try_view, **kwargs)
 
     def __getitem__(self, ant):
         return self.get_data(ant, squeeze=True)
@@ -2377,46 +2456,46 @@ class CalData(TensorData):
         if inplace:
             obj = self
             out = obj
+            try_view = True
         else:
-            if try_view:
-                obj = self
-                out = copy.deepcopy(self)
-            else:
-                obj = copy.deepcopy(self)
-                out = obj
+            obj = self
+            out = copy.deepcopy(self)
 
         if ants is not None:
-            data = obj.get_data(ants, squeeze=False)
-            cov = obj.get_cov(ants, squeeze=False)
-            icov = obj.get_icov(ants, squeeze=False)
-            flags = obj.get_flags(ants, squeeze=False)
+            data = obj.get_data(ants, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(ants, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(ants, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(ants, squeeze=False, try_view=try_view)
             out.setup_data(ants, obj.times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if times is not None:
-            data = obj.get_data(times=times, squeeze=False)
-            cov = obj.get_cov(times=times, squeeze=False)
-            icov = obj.get_icov(times=times, squeeze=False)
-            flags = obj.get_flags(times=times, squeeze=False)
+            data = obj.get_data(times=times, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(times=times, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(times=times, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(times=times, squeeze=False, try_view=try_view)
             out.setup_data(obj.ants, times, obj.freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if freqs is not None:
-            data = obj.get_data(freqs=freqs, squeeze=False)
-            cov = obj.get_cov(freqs=freqs, squeeze=False)
-            icov = obj.get_icov(freqs=freqs, squeeze=False)
-            flags = obj.get_flags(freqs=freqs, squeeze=False)
+            data = obj.get_data(freqs=freqs, squeeze=False, try_view=try_view)
+            cov = obj.get_cov(freqs=freqs, squeeze=False, try_view=try_view)
+            icov = obj.get_icov(freqs=freqs, squeeze=False, try_view=try_view)
+            flags = obj.get_flags(freqs=freqs, squeeze=False, try_view=try_view)
             out.setup_data(obj.ants, obj.times, freqs, pol=obj.pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
+            obj = out
 
         if pol is not None:
-            data = obj.get_data(pol=pol)
-            flags = obj.get_flags(pol=pol)
-            cov = obj.get_cov(pol=pol)
-            icov = obj.get_icov(pol=pol)
+            data = obj.get_data(pol=pol, try_view=try_view)
+            flags = obj.get_flags(pol=pol, try_view=try_view)
+            cov = obj.get_cov(pol=pol, try_view=try_view)
+            icov = obj.get_icov(pol=pol, try_view=try_view)
             out.setup_data(obj.ants, obj.times, obj.freqs, pol=pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
@@ -2590,23 +2669,23 @@ class CalData(TensorData):
             data, flags, cov, icov = None, None, None, None
             if read_data:
                 data = self.get_data(ant=ants, times=times, freqs=freqs, pol=pol,
-                                     squeeze=False, data=f['data'])
+                                     squeeze=False, data=f['data'], try_view=True)
                 data = torch.as_tensor(data)
                 if 'flags' in f:
                     flags = self.get_flags(ant=ants, times=times, freqs=freqs, pol=pol,
-                                          squeeze=False, flags=f['flags'])
+                                          squeeze=False, flags=f['flags'], try_view=True)
                     flags = torch.as_tensor(flags)
                 else:
                     flags = None
                 if 'cov' in f:
                     cov = self.get_cov(ant=ants, times=times, freqs=freqs, pol=pol,
-                                       squeeze=False, cov=f['cov'])
+                                       squeeze=False, cov=f['cov'], try_view=True)
                     cov = torch.as_tensor(cov)
                 else:
                     cov = None
                 if 'icov' in f:
                     icov = self.get_icov(ant=ants, times=times, freqs=freqs, pol=pol,
-                                         squeeze=False, icov=f['icov'])
+                                         squeeze=False, icov=f['icov'], try_view=True)
                     icov = torch.as_tensor(icov)
                 else:
                     icov = None
