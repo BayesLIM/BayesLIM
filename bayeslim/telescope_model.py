@@ -208,7 +208,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         # set location metadata
         self.ants = sorted(antpos.keys())
         self._ant_idx = {a: self.ants.index(a) for a in self.ants}
-        self.antpos = torch.as_tensor([antpos[a] for a in self.ants], dtype=_float(), device='cpu')
+        self.antpos = torch.as_tensor(np.array([antpos[a] for a in self.ants]), dtype=_float(), device='cpu')
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
