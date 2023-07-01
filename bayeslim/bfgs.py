@@ -21,7 +21,6 @@ class BFGS:
     Hessian matrix as self.H. Allows for a starting sparse or dense inverse Hessian.
 
     Notes:
-        - no per-parameter options
         - all parameters must be on a single device
 
     For each optimization step, we update the inverse Hessian (H) as
@@ -30,9 +29,9 @@ class BFGS:
 
     where
         matrix      V_k = (I - rho_k y_k s_k^T)
-        col-vector  s_k = x_k+1 - x_k
-        col-vector  y_k = grad_k+1 - grad_k
-        scalar     rho_k = 1 / (y_k^T s_k)
+        vector      s_k = x_k+1 - x_k
+        vector      y_k = grad_k+1 - grad_k
+        scalar    rho_k = 1 / (y_k^T s_k)
 
     and H_{k=0} = y_k @ y_k / y_k @ s_k if an initial H0 is not provided.
 
@@ -44,8 +43,8 @@ class BFGS:
 
         p_k = -H_k grad_k
 
-    where again H_k is the inverse Hessian approximation N x N matrix at step k and grad_k
-    are the loss function gradients column-vector N x 1, and alpha_k is a scalar coefficient
+    where again H_k is the inverse Hessian approximation N x N matrix at step k, and grad_k
+    are the loss function gradients vector N x 1, and alpha_k is a scalar coefficient
     determined by line search. H0 is specified by the user or is the identity matrix.
 
     [1] Nocedal & Wright, "Numerical Optimization", (2000) 2nd Ed.
@@ -358,7 +357,6 @@ class LBFGS(BFGS):
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
 
     Notes:
-        - no per-parameter options
         - all parameters must be on a single device
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
@@ -620,8 +618,8 @@ class FactoredInvHessian:
         self.H0, self.L0, self.rank2 = H0, L0, rank2
         if H0 is not None and L0 is None:
             raise ValueError("If H0 is fed, L0 should be too")
-        self.m = len(s)
-        self.N = len(s[0])
+        self.m = len(s)  # history_size
+        self.N = len(s[0])  # parameter dimensionality
         assert len(s) == len(y) == len(alpha)
 
         # get gradients given y and g_end
@@ -636,7 +634,7 @@ class FactoredInvHessian:
             Hy = [None for _s in s]
         self.u, self.v = [], []
         for i, (_s, _y, _g, _a, _Hy) in enumerate(zip(s, y, g, alpha, Hy)):
-            _u, _v, spd = factor_pairs(_s, _y, _g, _a, _Hy, rank2=rank2, pos=False)
+            _u, _v, spd = factor_pairs(_s, _y, _g, _a, _Hy, rank2=rank2, pos=True)
             if spd:
                 self.u.append(_u)
                 self.v.append(_v)
