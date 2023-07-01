@@ -347,7 +347,8 @@ class PointSkyResponse:
                                                     device=self.device, **kwgs)
 
         elif self.freq_mode == 'powerlaw':
-            self.f0 = kwargs['f0']
+            if 'f0' in kwargs:
+                self.f0 = kwargs['f0']
 
     def __call__(self, params):
         # pass to device
