@@ -375,7 +375,7 @@ class JonesModel(utils.Module, IndexCache):
         self.params = params
         self.device = params.device
         self.p0 = p0
-        self.ants = ants
+        self.ants = list(ants)
         self.Nants = len(self.ants)
         if parameter:
             self.params = torch.nn.Parameter(self.params)
