@@ -347,6 +347,21 @@ class BFGS:
 
         return loss
 
+    def zero_grad(self, set_to_none=True):
+        """
+        Zero the gradients on params
+        """
+        for p in self.params:
+            if p.grad is not None:
+                if set_to_none:
+                    p.grad = None
+                else:
+                    if p.grad.grad_fn is not None:
+                        p.grad.detach_()
+                    else:
+                        p.grad.requires_grad_(False)
+                    p.grad.zero_()
+
 
 class LBFGS(BFGS):
     """
