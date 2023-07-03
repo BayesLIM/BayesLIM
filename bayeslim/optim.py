@@ -1249,7 +1249,7 @@ class Trainer:
 
         return info
 
-    def get_chain(self, name=None):
+    def get_chain(self, name=None, idx=None):
         """
         Extract and return chain history
         if tracking
@@ -1258,6 +1258,9 @@ class Trainer:
         ----------
         name : str, optional
             Return just one param.
+        idx : int, optional
+            Pick out a single epoch from the
+            chain, otherwise retuan all epochs.
 
         Returns
         -------
@@ -1266,9 +1269,19 @@ class Trainer:
         """
         assert self.track
         if name is not None:
-            return torch.stack(self.chain[name])
+            chain = self.chain[name]
+            if idx is None:
+                chain = torch.stack(chain)
+            else:
+                chain = chain[idx]
+
         else:
-            return {k: torch.stack(c) for k, c in self.chain.items()}
+            if idx is None:
+                chain = {k: torch.stack(c) for k, c in self.chain.items()}
+            else:
+                chain = {k: c[idx] for k, c in self.chain.items()}
+
+        return chain
 
     def revert_chain(self, Nepochs):
         """
