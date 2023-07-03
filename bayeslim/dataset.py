@@ -128,55 +128,79 @@ class TensorData:
         self.icov = optim.compute_icov(self.cov, self.cov_axis, inv=inv, **kwargs)
 
     def __add__(self, other):
-        assert self.data.shape == other.data.shape
         out = self.copy()
-        out.data += other.data
-        self._propflags(out, other)
+        if isinstance(other, (float, int, complex)):
+            out.data += other
+        else:
+            assert self.data.shape == other.data.shape
+            out.data += other.data
+            self._propflags(out, other)
         return out
 
     def __iadd__(self, other):
-        assert self.data.shape == other.data.shape
-        self.data += other.data
-        self._propflags(self, other)
+        if isinstance(other, (float, int, complex)):
+            self.data += other
+        else:
+            assert self.data.shape == other.data.shape
+            self.data += other.data
+            self._propflags(self, other)
         return self
 
     def __sub__(self, other):
-        assert self.data.shape == other.data.shape
         out = self.copy()
-        out.data -= other.data
-        self._propflags(out, other)
+        if isinstance(other, (float, int, complex)):
+            out.data -= other
+        else:
+            assert self.data.shape == other.data.shape
+            out.data -= other.data
+            self._propflags(out, other)
         return out
 
     def __isub__(self, other):
-        assert self.data.shape == other.data.shape
-        self.data -= other.data
-        self._propflags(self, other)
+        if isinstance(other, (float, int, complex)):
+            self.data -= other
+        else:
+            assert self.data.shape == other.data.shape
+            self.data -= other.data
+            self._propflags(self, other)
         return self
 
     def __mul__(self, other):
-        assert self.data.shape == other.data.shape
         out = self.copy()
-        out.data *= other.data
-        self._propflags(out, other)
+        if isinstance(other, (float, int, complex)):
+            out.data *= other
+        else:
+            assert self.data.shape == other.data.shape
+            out.data *= other.data
+            self._propflags(out, other)
         return out
 
     def __imul__(self, other):
-        assert self.data.shape == other.data.shape
-        self.data *= other.data
-        self._propflags(self, other)
+        if isinstance(other, (float, int, complex)):
+            self.data *= other
+        else:
+            assert self.data.shape == other.data.shape
+            self.data *= other.data
+            self._propflags(self, other)
         return self
 
     def __truediv__(self, other):
-        assert self.data.shape == other.data.shape
         out = self.copy()
-        out.data /= other.data
-        self._propflags(out, other)
+        if isinstance(other, (float, int, complex)):
+            out.data /= other
+        else:
+            assert self.data.shape == other.data.shape
+            out.data /= other.data
+            self._propflags(out, other)
         return out
 
     def __itruediv__(self, other):
-        assert self.data.shape == other.data.shape
-        self.data /= other.data
-        self._propflags(self, other)
+        if isinstance(other, (float, int, complex)):
+            self.data /= other
+        else:
+            assert self.data.shape == other.data.shape
+            self.data /= other.data
+            self._propflags(self, other)
         return self
 
     @staticmethod
