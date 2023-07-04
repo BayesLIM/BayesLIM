@@ -287,3 +287,46 @@ def phasor_mat(x, shift, neg=True, dtype=None, device=None):
     return cov
 
 
+def gen_cov_modes(cov, N=None, rcond=None, device=None, dtype=None):
+    """
+    Given a hermitian covariance matrix, take its SVD and return the top
+    N modes, or all modes with singular value at least rcond above the
+    max singular value
+
+    Parameters
+    ----------
+    cov : tensor
+        A covariance matrix of shape (M, M) to decompose
+    N : int, optional
+        Take the top N modes where N <= M
+    rcond : float, optional
+        Take all modes that have singular value > S.max() * rcond
+    device : str, optional
+        Push modes to a new device
+    dtype : type, optional
+        Cast modes to a new data type
+
+    Returns
+    -------
+    A : tensor
+        Forward model matrix of shape (M, N)
+    evals : tensor
+        Eigenvalues of cov
+    """
+    assert N is None or rcond is None, "cannot provide both N and rcond"
+    evals, A = torch.linalg.eigh(cov)
+    A = A.flip([1])
+    evals = evals.flip([0])
+
+    if N is not None:
+        A = A[:, :N]
+
+    elif rcond is not None:
+        A = A[:, evals >= evals.max() * rcond]
+
+    A = A.to(device)
+    if dtype is not None:
+        A = A.to(dtype)
+
+    return A, evals
+
