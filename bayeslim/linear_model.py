@@ -24,7 +24,7 @@ class LinearModel:
         Parameters
         ----------
         linear_model : str
-            The kind of model to generate: ['custom', 'poly'].
+            The kind of model to generate: ['custom', 'poly', 'fourier'].
             See utils.gen_linear_A.
         dim : int, optional
             The dimension of the input params tensor to sum over.
@@ -68,6 +68,12 @@ class LinearModel:
 
         self.kwargs = kwargs
         self.A = gen_linear_A(linear_mode, **kwargs)
+        self.freqs = None
+        if linear_mode == 'fourier':
+            _, self.freqs = gen_fourier_A(kwargs.get('x'),
+                                          Ndeg=kwargs.get('Ndeg', None),
+                                          device=kwargs.get('device', None),
+                                          fft_norm=kwargs.get('fft_norm', 'ortho'))
         self.diag = diag
         if diag and self.A.ndim == 2:
             self.A = torch.diag(self.A)
@@ -245,21 +251,22 @@ class MultiLM:
 
 def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
                  whiten=True, x0=None, dx=None, Ndeg=None, basis='direct',
-                 qr=False, device=None, dtype=None, **kwargs):
+                 qr=False, device=None, dtype=None, fft_norm='ortho', **kwargs):
     """
-    Generate a linear mapping design matrix A
+    Generate a linear mapping design matrix A of shape
+    (Nsamples, Nfeatures)
 
     Parameters
     ----------
     linear_mode : str
-        One of ['poly', 'custom']
+        One of ['poly', 'custom', 'fourier']
     A : tensor, optional
         (mode='custom') Linear mapping of shape (Nsamples, Nfeatures)
     x : tensor, optional
-        (mode='poly') sample values
+        (mode='poly', 'fourier') sample values
     d0 : float, optional
         (mode='poly') divide x by d0 before any other operation
-        if provided
+        if provided (for whitening)
     logx : bool, optional
         If True, take logarithm of x before generating
         A matrix (mode='poly')
@@ -268,9 +275,9 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
     x0 : float, optional
         (mode='poly') center x by x0
     dx : float, optional
-        (mode='poly') scale x by 1/dx
+        (mode='poly') scale x by 1/dx after centering
     Ndeg : int, optional
-        (mode='poly') Number of poly degrees
+        (mode='poly', 'fourier') Number of poly degrees or Fourier terms
     basis : str, optional
         (mode='poly') poly basis
     qr : bool, optional
@@ -280,6 +287,8 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
     dtype : type, optional
         data type to cast A to. Default is utils._float() or
         the existing dtype of A if passed.
+    fft_norm : str, optional
+        (mode='fourier') The norm kwarg of torch.fft.fft
 
     Returns
     -------
@@ -296,10 +305,48 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
                        x0=x0, dx=dx, qr=qr)
     elif linear_mode == 'custom':
         A = torch.as_tensor(A)
+    elif linear_mode == 'fourier':
+        A, _ = gen_fourier_A(x, Ndeg=Ndeg, device=device, fft_norm=fft_norm)
 
     A = torch.atleast_1d(A).to(dtype).to(device)
 
     return A
+
+
+def gen_fourier_A(x, Ndeg=None, device=None, fft_norm='ortho'):
+    """
+    Generate a complex Fourier series matrix A of shape
+    (Nsamples, Ndeg)
+
+    Parameters
+    ----------
+    x : tensor
+        Independent axis sample values
+    Ndeg : int
+        Number of Fourier modes to keep, default
+        is all modes. For Ndeg != len(x) this keeps
+        the "Ndeg" central Fourier modes
+    device : str, optional
+        Device to push A to
+    fft_norm : str, optional
+        FFT norm convention
+
+    Returns
+    -------
+    A : tensor
+    freqs : tensor
+    """
+    # get modes
+    A = torch.fft.fftshift(torch.fft.fft(torch.eye(len(x)), dim=-1, norm=fft_norm), dim=-1)
+    freqs = torch.fft.fftshift(torch.fft.fftfreq(len(x), torch.as_tensor(x[1] - x[0])))
+
+    # cut down to central Ndeg terms
+    if Ndeg is not None:
+        N = A.shape[1]//2 - Ndeg//2
+        A = A[:, N:N+Ndeg]
+        freqs = freqs[N:N+Ndeg]
+
+    return A, freqs
 
 
 def gen_poly_A(x, Ndeg, device=None, basis='direct', d0=None,
