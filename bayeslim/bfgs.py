@@ -251,9 +251,10 @@ class BFGS:
         prev_loss, prev_grad = None, None
 
         # evaluate optimum condition
-        opt_cond = flat_grad.abs().max() <= self.tolerance_grad
+        is_finite = np.isfinite(float(loss)) and np.isfinite(flat_grad.numpy()).all()
+        opt_cond = flat_grad.abs().max() <= self.tolerance_grad or not is_finite
         if opt_cond:
-            self.exit = 2
+            self._exit = 2
             return loss
 
         # optimize for max_iter steps
