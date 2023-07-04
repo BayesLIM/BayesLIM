@@ -787,7 +787,7 @@ class RedVisModel(utils.Module, IndexCache):
             If True, treat params as a parameter to be fitted,
             otherwise treat it as fixed to its input value.
         p0 : tensor, optional
-            Starting params to sum with params before Response
+            Starting params to sum with params before the response
             function. This reframes params as a perturbation about p0.
             Same shape and dtype as params.
         name : str, optional
@@ -817,14 +817,16 @@ class RedVisModel(utils.Module, IndexCache):
 
         Parameters
         ----------
-        vd : VisData, optional
+        vd : VisData
             Starting model visibilities of shape
-            (Npol, Npol, Nbl, Ntimes, Nfreqs). In the general case,
+            (Npol, Npol, Nredbl, Ntimes, Nfreqs). In the general case,
             this should be a zero tensor so that the
             predicted visibilities are simply the redundant
             model. However, if you have a model of per-baseline
             non-redundancies, these could be included by putting
-            them into vd.
+            them into vd. If this holds zero tensor as data, then
+            this is mainly used to propagate important metadata
+            downstream.
         undo : bool, optional
             If True, push vd backwards through the model.
         prior_cache : dict, optional
@@ -836,10 +838,9 @@ class RedVisModel(utils.Module, IndexCache):
             The predicted visibilities, having pushed vd through
             the redundant visibility model.
         """
-        if vd is None:
-            vd = dataset.VisData()
         # push to device
-        vd.push(self.device)
+        if self.device is not None:
+            vd.push(self.device)
 
         # setup predicted visibility
         vout = vd.copy()
@@ -1101,7 +1102,8 @@ class VisCoupling(utils.Module, IndexCache):
     an Nbls x Nbls coupling transformation
     """
     def __init__(self, params, freqs, antpos, coupling_terms, bls_in, bls_out,
-                 R=None, parameter=True, p0=None, name=None, atol=1e-4):
+                 coupling_idx=None, R=None, parameter=True, p0=None, name=None,
+                 atol=1e-4):
         """
         Visibility coupling model. Note this does not support baseline
         minibatching (all baselines must exist in the input VisData object).
@@ -1128,6 +1130,11 @@ class VisCoupling(utils.Module, IndexCache):
         bls_out : list
             The baseline ordering (ant-pair tuples) of the VisData object that is
             output from the forward pass. E.g. [(0, 1), (1, 2), (2, 3), ...]
+        coupling_idx : dict, optional
+            Keys are coupling term tuples and values are the index of this term
+            in the coupling_terms list. Default is to generate automatically.
+            To operate in "redundant coupling" mode, this should be passed
+            by the user. See gen_coupling_terms(..., compress_to_red=True)
         use_reds : bool
             If True, bls_in represents unique redundant model baselines, otherwise
             it represents all physical baselines.
@@ -1149,12 +1156,13 @@ class VisCoupling(utils.Module, IndexCache):
         super().__init__(name=name)
         ## TODO: support multi-pol coupling
         ## TODO: support frequency batching (for IndexCache and beam, sky objects too)
-        ## TODO: support redundant coupling vectors
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.antpos = antpos
         self.coupling_terms = coupling_terms
-        self._coupling_idx = {c: i for i, c in enumerate(coupling_terms)}
+        if coupling_idx is None:
+            coupling_idx = {c: i for i, c in enumerate(coupling_terms)}
+        self.coupling_idx = coupling_idx
         self.Nterms = len(coupling_terms)
         self.c = 2.99792458e8
         self.bls_in = bls_in
@@ -1241,8 +1249,8 @@ class VisCoupling(utils.Module, IndexCache):
                     # unconj vis is in this row
                     for eps in Arow[bli]:
                         c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
-                        if c_id not in self._coupling_idx: break
-                        c_idx = self._coupling_idx[c_id]
+                        if c_id not in self.coupling_idx: break
+                        c_idx = self.coupling_idx[c_id]
                         if 'conj' in eps:
                             # this is unconj_vis, conj_param
                             self.conj_param_unconj_vis[1].append(c_idx)
@@ -1255,8 +1263,8 @@ class VisCoupling(utils.Module, IndexCache):
                     # conj vis is in this row
                     for eps in Arow[bli[::-1]]:
                         c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
-                        if c_id not in self._coupling_idx: break
-                        c_idx = self._coupling_idx[c_id]
+                        if c_id not in self.coupling_idx: break
+                        c_idx = self.coupling_idx[c_id]
                         if 'conj' in eps:
                             # this is conj_vis, conj_param
                             self.conj_param_conj_vis[1].append(c_idx)
@@ -1355,29 +1363,15 @@ class VisCoupling(utils.Module, IndexCache):
         return vout
 
     def index_params(self, params, times=None, bls=None):
-        """overload IndexCache index_params b/c of double bl-bl axis"""
+        """overload IndexCache index_params b/c of time broadcast"""
         if times is not None:
             # if only 1 time bin in params, assume we want to broadcast
             if params.shape[-2] == 1:
                 pass
             else:
-                idx = self.get_time_idx(times)
-                if idx is None:
-                    params = params
-                elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-2]:
-                    params = params
-                else:
-                    params = params[..., idx, :]
-        if bls is not None:
-            idx = self.get_bl_idx(bls)
-            if idx is None:
-                params = params
-            elif isinstance(idx, slice) and (idx.stop - idx.start) // idx.step == params.shape[-3]:
-                params = params
-            else:
-                params = params[:, :, idx, idx]
+                params = super(utils.Module, self).index_params(params, times=times)
 
-        return params
+        return super(utils.Module, self).index_params(params, bls=bls)
 
     def push(self, device):
         """
@@ -2031,7 +2025,8 @@ def configure_coupling_matrix_1order(antpos, bls, bl2red=None, reds=None, no_aut
     return Arows
 
 
-def gen_coupling_pairs(antpos, min_len=None, max_len=None, max_EW=None, max_NS=None, ants=None, no_autos=True):
+def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=None,
+                       ants=None, no_autos=True, compress_to_red=False, redtol=1.0):
     """
     Given a dict of antennas and antenna vectors, generate a list of ant1->ant2 coupling
     pairs to model. Assumes single pol.
@@ -2055,12 +2050,23 @@ def gen_coupling_pairs(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
         Default is to use all antennas in antpos.
     no_autos : bool, optional
         If True, don't include ant_i -> ant_i coupling terms (default).
+    compress_to_red : bool, optional
+        If True, only return coupling terms for unique baseline vectors
+        and modify coupling_idx to account for this redundancy. Note that
+        unlike redundancy in baselines, the conjugate antenna-pair is not
+        considered redundant with the unconjugate antenna-pair. E.g.
+        (0, 1) != (1, 0)
+    redtol : float, optional
+        Redundancy tolerance in antenna pos units. 
 
     Returns
     --------
     coupling_terms : list
         List of coupling terms, e.g. [(0, 1), (1, 0), (0, 2), (2, 0), ...]
         where (0, 1) denotes coupling of ant0 -> ant1
+    coupling_idx : dict
+        Keys are coupling term tuples and values are the index of this term
+        in the coupling_terms list.
     """
     assert isinstance(antpos, dict)
     coupling_terms = []
@@ -2080,4 +2086,37 @@ def gen_coupling_pairs(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
                 continue
             coupling_terms.append((ant_i, ant_j))
 
-    return coupling_terms
+    coupling_idx = {c: i for i, c in enumerate(coupling_terms)}
+
+    if compress_to_red:
+        # compress by redundancy
+        red_vecs = []
+        red_grps = []
+        red_idx = []
+        for ct in coupling_terms:
+            c_vec = antpos[ct[1]] - antpos[ct[0]]
+
+            if len(red_vecs) == 0:
+                red_vecs.append(c_vec)
+                red_grps.append([ct])
+                red_idx.append(0)
+                continue
+
+            # look for a match for this vector
+            match = np.linalg.norm(np.array(red_vecs) - c_vec, axis=1) < redtol
+            if match.any():
+                # ct belongs to an existing red group
+                k = np.where(match)[0][0]
+                red_grps[k].append(ct)
+                red_idx.append(k)
+            else:
+                # ct is it a new group
+                red_idx.append(len(red_vecs))
+                red_vecs.append(c_vec)
+                red_grps.append([ct])
+
+        coupling_idx = {c: red_idx[i] for i, c in enumerate(coupling_terms)}
+        coupling_terms = [rg[0] for rg in red_grps]
+
+    return coupling_terms, coupling_idx
+
