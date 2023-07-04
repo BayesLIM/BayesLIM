@@ -669,7 +669,7 @@ def JD2LST(jd, longitude):
     return t.sidereal_time('apparent', longitude=longitude * units.deg).radian
 
 
-def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
+def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
                min_EW_len=None, exclude_reds=None, skip_reds=False):
     """
     Build redundant groups. Note that this currently has sub-optimal
@@ -686,10 +686,15 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
         keys are ant integers, values are len-3 arrays
         holding antenna position in ENU (east-north-up)
     bls : list, optional
-        List of baselines to sort into redundant groups using
+        List of all physical baselines to sort into redundant groups using
         antenna positions (i.e. only use this subset of all possible bls).
-        Default is to compute all possible redundancies from antpos.
-        Uses first baseline in numerical order as representative redundant baseline.
+        Default is to compute all possible physical baselines from antpos.
+        Uses first baseline in numerical order as the representative redundant baseline.
+    red_bls : list, optional
+        A list of unique representative redundant baselines to keep in output reds.
+        I.e. filter out redundant groups not present in red_bl. Default is to
+        compute all possible redundant groups. If fed red_bls, this updates
+        the output bl2red to match the ordering in red_bls.
     redtol : float, optional
         Redunancy tolerance [m]
     min_len : float, optional
@@ -791,8 +796,19 @@ def build_reds(antpos, bls=None, redtol=1.0, min_len=None, max_len=None,
             # this falls into an existing redundant group
             reds[rgroup].append(bl)
 
-    # resort by baseline length
-    s = np.argsort(lens)
+    # resort by input red_bls
+    if red_bls is not None:
+        s = []
+        for rbl in red_bls:
+            for i, red in enumerate(reds):
+                if rbl in red or rbl[::-1] in red:
+                    s.append(i)
+                    break
+
+    # or resort by baseline length
+    else:
+        s = np.argsort(lens)
+
     reds = [sorted(reds[i]) for i in s]
     rvec = [rvec[i] for i in s]
     lens = [lens[i] for i in s]
