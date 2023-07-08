@@ -516,7 +516,7 @@ class VisData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-10))[0].tolist()
+        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-12))[0].tolist()
 
     def _freq2ind(self, freq):
         """
@@ -2148,7 +2148,7 @@ class CalData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-10))[0].tolist()
+        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-12))[0].tolist()
 
     def _freq2ind(self, freq):
         """
