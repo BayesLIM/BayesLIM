@@ -1209,7 +1209,8 @@ class VisCoupling(utils.Module, IndexCache):
         """
         if use_reds:
             # build redundancies
-            reds, rvec, bl2red, all_bls, lens, angs, _ = telescope_model.build_reds(self.antpos, redtol=redtol)
+            reds, rvec, bl2red, all_bls, lens, angs, _ = telescope_model.build_reds(self.antpos,
+                bls=self.bls_out, redtol=redtol)
         else:
             bl2red = None
             reds = None
@@ -1990,6 +1991,8 @@ def configure_coupling_matrix_1order(antpos, bls, bl2red=None, reds=None, no_aut
     for bl in bls:
         Arows[bl] = {}
         # iterate over all antennas
+        # coupling vector is ant -> ant_i
+        # coupled visibility is (ant_j, ant) or (ant, ant_j) or its redundant representative
         for ant in antpos:
             # iterate over two antennas in bl
             for i in range(2):
@@ -1999,11 +2002,18 @@ def configure_coupling_matrix_1order(antpos, bls, bl2red=None, reds=None, no_aut
                 if no_autos and ant == ant_i: continue
                 coupled_vis = (ant, ant_j) if i == 0 else (ant_j, ant)
                 if bl2red is not None:
+                    # use first bl tuple in a reds sublist as coupled_vis
                     try:
+                        # try unconjugated coupled_vis
                         coupled_vis = reds[bl2red[coupled_vis]][0]
                     except:
-                        # account for conjugated bls
-                        coupled_vis = reds[bl2red[coupled_vis[::-1]]][0][::-1]
+                        try:
+                            # now try conjugated coupled_vis
+                            coupled_vis = reds[bl2red[coupled_vis[::-1]]][0][::-1]
+                        except KeyError:
+                            # coupled_vis and its conjugate are not in bl2red dict
+                            # so skip this coupling term!
+                            continue
 
                 # compute coupling vector for ant->anti to make V_ant,antj
                 vec = antpos[ant] - antpos[ant_i]
