@@ -174,7 +174,7 @@ class PeakDelay(FFT):
         return out
 
 
-def vis_wedge(vd, **kwargs):
+def vis_wedge(vd, ravg_kwgs=None, **kwargs):
     """
     Given a VisData object, take its FFT along frequency
     and average redundant groups to form a wedge
@@ -182,6 +182,9 @@ def vis_wedge(vd, **kwargs):
     Parameters
     ----------
     vd : VisData object
+    ravg_kwgs : dict, optional
+        Keyword arguments to pass to vd.bl_average()
+        for redundant averaging.
     kwargs : dict, optional
         Additional keyword args to send to fft.FFT(**kwargs)
 
@@ -193,7 +196,8 @@ def vis_wedge(vd, **kwargs):
         FFT object holding Fourier modes as FFT.freqs
     """
     # average redundancies
-    vd = vd.bl_average(inplace=False)
+    ravg_kwgs = ravg_kwgs if ravg_kwgs is not None else {}
+    vd = vd.bl_average(inplace=False, **ravg_kwgs)
 
     # setup FT object
     dfreq = vd.freqs[1] - vd.freqs[0]
