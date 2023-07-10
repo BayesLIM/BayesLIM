@@ -236,6 +236,7 @@ class VisData(TensorData):
         """
         self.telescope = telescope
         self.antpos = antpos
+        self.ants, self.antvec = None, None
         if antpos is not None:
             self.ants = np.array(list(antpos.keys()))
             self.antvec = np.array(list(antpos.values()))
@@ -905,7 +906,8 @@ class VisData(TensorData):
             try_view = True
         else:
             obj = self
-            out = copy.deepcopy(self)
+            out = VisData()
+            out.setup_meta(telescope=self.telescope, antpos=self.antpos)
 
         if bl is not None or bl_inds is not None:
             assert not ((bl is not None) & (bl_inds is not None))
@@ -1808,7 +1810,8 @@ class MapData(TensorData):
             try_view = True
         else:
             obj = self
-            out = copy.deepcopy(self)
+            out = MapData()
+            out.setup_meta(name=self.name)
 
         if angs is not None or ang_inds is not None:
             data = obj.get_data(angs=angs, ang_inds=ang_inds, squeeze=False, try_view=try_view)
@@ -2009,6 +2012,10 @@ class CalData(TensorData):
         """
         self.telescope = telescope
         self.antpos = antpos
+        self.ants, self.antvec = None, None
+        if antpos is not None:
+            self.ants = np.array(list(antpos.keys()))
+            self.antvec = np.array(list(antpos.values()))
 
     def setup_data(self, ants, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -2483,7 +2490,8 @@ class CalData(TensorData):
             try_view = True
         else:
             obj = self
-            out = copy.deepcopy(self)
+            out = CalData()
+            out.setup_meta(telescope=self.telescope, antpos=self.antpos)
 
         if ants is not None:
             data = obj.get_data(ants, squeeze=False, try_view=try_view)
