@@ -48,7 +48,7 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                mmin=0, high_prec=True, add_mono=True,
                add_sectoral=True, bc_type=2, real_field=True,
                Nrefine_iter=3, refine_dl=1e-7,
-               Nproc=None, Ntask=5):
+               Nproc=None, Ntask=5, use_pathos=False):
     """
     Compute associated Legendre function degrees l on
     the spherical stripe or cap given boundary conditions.
@@ -116,6 +116,10 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
         If not None, launch multiprocessing of Nprocesses
     Ntask : int, optional
         Number of m-modes to solve for for each process
+    use_pathos : bool, optional
+        If multiprocessing (Nproc not None) and use_pathos = True,
+        use the multiprocess module, otherwise use the more
+        standard multiprocessing module (default).
 
     Returns
     -------
@@ -133,9 +137,12 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
     # run multiproc mode
     if Nproc is not None:
         # setup multiprocessing
-        import multiprocessing
-        start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None: multiprocessing.set_start_method('spawn') 
+        if use_pathos:
+            import multiprocess as mproc
+        else:
+            import multiprocessing as mproc
+        start_method = mproc.get_start_method(allow_none=True)
+        if start_method is None: mproc.set_start_method('spawn') 
         Njobs = len(m) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -153,12 +160,8 @@ def compute_lm(phi_max, mmax, theta_min, theta_max, lmax, dl=0.1,
                          ])
 
         # run jobs
-        try:
-            pool = multiprocessing.Pool(Nproc)
+        with mproc.Pool(Nproc) as pool:
             output = pool.map(_compute_lm_multiproc, jobs)
-        finally:
-            pool.close()
-            pool.join()
 
         # combine
         larr, marr = [], []
@@ -253,7 +256,7 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
                 method='sphere', theta_crit=None,
                 Nproc=None, Ntask=10, device=None, high_prec=True,
                 bc_type=2, real=False, m_phasor=False,
-                renorm=False, **norm_kwargs):
+                renorm=False, use_pathos=False, **norm_kwargs):
     """
     Generate spherical harmonic forward model matrix.
 
@@ -334,6 +337,10 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
         approximation, see normalize_Ylm() for details.
     norm_kwargs : dict, optional
         Kwargs for renormalization see normalize_Ylm() for details.
+    use_pathos : bool, optional
+        If multiprocessing (Nproc not None) and use_pathos = True,
+        use the multiprocess module, otherwise use the more
+        standard multiprocessing module (default).
 
     Returns
     -------
@@ -357,9 +364,12 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
     # run multiproc mode
     if Nproc is not None:
         # setup multiprocessing
-        import multiprocessing
-        start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None: multiprocessing.set_start_method('spawn') 
+        if use_pathos:
+            import multiprocess as mproc
+        else:
+            import multiprocessing as mproc
+        start_method = mproc.get_start_method(allow_none=True)
+        if start_method is None: mproc.set_start_method('spawn') 
         Njobs = len(l) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -377,12 +387,8 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
             jobs.append([(_l, _m), args, kwgs])
 
         # run jobs
-        try:
-            pool = multiprocessing.Pool(Nproc)
-            output = pool.map(_gen_sph2pix_multiproc, jobs)
-        finally:
-            pool.close()
-            pool.join()
+        with mproc.Pool(Nproc) as pool:
+            output = pool.map(_compute_lm_multiproc, jobs)
 
         # combine
         if separable:
@@ -939,7 +945,7 @@ def _gen_bessel2freq_multiproc(job):
  
 def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
                     device=None, method='shell', bc_type=2,
-                    renorm=True, r_crit=None, **kln_kwargs):
+                    renorm=True, r_crit=None, use_pathos=False, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
     from Fourier domain (k) to LOS distance or frequency domain (r or nu)
@@ -988,6 +994,10 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         If kbins is not provided, compute them here.
         These are the args and kwargs fed to
         sph_bessel_kln().
+    use_pathos : bool, optional
+        If multiprocessing (Nproc not None) and use_pathos = True,
+        use the multiprocess module, otherwise use the more
+        standard multiprocessing module (default).
 
     Returns
     -------
@@ -1005,9 +1015,12 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
     # multiproc mode
     if Nproc is not None:
         assert kbins is None, "no multiproc necessary if passing kbins"
-        import multiprocessing
-        start_method = multiprocessing.get_start_method(allow_none=True)
-        if start_method is None: multiprocessing.set_start_method('spawn') 
+        if use_pathos:
+            import multiprocess as mproc
+        else:
+            import multiprocessing as mproc
+        start_method = mproc.get_start_method(allow_none=True)
+        if start_method is None: mproc.set_start_method('spawn') 
         Njobs = len(ul) / Ntask
         if Njobs % 1 > 0:
             Njobs = np.floor(Njobs) + 1
@@ -1022,12 +1035,8 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
             jobs.append([args, kwargs])
 
         # run jobs
-        try:
-            pool = multiprocessing.Pool(Nproc)
-            output = pool.map(_gen_bessel2freq_multiproc, jobs)
-        finally:
-            pool.close()
-            pool.join()
+        with mproc.Pool(Nproc) as pool:
+            output = pool.map(_compute_lm_multiproc, jobs)
 
         # collect output
         gln, kln = {}, {}
