@@ -1815,7 +1815,7 @@ class SFBModel:
         self.LM = LM
 
     def setup_gln(self, l, gln=None, kln=None, out_dtype=None,
-                  r=None, **gln_kwargs):
+                  r=None, m=None, **gln_kwargs):
         """
         Setup spherical Bessel forward transform
         gln matrices, t_lm(k_n) * g_l(k_n r) -> a_lm(r)
@@ -1829,8 +1829,18 @@ class SFBModel:
             Forward transform tensors of shape (Nk, Nradial)
             for each unique "L" in the l array. Key is "L" float,
             value is the g_l(k_n r) tensor.
-
         kln : dict, optional
+            Dictionary holding the k wave-vector values for
+            each entry in gln. Keys are the same as gln, values
+            are 1D arrays holding k values for each gln mode
+        r : array, optional
+            Comoving radial bins to generate gln modes at, if
+            gln is None
+        m : array, optional
+            An array of m modes of the same length as l. This
+            is not strictly needed, but can be useful for
+            debugging. If provided, this generates a self.m_arr
+            array of the same shape as self.l_arr
         """
         # compute gln dictionary if needed
         if not gln:
@@ -1839,6 +1849,7 @@ class SFBModel:
         self.gln = gln
         self.kln = kln
         self.l = l
+        self.m = m
 
         # get indexing from gln dict to params tensor
         # assumes gln is an ordered dict
@@ -1847,9 +1858,11 @@ class SFBModel:
         self.alm_shape = {}
         self.k_arr = []
         self.l_arr = []
+        self.m_arr = []
         Nlmn = 0
         for key in self.gln:
             Nk = len(self.gln[key])
+            # get the indices in l for this particular key
             idx = np.where(np.isclose(l, key, atol=1e-6, rtol=1e-10))[0]
             Nl = len(idx)
             N = Nk * Nl
@@ -1861,11 +1874,14 @@ class SFBModel:
             # populate arrays of k and l of the input params tensor
             self.k_arr.extend(list(self.kln[key]) * Nl) 
             self.l_arr.extend([key] * N)
+            if m is not None:
+                self.m_arr.extend([_m for _m in m[idx] for i in range(Nk)])
             Nlmn += N
     
         self.Nlmn = Nlmn
         self.k_arr = np.asarray(self.k_arr)
         self.l_arr = np.asarray(self.l_arr)
+        self.m_arr = np.asarray(self.m_arr)
         self.Nr = self.gln[self.l_arr[0]].shape[1]
         self.Nlm = len(l)
         self.out_dtype = out_dtype if out_dtype is not None else utils._cfloat()
