@@ -53,11 +53,11 @@ class BaseResponse:
         self.device = device
         self.freq_kwargs = freq_kwargs
         self.time_kwargs = time_kwargs
+        self.time_dim = time_dim
+        self.freq_dim = freq_dim
         self.setup_freqs(**freq_kwargs)
         self.setup_times(**time_kwargs)
         self.LM = LM
-        self.time_dim = time_dim
-        self.freq_dim = freq_dim
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
