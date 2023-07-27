@@ -85,7 +85,6 @@ class GPFilter(BaseFilter):
         super().__init__(dim=dim, name=name, attrs=attrs)
         self.Cs = torch.as_tensor(Cs, device=device)
         self.Cn = torch.as_tensor(Cn, device=device)
-        self.C = self.Cs + self.Cn
         self.dtype = dtype
         self.rcond = rcond
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
@@ -95,7 +94,7 @@ class GPFilter(BaseFilter):
 
         self.setup_filter()
 
-    def setup_filter(self, **inv_kwargs):
+    def setup_filter(self, Cs=None, Cn=None, **inv_kwargs):
         """
         Setup the filter matrix given self.Cs, self.Cn
         and self.rcond. This takes pseudo-inv of C_data
@@ -104,18 +103,33 @@ class GPFilter(BaseFilter):
 
         Parameters
         ----------
+        Cs : tensor, optional
+            Set self.Cs as Cs if provided, otherwise keep self.Cs
+        Cn : tensor, optional
+            Set self.Cn as Cn if provided, otherwise keep self.Cn
         inv_kwargs : dict, optional
             Kwargs to send to linalg.invert_matrix() for
             inverting self.C
         """
         # G = S [S + N]^-1
+        self.Cs = self.Cs if Cs is None else Cs
+        self.Cn = self.Cn if Cn is None else Cn
+        self.C = self.Cs + self.Cn
         self.C_inv = linalg.invert_matrix(self.C, **inv_kwargs)
+        self.C_inv = self.C_inv.to(self.dtype).to(self.device)
+        self.Cs = self.Cs.to(self.dtype).to(self.device)
+
+        self.set_GV()
+
+    def set_GV(self):
+        """
+        Setup filtering matrices G and the variance matrix V
+        given self.Cs and self.C_inv
+        """
         self.G = self.Cs @ self.C_inv
         self.V = self.Cs - self.Cs @ self.C_inv @ self.Cs.T.conj()
 
-        self.G = self.G.to(self.dtype).to(self.device)
-
-    def predict(self, inp):
+    def predict(self, inp, Cs=None):
         """
         Given input data, form the prediction
         of the signal
@@ -128,6 +142,16 @@ class GPFilter(BaseFilter):
         ----------
         inp : tensor or dataset.TensorData subclass
             Data to filter
+        Cs : tensor, optional
+            Square (or rectangular) matrix holding the
+            covariance of the estimated signal for each
+            (x^prime, x), of shape (N_x_new, N_x),
+            where N_x are the number of data samples,
+            and N_x_new are the number of points to estimate
+            the signal. By default, x_new = x such that
+            Cs is square and stored as self.Cs. Passing
+            a Cs here allows one to estimate the signal at
+            new points along the data sampling axis.
 
         Returns
         -------
@@ -139,15 +163,17 @@ class GPFilter(BaseFilter):
             return out
 
         # assume inp is a tensor from here
+        G = self.G if Cs is None else Cs @ self.C_inv
+
         ein = self.ein.copy()
         ein = ein[:inp.ndim]
         ein[self.dim] = 'j'
         ein = ''.join(ein)
-        y = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), self.G, inp)
+        y = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), G, inp)
 
         return y
 
-    def forward(self, inp, **kwargs):
+    def forward(self, inp, Cs=None, **kwargs):
         """
         Filter the input and return
         """
@@ -163,7 +189,7 @@ class GPFilter(BaseFilter):
             return out
 
         # assume inp is a tensor from here
-        y_filt = self.predict(inp)
+        y_filt = self.predict(inp, Cs=Cs)
 
         if self.residual:
             y_filt = inp - y_filt
@@ -285,6 +311,37 @@ def phasor_mat(x, shift, neg=True, dtype=None, device=None):
         cov = cov.to(dtype)
 
     return cov
+
+
+def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
+    """
+    Convolution of a Gaussian and Sinc covariance function
+    See appendix A2 of arxiv:1608.05854
+    """
+    raise NotImplementedError
+    sinc_ls = sinc_ls * (2 / np.pi)
+
+    arg = gauss_ls / np.sqrt(2) / sinc_ls
+    Xc = X / gauss_ls / np.sqrt(2)
+
+    dists = pdist(Xc, metric="euclidean")
+    K = func(dists, arg)
+    K = squareform(K)
+    np.fill_diagonal(K, 1)
+
+    if high_prec:
+        import mpmath
+        fn = lambda z: mpmath.exp(-z**2) * (mpmath.erf(arg + 1j*z) + mpmath.erf(arg - 1j*z)).real
+        K = 0.5 * np.asarray(np.frompyfunc(fn, 1, 1)(dists), dtype=float) / special.erf(arg)
+
+    else:
+        K = 0.5 * np.exp(-dists**2) / special.erf(arg) \
+            * (special.erf(arg + 1j*dists) + special.erf(arg - 1j*dists))
+        # replace nans with zero: in this limit, you should use high_prec
+        # but this is a faster approximation
+        K[np.isnan(K)] = 0.0
+
+    return K
 
 
 def gen_cov_modes(cov, N=None, rcond=None, device=None, dtype=None):
