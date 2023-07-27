@@ -37,14 +37,6 @@ class BaseMat(object):
 
     @abstractmethod
     def scalar_mul(self, scalar):
-        """
-        Multiply a scalar into the matrix
-        inplace
-
-        Parameters
-        ----------
-        scalar : float
-        """
         pass
 
     @abstractmethod

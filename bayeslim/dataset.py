@@ -2,7 +2,7 @@
 Module for visibility and map data formats, and a torch style data loader
 """
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset as TorchDataset
 import numpy as np
 import os
 import copy
@@ -2787,7 +2787,7 @@ class CalData(TensorData):
         raise NotImplementedError
 
 
-class Dataset(Dataset):
+class Dataset(TorchDataset):
     """
     Dataset iterator for VisData, MapData, CalData, or TensorData
     """
