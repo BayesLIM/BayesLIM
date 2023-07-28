@@ -197,7 +197,7 @@ class GPFilter(BaseFilter):
         return y_filt
 
 
-def rbf_cov(x, ls, amp=1, dtype=None, device=None):
+def rbf_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
     Generate a Gaussian (aka RBF) covariance
 
@@ -213,12 +213,17 @@ def rbf_cov(x, ls, amp=1, dtype=None, device=None):
         in units of [x]
     amp : float, optional
         Multiplicative variance, default is 1
+    x2 : tensor, optional
+        Second set of independent axis labels, generating
+        a non-square covariance matrix.
 
     Returns
     -------
     tensor
     """
-    cov = amp * torch.exp(-.5 * (x[:, None] - x[None, :])**2 / ls**2)
+    x = torch.atleast_2d(x)
+    x2 = x if x2 is None else torch.atleast_2d(x2)
+    cov = amp * torch.exp(-.5 * (x2.T - x)**2 / ls**2)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
@@ -226,7 +231,7 @@ def rbf_cov(x, ls, amp=1, dtype=None, device=None):
     return cov
 
 
-def exp_cov(x, ls, amp=1, dtype=None, device=None):
+def exp_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
     Generate an exponential covariance
 
@@ -242,12 +247,17 @@ def exp_cov(x, ls, amp=1, dtype=None, device=None):
         in units of [x]
     amp : float, optional
         Multiplicative variance, default is 1
+    x2 : tensor, optional
+        Second set of independent axis labels, generating
+        a non-square covariance matrix.
 
     Returns
     -------
     tensor
     """
-    cov = amp * torch.exp(-torch.abs(x[:, None] - x[None, :]) / ls)
+    x = torch.atleast_2d(x)
+    x2 = x if x2 is None else torch.atleast_2d(x2)
+    cov = amp * torch.exp(-torch.abs(x2.T - x) / ls)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
@@ -255,7 +265,7 @@ def exp_cov(x, ls, amp=1, dtype=None, device=None):
     return cov
 
 
-def sinc_cov(x, ls, amp=1, dtype=None, device=None):
+def sinc_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
     Generate a Sinc covariance
 
@@ -269,12 +279,17 @@ def sinc_cov(x, ls, amp=1, dtype=None, device=None):
         in units of [x]
     amp : float, optional
         Multiplicative variance, default is 1
+    x2 : tensor, optional
+        Second set of independent axis labels, generating
+        a non-square covariance matrix.
 
     Returns
     -------
     tensor
     """
-    cov = amp * torch.sinc((x[:, None] - x[None, :]) / ls)
+    x = torch.atleast_2d(x)
+    x2 = x if x2 is None else torch.atleast_2d(x2)
+    cov = amp * torch.sinc((x2.T - x) / ls)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
@@ -282,7 +297,7 @@ def sinc_cov(x, ls, amp=1, dtype=None, device=None):
     return cov
 
 
-def phasor_mat(x, shift, neg=True, dtype=None, device=None):
+def phasor_mat(x, shift, neg=True, x2=None, dtype=None, device=None):
     """
     Generate a complex phasor matrix
 
@@ -297,15 +312,20 @@ def phasor_mat(x, shift, neg=True, dtype=None, device=None):
     neg : bool, optional
         Sign convention for Fourier term. If True will use
         exp(-2j) otherwise will use exp(2j)
+    x2 : tensor, optional
+        Second set of independent axis labels, generating
+        a non-square covariance matrix.
 
     Returns
     -------
     tensor
     """
+    x = torch.atleast_2d(x)
+    x2 = x if x2 is None else torch.atleast_2d(x2)
     coeff = 2j * np.pi
     if neg:
         coeff *= -1
-    cov = torch.exp(coeff * (x[:, None] - x[None, :]) * shift)
+    cov = torch.exp(coeff * (x2.T - x) * shift)
     cov = cov.to(device)
     if dtype is not None:
         cov = cov.to(dtype)
