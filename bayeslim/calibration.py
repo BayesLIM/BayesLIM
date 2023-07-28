@@ -168,22 +168,7 @@ class BaseResponse:
         tensor
         """
         # convert to gains
-        if self.param_type == 'com':
-            # assume params are already complex
-            pass
-
-        elif self.param_type == 'real':
-            params =  params + 0j
-
-        elif self.param_type == 'amp':
-            # assume params are amplitude
-            params = torch.exp(params) + 0j
-
-        elif self.param_type == 'phs':
-            params = torch.exp(1j * params)
-
-        elif self.param_type == 'amp_phs':
-            params = torch.exp(params[..., 0] + 1j * params[..., 1])
+        params = params2complex(params, self.param_type)
 
         return params
 
@@ -200,6 +185,82 @@ class BaseResponse:
             self.freq_LM.push(device)
         if self.time_mode == 'linear':
             self.time_LM.push(device)
+
+
+def params2complex(params, param_type):
+    """
+    Convert a parameter tensor of a gain or visibility
+    into a complex form
+
+    Parameters
+    ----------
+    params : tensor
+        Gain or visibility in a "parameter" representation
+        of type "param_type"
+    param_type : str
+        The type of params, ['com', 'real', 'amp', 'phs', 'amp_phs']
+        If 'amp_phs', params must be of shape (..., 2) where
+        the last two elements are (amp, phs) respectively.
+
+    Returns
+    -------
+    tensor
+    """
+    if param_type == 'com':
+        # assume params are already complex
+        pass
+
+    elif param_type == 'real':
+        params = params + 0j
+
+    elif param_type == 'amp':
+        # assume params are amplitude
+        params = torch.exp(params) + 0j
+
+    elif param_type == 'phs':
+        params = torch.exp(1j * params)
+
+    elif param_type == 'amp_phs':
+        params = torch.exp(params[..., 0] + 1j * params[..., 1])
+
+    return params
+
+
+def complex2params(data, param_type):
+    """
+    Convert a complex gain or visibility tensor into
+    its parameter form given param_type
+
+    Parameters
+    ----------
+    data : tensor
+        A visibility or gain tensor of arbitrary shape
+    param_type : str
+        The type of params to convert to, one of
+        ['com', 'real', 'amp', 'phs', 'amp_phs']
+
+    Returns
+    -------
+    tensor
+    """
+    if param_type == 'com':
+        # assume data are already complex
+        pass
+
+    elif param_type == 'real':
+        data = data.real
+
+    elif param_type == 'amp':
+        # assume data are amplitude
+        data = torch.log(torch.abs(data))
+
+    elif param_type == 'phs':
+        data = torch.angle(data)
+
+    elif param_type == 'amp_phs':
+        data = torch.cat([data.abs().log()[..., None], data.angle()[..., None]], dim=-1)
+
+    return data
 
 
 class IndexCache:
