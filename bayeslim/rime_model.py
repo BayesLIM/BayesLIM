@@ -425,7 +425,7 @@ class RIME(utils.Module):
         # iterate over all batches
         for i in range(self.Nbatch):
             self.set_batch_idx(i)
-            vis = self.forward(i)
+            vis = self.forward()
             vis_bls.append(vis)
             if self.Nbatch == 1:
                 vis_times.append(vis)

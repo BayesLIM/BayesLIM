@@ -891,6 +891,8 @@ class CompositeModel(utils.Module):
         if models is None:
             self.eval_models = self.models
         else:
+            if isinstance(models, str):
+                models = [models]
             self.eval_models = models
 
     def forward(self, *args, prior_cache=None):
