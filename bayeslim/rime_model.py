@@ -549,7 +549,7 @@ class VisMapper:
             if beam is not None:
                 if beam.shape[0] != fr.shape[1]:
                     # different Nfreqs between the two, pick out nearest beam freqs
-                    beam = beam[[np.argmin(abs(self.beam.freqs - f)) for f in self.vis.freqs]]
+                    beam = beam[[np.argmin(abs(self.beam.freqs - f).numpy()) for f in self.vis.freqs]]
 
                 fr *= beam
 
