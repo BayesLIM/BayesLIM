@@ -60,6 +60,7 @@ class TelescopeModel:
             ra = ra.numpy()
         if isinstance(dec, torch.Tensor):
             dec = dec.numpy()
+        time = float(time)
 
         return hash((time, ra[0], dec[0], ra[-1], dec[-1]))
 
