@@ -539,7 +539,7 @@ class VisMapper:
                     beam = beam**2
             else:
                 beam = None
-                cut = zen <= self.fov/2
+                cut = torch.where(zen <= self.fov/2)[0]
                 zen, az = zen[cut], az[cut]
 
             # get conjugate of fringe (for vis simulation we use fr, for mapping we use fr.conj)
@@ -583,7 +583,7 @@ class VisMapper:
 
             # get weights
             if self.vis.icov is not None and self.vis.cov_axis is None:
-                wgt = self.vis.get_cov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
+                wgt = self.vis.get_icov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
             else:
                 wgt = torch.tensor(1.0, device=self.device)
 
@@ -601,7 +601,7 @@ class VisMapper:
         Parameters
         ----------
         clip : float, optional
-            Clip DI matrix (weighted beam) at this value
+            Clip normalization matrix (weighted beam) at this value
         norm_sqbeam : bool, optional
             If True, normalize map with two factors
             of the powerbeam (standard least squares)
@@ -621,7 +621,7 @@ class VisMapper:
             self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(clip)
         else:
             # normalize by one factor of beam (prevents overshoot far from fov center)
-            self.DI = (torch.abs(self.A)**1 * self.w[:, :, None]).sum(0).clip(clip)
+            self.DI = (torch.abs(self.A) * self.w[:, :, None]).sum(0).clip(clip)
 
         # normalize map
         m /= self.DI
