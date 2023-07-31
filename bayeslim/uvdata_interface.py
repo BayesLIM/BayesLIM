@@ -361,7 +361,7 @@ def setup_uvdata(antnums=None, antnames=None, antpos=None, bls=None, redundancy=
     if antenna_nums is not None:
         if isinstance(antenna_nums, str):
             antenna_nums = ast.literal_eval(antenna_nums)
-        if isinstance(antenna_nums, int):
+        if isinstance(antenna_nums, (int, np.integer)):
             antenna_nums = [antenna_nums]
         bls = [(a1, a2) for (a1, a2) in bls if a1 in antenna_nums or a2 in antenna_nums]
     bls = sorted(bls)

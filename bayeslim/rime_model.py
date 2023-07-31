@@ -157,7 +157,8 @@ class RIME(utils.Module):
         # turn sim_bls into a dictionary if necessary
         if not isinstance(sim_bls, dict):
             # sim_bls is either list of bl tuples, or list of list of bl tuples
-            assert isinstance(sim_bls[0][0], int) or isinstance(sim_bls[0][0][0], int), \
+            _ints = (int, np.integer)
+            assert isinstance(sim_bls[0][0], _ints) or isinstance(sim_bls[0][0][0], _ints), \
                 "sim_bls must be list of 2-tuples or list of list of 2-tuples"
             if isinstance(sim_bls[0], tuple):
                 sim_bls = {0: sim_bls}

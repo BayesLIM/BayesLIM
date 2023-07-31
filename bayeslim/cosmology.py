@@ -112,7 +112,7 @@ class Cosmology(FlatLambdaCDM):
         array
             Frequencies [Hz]
         """
-        if isinstance(r, (float, int)):
+        if isinstance(r, (float, int, np.integer)):
             return self.z2f(z_at_value(self.comoving_distance, r * units.Mpc, **kwargs))
         else:
             return np.array([self.r2f(_r) for _r in r])
@@ -279,7 +279,7 @@ def cube2lcone(sims, sim_r, r, sim_res, angs=None, rinterp='nearest',
         # load single file
         sims = np.load(sims)
 
-    if isinstance(r, (float, int)):
+    if isinstance(r, (float, int, np.integer)):
         r = [r]
 
     # iterate over desired frequencies
@@ -361,7 +361,7 @@ def cube2map(cube, dc, sim_res, angs=None, roll=None, interp='nearest'):
     """
     sim_size = cube.shape
     if roll is not None:
-        if isinstance(roll, int):
+        if isinstance(roll, (int, np.integer)):
             roll = (roll, roll, roll)
         cube = np.roll(cube, roll, axis=(0, 1, 2))
 

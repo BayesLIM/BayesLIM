@@ -65,7 +65,7 @@ class FFT(utils.Module):
         else:
             self.start = 0.0
             self.dx, self.freqs, self.df = None, None, None
-        if isinstance(edgecut, int):
+        if isinstance(edgecut, (int, np.integer)):
             edgecut = (edgecut, edgecut)
         elif edgecut is None:
             edgecut = (0, 0)
