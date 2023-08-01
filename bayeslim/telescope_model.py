@@ -671,7 +671,7 @@ def JD2LST(jd, longitude):
 
 
 def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
-               min_EW_len=None, exclude_reds=None, skip_reds=False):
+               min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False):
     """
     Build redundant groups. Note that this currently has sub-optimal
     performance and probably scales ~O(N_bl^2), which could be improved.
@@ -713,6 +713,9 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
         If True, skip building the redundant sets and just return
         each bl as its own redundant group (faster). In this case,
         the bl2red dictionary is empty,
+    norm_vec : bool, optional
+        If True, match redundancies based on total baseline
+        length. Otherwise use full 3D XYZ vector (default).
 
     Returns
     -------
@@ -752,6 +755,8 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
         # get baseline vector
         blvec = utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]])
         bllen = np.linalg.norm(blvec)
+        if norm_vec:
+            blvec = np.array([bllen, 0., 0.])
 
         # determine if we should skip this baseline
         if min_len is not None and bllen < min_len:
