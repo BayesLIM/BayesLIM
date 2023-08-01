@@ -577,7 +577,9 @@ class LogProb(utils.Module):
                 self._main_index[param] = idx
 
             # setup empty main_params
-            self.main_params = torch.nn.Parameter(torch.zeros(N, dtype=utils._float()))
+            self.main_params = torch.nn.Parameter(
+                torch.zeros(N, dtype=utils._float(), device=self.device)
+                )
 
             # collect values from leaf tensors and insert to main_params
             self.collect_main_params()
@@ -602,15 +604,15 @@ class LogProb(utils.Module):
             for k in self._main_indices:
                 idx, indices = self._main_index[k], self._main_indices[k]
                 if idx is None:
-                    params[indices] = self.model[k].detach().to('cpu').to(utils._float()).ravel()
+                    params[indices] = self.model[k].detach().to(self.device).to(utils._float()).ravel()
                 else:
                     if not isinstance(idx, list):
                         # single index
-                        params[indices] = self.model[k][idx].detach().to('cpu').to(utils._float()).ravel()
+                        params[indices] = self.model[k][idx].detach().to(self.device).to(utils._float()).ravel()
                     else:
                         for _idx, _inds in zip(idx, indices):
                             # multi-index
-                            params[_inds] = self.model[k][_idx].detach().to('cpu').to(utils._float()).ravel()
+                            params[_inds] = self.model[k][_idx].detach().to(self.device).to(utils._float()).ravel()
 
             if not inplace:
                 return params

@@ -637,6 +637,7 @@ class FactoredInvHessian:
         self.m = len(s)  # history_size
         self.N = len(s[0])  # parameter dimensionality
         assert len(s) == len(y) == len(alpha)
+        self.device = s[0].device
 
         # get gradients given y and g_end
         g = []
@@ -654,6 +655,19 @@ class FactoredInvHessian:
             if spd:
                 self.u.append(_u)
                 self.v.append(_v)
+
+    def push(self, device):
+        """
+        Push object to a new device
+        """
+        self.device = device
+        if self.H0:
+            self.H0 = utils.push(self.H0, device)
+        if self.L0:
+            self.L0 = utils.push(self.L0, device)
+        for i, (_u, _v) in enumerate(zip(self.u, self.v)):
+            self.u[i] = utils.push(_u, device)
+            self.v[i] = utils.push(_v, device)
 
     def hvp(self, vec):
         """
