@@ -388,7 +388,7 @@ def gen_sph2pix(theta, phi, l, m, separable=False,
 
         # run jobs
         with mproc.Pool(Nproc) as pool:
-            output = pool.map(_compute_lm_multiproc, jobs)
+            output = pool.map(_gen_sph2pix_multiproc, jobs)
 
         # combine
         if separable:
