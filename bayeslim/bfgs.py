@@ -251,7 +251,7 @@ class BFGS:
         prev_loss, prev_grad = None, None
 
         # evaluate optimum condition
-        is_finite = np.isfinite(float(loss)) and np.isfinite(flat_grad.numpy()).all()
+        is_finite = torch.isfinite(loss) and torch.isfinite(flat_grad).all()
         opt_cond = flat_grad.abs().max() <= self.tolerance_grad or not is_finite
         if opt_cond:
             self._exit = 2
