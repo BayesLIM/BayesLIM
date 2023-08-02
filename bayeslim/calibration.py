@@ -2150,7 +2150,7 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, amp=True, phs=True):
     if wgts is None:
         w = 1.
         wsum = 1.
-    else
+    else:
         w = wgts[:, None, None]
         wsum = torch.sum(wgts)
 
