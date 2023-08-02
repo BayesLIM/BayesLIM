@@ -2048,7 +2048,7 @@ def rephase_to_refant(params, param_type, refant_idx, p0=None, mode='rephase', i
 
 
 def remove_redcal_degen(gains, ants, antpos, degen=None,
-                        wgts=None, redvis=None, bls=None):
+                        wgts=None, redvis=None, bls=None, amp=True, phs=True):
     """
     Remove redcal degeneracies from a set of gains and model visibilities
     Note this currently only works for 1pol or 2pol gains.
@@ -2070,6 +2070,10 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
         of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
     bls : list, optional
         List of baseline tuples along Nbls dim of redvis
+    amp : bool, optional
+        If True, compute absolute amplitude parameter (default)
+    phs : bool, optional
+        If True, compute phase slope parameter (default)
 
     Returns
     -------
@@ -2078,7 +2082,7 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
     degen_gains : tensor
     """
     # compute degenerate gains
-    rd = compute_redcal_degen(gains, ants, antpos, wgts=wgts)
+    rd = compute_redcal_degen(gains, ants, antpos, wgts=wgts, amp=amp, phs=phs)
     degen_gains = redcal_degen_gains(ants, antpos=antpos, abs_amp=rd[0], phs_slope=rd[1])
 
     if degen is not None:
@@ -2096,7 +2100,7 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
     return new_gains, new_vis, degen_gains
 
 
-def compute_redcal_degen(gains, ants, antpos, wgts=None):
+def compute_redcal_degen(gains, ants, antpos, wgts=None, amp=True, phs=True):
     """
     Given a set of antenna gains compute the degeneracy
     parameters of redundant calibration, 1. the overall
@@ -2126,6 +2130,10 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None):
         of len(Nants). Normally, this should be the total number
         of visibilities used in redcal for each antenna.
         Default is uniform weighting.
+    amp : bool, optional
+        If True, compute absolute amplitude parameter (default)
+    phs : bool, optional
+        If True, compute phase slope parameter (default)
 
     Returns
     -------
@@ -2140,24 +2148,33 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None):
     # get weights
     Nants = len(ants)
     if wgts is None:
-        wgts = torch.ones(Nants, dtype=utils._float(), device=gains.device)
-    wgts = wgts[:, None, None]
-    wsum = torch.sum(wgts)
+        w = 1.
+        wsum = 1.
+    else
+        w = wgts[:, None, None]
+        wsum = torch.sum(wgts)
 
     # compute absolute amplitude parameter: average abs of squared gains
-    abs_amp = torch.sum(torch.abs(gains)**2 * wgts, dim=2, keepdims=True) / wsum
-    abs_amp = torch.log(torch.sqrt(abs_amp))
+    abs_amp = None
+    if amp:
+        abs_amp = torch.sum(torch.abs(gains)**2 * w, dim=2, keepdims=True) / wsum
+        abs_amp = torch.log(torch.sqrt(abs_amp))
 
     ### LEGACY
     #eta = torch.log(torch.abs(gains))
     #abs_amp = torch.sum(eta * wgts, dim=2, keepdims=True) / wsum
 
     # compute phase slope parameter
-    phs = torch.angle(gains)
-    A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
-    W = torch.eye(Nants, device=gains.device) * wgts.squeeze()
-    AtWAinvAt = torch.pinverse(A.T @ W @ A) @ A.T
-    phs_slope = torch.einsum("ab,ijblm->ijalm", AtWAinvAt, phs)
+    phs_slope = None
+    if phs:
+        gain_phs = torch.angle(gains)
+        A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
+        if wgts is None:
+            AtWAinvAtW = torch.pinverse(A.T @ A) @ A.T
+        else:
+            W = torch.eye(Nants, device=gains.device) * wgts / wsum
+            AtWAinvAtW = torch.pinverse(A.T @ W @ A) @ A.T @ W
+        phs_slope = torch.einsum("ab,ijblm->ijalm", AtWAinvAtW, gain_phs)
 
     return abs_amp, phs_slope
 
