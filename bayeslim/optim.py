@@ -1521,7 +1521,7 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     return icov
 
 
-def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
+def compute_hessian(prob, pdict, rm_offdiag=False, **kwargs):
     """
     Compute Hessian of prob with respect to params.
     Note that this edits params in prob inplace!
@@ -1533,7 +1533,7 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     pdict : ParamDict object
         Holding parameters of prob for which to compute hessian,
         and the values at which to compute it
-    keep_diag : bool, optional
+    rm_offdiag : bool, optional
         If True, only keep the diagonal of the Hessian and
         reshape to match input params shape.
     **kwargs : kwargs for autograd.functional.hessian
@@ -1545,8 +1545,6 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
     """
     ### TODO: enable Hessian between params
     # get all leaf variables on prob
-    if prob.Nbatch > 1:
-        print("Warning: not yet imp. for grad accumulation")
     named_params = prob.named_params
 
     # unset all named params
@@ -1562,10 +1560,18 @@ def compute_hessian(prob, pdict, keep_diag=False, **kwargs):
         def func(x):
             utils.set_model_attr(prob, param, x, clobber_param=True)
             return prob()
-        h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
-        if keep_diag:
-            h = h.diag().reshape(shape)
-        hess[param] = h
+        # iterate over batches
+        for i in range(prob.Nbatch):
+            prob.batch_idx(i)
+            h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
+            if rm_offdiag:
+                h = h.diag().reshape(shape)
+            if i == 0:
+                H = h
+            else:
+                H += h
+
+        hess[param] = H
 
         # unset param
         prob.unset_param(param)
