@@ -473,7 +473,7 @@ class LogProb(utils.Module):
             print("Warning: overlapping module names in model could" \
                   " lead to conflicts in prior evaluation")
 
-    def set_main_params(self, model_params=None, LM=None):
+    def set_main_params(self, model_params=None, LM=None, set_p0=False):
         """
         Setup a single main parameter tensor that automatically
         interfaces with specified submodule tensors in models. This
@@ -515,6 +515,12 @@ class LogProb(utils.Module):
             In principle, this should be the lower Cholesky
             of the covariance matrix (i.e. inverse Hessian).
             This is set as self._main_LM.
+        set_p0 : bool, optional
+            If True, assign main_params values to main_p0 (non-parameter)
+            and set main_params as zeros (parameter). In this case,
+            main_params + main_p0 is done before sending to sub-modules.
+            Note: unlike other modules, if main_LM is assigned then the
+            order of operations is main_LM(main_params) + main_p0.
         """
         # if main_params already exists, turn keys back into Parameters
         if hasattr(self, "_main_indices") and self._main_indices is not None:
@@ -523,11 +529,14 @@ class LogProb(utils.Module):
 
         # create blank main_params
         self.main_params = None
+        self.main_p0 = None
         self._main_indices = None
         self._main_shapes = None
         self._main_devices = None
         self._main_index = None
         self._main_LM = LM
+        self._main_set_p0 = set_p0
+        self._main_N = None
         if model_params is not None:
             # setup main_params metadata
             N = 0
@@ -576,10 +585,7 @@ class LogProb(utils.Module):
                 self._main_devices[param] = device
                 self._main_index[param] = idx
 
-            # setup empty main_params
-            self.main_params = torch.nn.Parameter(
-                torch.zeros(N, dtype=utils._float(), device=self.device)
-                )
+            self._main_N = N
 
             # collect values from leaf tensors and insert to main_params
             self.collect_main_params()
@@ -590,7 +596,9 @@ class LogProb(utils.Module):
     def collect_main_params(self, inplace=True):
         """
         Take existing values of submodule params and using metadata like
-        _main_indices, ..., collect values and assign as self.main_params
+        _main_indices, ..., collect values and assign as self.main_params.
+        Note that if self.main_p0 is not None then the values are set
+        as main_p0 (non-parameter) and self.main_params is set as zeros.
 
         Parameters
         ----------
@@ -599,8 +607,8 @@ class LogProb(utils.Module):
             and update self.main_params inplace. Otherwise
             collect sub-params and return tensor.
         """
-        if self.main_params is not None:
-            params = torch.zeros_like(self.main_params)
+        if len(self._main_indices) > 0:
+            params = torch.zeros(self._main_N, dtype=utils._float(), device=self.device)
             for k in self._main_indices:
                 idx, indices = self._main_index[k], self._main_indices[k]
                 if idx is None:
@@ -617,12 +625,18 @@ class LogProb(utils.Module):
             if not inplace:
                 return params
 
-            self.main_params = torch.nn.Parameter(params)
+            if self._main_set_p0:
+                self.main_p0 = params
+                self.main_params = torch.nn.Parameter(torch.zeros_like(params))
+            else:
+                self.main_p0 = None
+                self.main_params = torch.nn.Parameter(params)
 
             # this sends main_params back to leaf tensors, making them leaf views
             self.send_main_params()
 
-    def send_main_params(self, inplace=True, main_params=None, fill=None):
+    def send_main_params(self, inplace=True, main_params=None,
+                         fill=None, main_p0=None):
         """
         Take existing value of self.main_params and using
         _main_indices, _main_shapes, _main_types,_main_index,
@@ -641,15 +655,24 @@ class LogProb(utils.Module):
             If None (default) keep un-indexed elements in params
             with their existing values. Otherwise, fill them with
             this value before returning.
+        main_p0 : tensor, optional
+            Use this tensor instead of self.main_p0. Note that
+            if main_LM exists, the order of operations is
+            main_LM(main_params) + main_p0
         """
         # get main_params
         main_params = main_params if main_params is not None else self.main_params
+        main_p0 = main_p0 if main_p0 is not None else self.main_p0
 
         if main_params is not None:
             # pass it through LM if desired
             if self._main_LM is not None:
                 main_params = self._main_LM(main_params)
-            
+
+            # sum with p0 if desired
+            if main_p0 is not None:
+                main_params = main_params + main_p0
+
             # setup holding container needed for inplace = False
             if not inplace:
                 # use a dummy Python3 class object to set params
