@@ -565,7 +565,8 @@ class JonesModel(utils.Module, IndexCache):
             vd through the Jones parameters.
         """
         # fix reference antenna if needed
-        self.fix_refant_phs()
+        if self.refant_idx is not None:
+            self.fix_refant_phs()
 
         # push vd to self.device
         vd.push(self.device)
@@ -2139,11 +2140,11 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None):
     # get weights
     Nants = len(ants)
     if wgts is None:
-        wgts = torch.ones(Nants, dtype=utils._float())
+        wgts = torch.ones(Nants, dtype=utils._float(), device=gains.device)
     wgts = wgts[:, None, None]
     wsum = torch.sum(wgts)
 
-    # compute absolute amplitude parameter: average abs of gains
+    # compute absolute amplitude parameter: average abs of squared gains
     abs_amp = torch.sum(torch.abs(gains)**2 * wgts, dim=2, keepdims=True) / wsum
     abs_amp = torch.log(torch.sqrt(abs_amp))
 
@@ -2154,7 +2155,7 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None):
     # compute phase slope parameter
     phs = torch.angle(gains)
     A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
-    W = torch.eye(Nants) * wgts.squeeze()
+    W = torch.eye(Nants, device=gains.device) * wgts.squeeze()
     AtWAinvAt = torch.pinverse(A.T @ W @ A) @ A.T
     phs_slope = torch.einsum("ab,ijblm->ijalm", AtWAinvAt, phs)
 
@@ -2187,7 +2188,12 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
     """
     # fill unit gains
     Nants = len(ants)
-    gains = torch.ones(1, 1, Nants, 1, 1, dtype=utils._cfloat())
+    device = None
+    if abs_amp is not None:
+        device = abs_amp.device
+    elif phs_slope is not None:
+        device = phs_slope.device
+    gains = torch.ones(1, 1, Nants, 1, 1, dtype=utils._cfloat(), device=device)
 
     # incorporate absolute amplitude
     if abs_amp is not None:
