@@ -195,7 +195,7 @@ class BaseResponse:
             self.time_LM.push(device)
 
     def setup_projection(self, abs_amp_gain=False, phs_slope_gain=False,
-                         refant_idx=None):
+                         wgts_gain=None, refant_idx=None):
         """
         Setup a block that projects the complex parameters onto a subspace
         after passing through the response.
@@ -209,12 +209,17 @@ class BaseResponse:
             If True, project out the antenna phase slope
             assuming params is complex gains
             Note this requires self.antpos to exist
+        wgts_gain : tensor, optional
+            1D tensor of shape (Nants,). If running abs_amp_gain or phs_slope_gain,
+            these are the wgts to use in computing the degenerate parameters.
+            Default is uniform weights.
         refant_idx : int, optional
             Rephase params to the index of this reference antenna
             assuming params is complex gains
         """
         self._proj_abs_amp_gain = abs_amp_gain
         self._proj_phs_slope_gain = phs_slope_gain
+        self._proj_wgts_gain = wgts_gain
         if phs_slope_gain:
             assert self.antpos is not None, "phs_slope requires antpos"
         self._proj_refant_idx = refant_idx
@@ -239,9 +244,12 @@ class BaseResponse:
 
         # redcal degeneracies for gains
         if self._proj_abs_amp_gain or self._proj_phs_slope_gain:
-            params = remove_redcal_degen(params, self.antpos.ants, self.antpos,
+            # if only need ants and antpos if running phs_slope
+            ants = None if self.antpos is None else self.antpos.ants
+            params = remove_redcal_degen(params, ants, self.antpos,
                                          abs_amp=self._proj_abs_amp_gain,
-                                         phs_slope=self._proj_phs_slope_gain)[0]
+                                         phs_slope=self._proj_phs_slope_gain,
+                                         wgts=self._proj_wgts_gain)[0]
         # refernce antenna for gains
         if self._proj_refant_idx is not None:
             idx = self._proj_refant_idx
