@@ -454,9 +454,9 @@ class VisData(TensorData):
 
         if deepcopy:
             if telescope is not None:
-                telescope = telescope_model.TelescopeModel(telescope.location, device=telescope.device)
+                telescope = telescope.__class__(telescope.location, device=telescope.device)
             if antpos is not None:
-                antpos = utils.AntposDict(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
+                antpos = antpos.__class__(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
             times = copy.deepcopy(times)
             freqs = copy.deepcopy(freqs)
             bls = copy.deepcopy(bls)
