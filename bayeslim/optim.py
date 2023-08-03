@@ -1562,7 +1562,7 @@ def compute_hessian(prob, pdict, rm_offdiag=False, **kwargs):
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
-            prob.batch_idx(i)
+            prob.set_batch_idx(i)
             h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
