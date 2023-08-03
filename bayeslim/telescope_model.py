@@ -130,7 +130,7 @@ class TelescopeModel:
                 self.conv_cache[key] = angs.to(device)
 
 
-class ArrayModel(utils.PixInterp, utils.AntposDict, utils.Module):
+class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
     """
     A model for antenna layout and the baseline fringe
 
@@ -195,7 +195,7 @@ class ArrayModel(utils.PixInterp, utils.AntposDict, utils.Module):
             Keyword arguments to pass to PixInterp
         """
         # init Module
-        super(utils.AntposDict, self).__init__(name=name)
+        super(utils.PixInterp, self).__init__(name=name)
         # init AntposDict
         if isinstance(antpos, utils.AntposDict):
             ants = antpos.ants
@@ -203,7 +203,7 @@ class ArrayModel(utils.PixInterp, utils.AntposDict, utils.Module):
         else:
             ants = list(antpos.keys())
             antvecs = list(antpos.values())
-        super(utils.PixInterp, self).__init__(ants, antvecs)
+        super(utils.Module, self).__init__(ants, antvecs)
         # init PixInterp
         npix = cache_f_angs.shape[-1] if cache_f else None
         super().__init__(pixtype, device=device, **pix_kwargs)
