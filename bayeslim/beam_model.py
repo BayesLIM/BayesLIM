@@ -1166,7 +1166,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # this also casts beam to real if real_beam
         beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult, ignoreLM=True)
 
-       if self.log:
+        if self.log:
             beam = torch.exp(beam)
 
         # apply edge taper if necessary
