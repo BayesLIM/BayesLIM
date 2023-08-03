@@ -221,6 +221,17 @@ class VisData(TensorData):
     def __init__(self):
         # init empty object
         self.atol = 1e-10
+        self.setup_meta()
+
+    def push(self, device):
+        """
+        Push data to a new device
+        """
+        # TensorData.push
+        super().push(device)
+        # and push antpos if needed
+        if self.antpos:
+            self.antpos.push(device)
 
     def setup_meta(self, telescope=None, antpos=None):
         """
@@ -230,16 +241,22 @@ class VisData(TensorData):
         ----------
         telescope : TelescopeModel, optional
             Telescope location
-        antpos : dict, optional
+        antpos : AntposDict, optional
             Antenna position dictionary in ENU [meters].
             Antenna number integer as key, position vector as value
         """
         self.telescope = telescope
-        self.antpos = antpos
-        self.ants, self.antvec = None, None
         if antpos is not None:
-            self.ants = np.array(list(antpos.keys()))
-            self.antvec = np.array(list(antpos.values()))
+            if isinstance(antpos, utils.AntposDict):
+                pass
+            else:
+                antpos = utils.AntposDict(list(antpos.keys()),
+                    list(torch.vstack(antpos.values())))
+        self.antpos = antpos
+        self.ants, self.antvecs = None, None
+        if antpos is not None:
+            self.ants = antpos.ants
+            self.antvecs = antpos.antvecs
 
     def setup_data(self, bls, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -363,7 +380,7 @@ class VisData(TensorData):
         else:
             # generate bl_vec on the fly
             bls = self.bls
-            bl_vecs = np.array([self.antpos[bl[1]] - self.antpos[bl[0]] for bl in bls])
+            bl_vecs = self.get_bl_vecs(bls).cpu().numpy()
             bl_lens = np.linalg.norm(bl_vecs, axis=1)
             bl_angs = np.arctan2(*bl_vecs[:, :2][:, ::-1].T) * 180 / np.pi
             bl_angs[bl_vecs[:, 1] < 0] += 180.0
@@ -405,11 +422,8 @@ class VisData(TensorData):
         -------
         tensor
         """
-        blvecs = []
-        for bl in bls:
-            blvecs.append(self.antpos[bl[1]] - self.antpos[bl[0]])
-
-        return torch.as_tensor(np.array(blvecs))
+        ant1, ant2 = zip(*bls)
+        return self.antpos[ant1] - self.antpos[ant2]
 
     def copy(self, detach=True):
         """
@@ -1248,7 +1262,7 @@ class VisData(TensorData):
                 # write telescope and array objects
                 f.attrs['tloc'] = self.telescope.location
                 f.attrs['ants'] = self.ants
-                f.attrs['antvec'] = self.antvec
+                f.attrs['antvecs'] = self.antvecs
                 f.attrs['obj'] = 'VisData'
                 f.attrs['version'] = version.__version__
         else:
@@ -1315,8 +1329,8 @@ class VisData(TensorData):
 
             # setup downselected metadata and data
             ants = f.attrs['ants'].tolist()
-            antvec = f.attrs['antvec']
-            antpos = dict(zip(ants, antvec))
+            antvecs = f.attrs['antvecs']
+            antpos = utils.AntposDict(ants, antvecs)
             tloc = f.attrs['tloc']
             telescope = telescope_model.TelescopeModel(tloc)
             self.setup_meta(telescope, antpos)
@@ -2011,11 +2025,11 @@ class CalData(TensorData):
             Antenna number integer as key, position vector as value
         """
         self.telescope = telescope
+        self.ants, self.antvecs = None, None
         self.antpos = antpos
-        self.ants, self.antvec = None, None
         if antpos is not None:
             self.ants = np.array(list(antpos.keys()))
-            self.antvec = np.array(list(antpos.values()))
+            self.antvecs = np.array(list(antpos.values()))
 
     def setup_data(self, ants, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -2646,8 +2660,8 @@ class CalData(TensorData):
                     f.create_dataset('icov', data=self.icov)
                 f.create_dataset('ants', data=self.ants)
                 if self.antpos is not None:
-                    antvec = np.array([self.antpos[a] for a in self.ants])
-                    f.create_dataset('antvec', data=antvec)
+                    antvecs = np.array([self.antpos[a] for a in self.ants])
+                    f.create_dataset('antvecs', data=antvecs)
                 f.create_dataset('times', data=self.times)
                 f.create_dataset('freqs', data=self.freqs)
                 if self.pol is not None:
@@ -2683,8 +2697,8 @@ class CalData(TensorData):
             # load metadata
             assert str(f.attrs['obj']) == 'CalData', "not a CalData object"
             _ants = [int(_ant) for _ant in f['ants'][:]]
-            if 'antvec' in f:
-                _antvec = np.asarray(f['antvec'][:])
+            if 'antvecs' in f:
+                _antvec = np.asarray(f['antvecs'][:])
                 _antpos = dict(zip(_ants, _antvec))
             else:
                 _antpos = None

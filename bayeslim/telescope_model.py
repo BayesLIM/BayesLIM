@@ -130,7 +130,7 @@ class TelescopeModel:
                 self.conv_cache[key] = angs.to(device)
 
 
-class ArrayModel(utils.PixInterp, utils.Module):
+class ArrayModel(utils.PixInterp, utils.AntposDict, utils.Module):
     """
     A model for antenna layout and the baseline fringe
 
@@ -154,12 +154,11 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         Parameters
         ----------
-        antpos : dict
-            Dictionary of antenna positions.
-            Keys are antenna integers, values
-            are len-3 float arrays with antenna
-            position in East-North-Up coordinates,
-            centered at telescope location.
+        antpos : AntposDict object or dict
+            Dictionary of antenna positions. Keys are
+            antenna integers, values are len-3 float arrays
+            with antenna position in East-North-Upcoordinates,
+            centered at telescope location. See utils.AntposDict
         freqs : tensor, optional
             Frequencies to evaluate fringe [Hz]
         pixtype : str, optional
@@ -170,8 +169,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
             If True, antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
         device : str, optional
-            device to hold baseline vector and fringe term
-            none is cpu.
+            device to hold antenna positions and associated cache.
         cache_s : bool, optional
             If True, cache the pointing unit vector s computation
             in the fringe-term for each sky model zen, az combination,
@@ -202,14 +200,19 @@ class ArrayModel(utils.PixInterp, utils.Module):
             Keyword arguments to pass to PixInterp
         """
         # init Module
-        super(utils.PixInterp, self).__init__(name=name)
+        super(utils.AntposDict, self).__init__(name=name)
+        # init AntposDict
+        if isinstance(antpos, utils.AntposDict):
+            ants = antpos.ants
+            antvecs = antpos.antvecs
+        else:
+            ants = list(antpos.keys())
+            antvecs = list(antpos.values())
+        super(utils.PixInterp, self).__init__(ants, antvecs)
         # init PixInterp
         npix = cache_f_angs.shape[-1] if cache_f else None
         super().__init__(pixtype, device=device, **pix_kwargs)
         # set location metadata
-        self.ants = sorted(antpos.keys())
-        self._ant_idx = {a: self.ants.index(a) for a in self.ants}
-        self.antpos = torch.as_tensor(np.array([antpos[a] for a in self.ants]), dtype=_float(), device='cpu')
         self.cache_s = cache_s if not cache_f else False
         self.cache_f = cache_f
         self.cache_f_angs = cache_f_angs
@@ -222,7 +225,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
         self.set_freqs(freqs)
         if parameter:
             # make ant vecs a parameter if desired
-            self.antpos = torch.nn.Parameter(self.antpos)
+            # note this is highly experimental currently...
+            self.antvecs = torch.nn.Parameter(self.antvecs)
 
         # TODO: enable clearing of fringe cache if parameter is True
         if cache_f:
@@ -233,7 +237,8 @@ class ArrayModel(utils.PixInterp, utils.Module):
             (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
              self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
 
-        self.push(device)
+        if device:
+            self.push(device)
 
     def get_antpos(self, ant):
         """
@@ -241,13 +246,10 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
         Parameters
         ----------
-        ant : int
+        ant : int or list of int
             antenna number in self.ants
         """
-        if isinstance(ant, list):
-            return self.antpos[[self._ant_idx[a] for a in ant]]
-        else:
-            return self.antpos[self._ant_idx[ant]]
+        return self[ant]
 
     def match_bl_len(self, bl, bls):
         """
@@ -344,7 +346,7 @@ class ArrayModel(utils.PixInterp, utils.Module):
         if key not in self.fringe_cache:
             # get baseline vectors: shape (Nbls, 3)
             if self.cache_blv:
-                # antpos is not a parameter, so cache the baseline vectors
+                # antvecs is not a parameter, so cache the baseline vectors
                 if b_h not in self.fringe_cache:
                     # construct bl vector
                     bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
@@ -353,15 +355,15 @@ class ArrayModel(utils.PixInterp, utils.Module):
                 else:
                     bl_vec = self.fringe_cache[b_h]
             else:
-                # antpos is a parameter, so cache the antpos indexing tensors
+                # antvecs is a parameter, so cache the antvec indexing tensors
                 if b_h not in self.fringe_cache:
                     ant1 = torch.as_tensor([self.ants.index(b[0]) for b in bl])
                     ant2 = torch.as_tensor([self.ants.index(b[1]) for b in bl])
                     self.fringe_cache[b_h] = (ant1, ant2)
                 else:
                     ant1, ant2 = self.fringe_cache[b_h]
-                # generate bl_vector (note that antpos is on CPU always but is pinned)
-                bl_vec = torch.index_select(self.antpos, 0, ant2) - torch.index_select(self.antpos, 0, ant1)
+                # generate bl_vector
+                bl_vec = torch.index_select(self.antvecs, 0, ant2) - torch.index_select(self.antvecs, 0, ant1)
                 bl_vec = bl_vec.to(self.device)
 
             # get fringe pattern: shape (Nbls, Nfreqs, Npix)
@@ -455,14 +457,9 @@ class ArrayModel(utils.PixInterp, utils.Module):
 
     def push(self, device):
         """push model to a new device or dtype"""
-        # setting antpos like this ensures it stays a Parameter
-        # if it is to begin with
         dtype = isinstance(device, torch.dtype)
-        if dtype:
-            self.antpos = utils.push(self.antpos, device)
-        else:
-            if not utils.check_devices(device, 'cpu'):
-                self['antpos'] = self.antpos.pin_memory()
+        # AntposDict.push
+        super(utils.PixInterp, self).push(device)
         # use PixInterp push for its cache
         super().push(device)
         if self.freqs is not None:

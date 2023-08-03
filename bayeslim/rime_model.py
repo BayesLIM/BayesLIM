@@ -350,8 +350,7 @@ class RIME(utils.Module):
                                    zen, az, vis, sim2data_idx, j)
 
         history = io.get_model_description(self)[0]
-        vd.setup_meta(self.telescope,
-                      dict(zip(self.array.ants, self.array.antpos.cpu().detach().numpy())))
+        vd.setup_meta(self.telescope, self.array.antpos)
         vd.setup_data(self.data_bls, self.sim_times, self.freqs, pol=pol,
                       data=vis, flags=None, cov=None, history=history)
 

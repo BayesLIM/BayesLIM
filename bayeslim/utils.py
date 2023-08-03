@@ -1975,3 +1975,68 @@ def _list2slice(inds):
                 return slice(inds[0], inds[-1]+diff[0], diff[0])
     return inds
 
+
+class AntposDict:
+    """
+    A dictionary for antenna positions
+    that functions like a normal dictionary
+    but holds its values in contiguous memory
+    under the hood.
+    Note: this means repeateadly setting keys
+    scales as N^2. Better to re-instantiate
+    existing keys along with new keys at once.
+    """
+    def __init__(self, ants, antvecs):
+        """
+        Parameters
+        ----------
+        ants : list or tensor
+            Antenna integers
+        antvecs : tensor
+            Antenna positions in ENU coordinates [meters]
+            of shape (Nants, 3)
+        """
+        self.ants = list(ants)
+        self._ant_idx = {a: self.ants.index(a) for a in self.ants}
+        try:
+            # this works if antvec is 1) ndarray
+            # 2) list of ndarray or 3) tensor
+            self.antvecs = torch.as_tensor(antvecs)
+        except ValueError:
+            # this works if antvec is list of tensor
+            self.antvecs = torch.vstack(antvecs)
+
+    def keys(self):
+        return (a for a in self.ants)
+
+    def values(self):
+        return (av for av in self.antvecs)
+
+    def items(self):
+        return zip(self.ants, self.antvecs)
+
+    def __getitem__(self, key):
+        if isinstance(key, (int, np.integer)):
+            return self.antvecs[self._ant_idx[key]]
+        elif isinstance(key, (list, tuple, np.ndarray)):
+            return self.antvecs[[self._ant_idx[k] for k in key]]
+
+    def __setitem__(self, key, value):
+        idx = self._ant_idx[key]
+        self.antvecs[idx] = value
+
+    def __repr__(self):
+        return "Antpos{{{}}}".format(self.ants)
+
+    def __len__(self):
+        return len(self.ants)
+
+    def __contains__(self, key):
+        return key in self.ants
+
+    def __iter__(self):
+        return self.keys()
+
+    def push(self, device):
+        self.antvecs = push(self.antvecs, device)
+
