@@ -217,7 +217,7 @@ class BaseResponse:
         self._proj_abs_amp_gain = abs_amp_gain
         self._proj_phs_slope_gain = phs_slope_gain
         self._proj_refant_idx = refant_idx
-        self._projection = not abs_amp_gain or not phs_slope_gain or refant
+        self._projection = abs_amp_gain or phs_slope_gain or refant is not None
         self._antpos = antpos
 
     def projection(self, params):
