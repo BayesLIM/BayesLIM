@@ -1005,7 +1005,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
     automatically when using the rime_model.RIME object.
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
-                 realbeam=False, mode='interpolate', device=None, interp_mode='nearest',
+                 mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, realbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
