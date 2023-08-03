@@ -217,7 +217,7 @@ class BaseResponse:
         self._proj_abs_amp_gain = abs_amp_gain
         self._proj_phs_slope_gain = phs_slope_gain
         self._proj_refant_idx = refant_idx
-        self._projection = abs_amp_gain or phs_slope_gain or refant is not None
+        self._projection = abs_amp_gain or phs_slope_gain or refant_idx is not None
         self._antpos = antpos
 
     def projection(self, params):
@@ -243,7 +243,7 @@ class BaseResponse:
                                          abs_amp=self._proj_abs_amp_gain,
                                          phs_slope=self._proj_phs_slope_gain)[0]
         # refernce antenna for gains
-        if self._proj_refant_idx:
+        if self._proj_refant_idx is not None:
             idx = self._proj_refant_idx
             phs = torch.angle(params[:, :, idx:idx+1].detach())
             params /= torch.exp(1j*phs)
