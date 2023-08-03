@@ -244,7 +244,8 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         ant : int or list of int
             antenna number in self.ants
         """
-        return self[ant]
+        # call AntposDict's getitem
+        return super(toch.nn.Module, self).__getitem__(ant)
 
     def match_bl_len(self, bl, bls):
         """
@@ -297,13 +298,14 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         If depth is provided, use FIFO to clear caches
         until depth is reached.
         """
+        # clear PiInterp cache
         super(ArrayModel, self).clear_cache(depth=depth)
 
         # this is fringe cache
         if depth is None:
             self.fringe_cache = {}
         else:
-            utils.clear_cache_depth(fringe_cache, depth)
+            utils.clear_cache_depth(self.fringe_cache, depth)
 
     def _fringe(self, bl, zen, az, conj=False):
         """compute fringe term. Returns fringe tensor
@@ -454,7 +456,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         """push model to a new device or dtype"""
         dtype = isinstance(device, torch.dtype)
         # AntposDict.push
-        super(utils.PixInterp, self).push(device)
+        super(torch.nn.Module, self).push(device)
         # use PixInterp push for its cache
         super().push(device)
         if self.freqs is not None:
