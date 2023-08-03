@@ -19,7 +19,7 @@ D2R = utils.D2R
 
 class TelescopeModel:
 
-    def __init__(self, location, device=None):
+    def __init__(self, location, tloc=None, device=None):
         """
         A telescope model for performing
         coordinate conversions
@@ -29,10 +29,17 @@ class TelescopeModel:
         location : tuple
             3-tuple location of the telescope in geodetic
             frame (lon, lat, alt), where lon, lat in degrees.
+        tloc : EarthLocation object, optional
+            An EarthLocation object associated with "location"
+            This is only used to speed up the instantiation
+            runtime when tloc already exists. Compute it as
+            EarthLocation.from_geodetic(*location)
         """
         # setup telescope location in geocentric (ECEF) frame
         self.location = location
-        self.tloc = EarthLocation.from_geodetic(*location)
+        if tloc is None:
+            tloc = EarthLocation.from_geodetic(*location)
+        self.tloc = tloc
 
         # setup coordinate conversion cache
         self.conv_cache = {}

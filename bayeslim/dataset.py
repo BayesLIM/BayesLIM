@@ -454,13 +454,13 @@ class VisData(TensorData):
 
         if deepcopy:
             if telescope is not None:
-                telescope = telescope.__class__(telescope.location, device=telescope.device)
+                telescope = telescope.__class__(telescope.location, tloc=telescope.tloc,
+                                                device=telescope.device)
             if antpos is not None:
                 antpos = antpos.__class__(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
             times = copy.deepcopy(times)
             freqs = copy.deepcopy(freqs)
-            bls = copy.deepcopy(bls)
-            history = copy.deepcopy(history)
+            bls = copy.copy(bls)
             if flags is not None: flags = flags.clone()
             if cov is not None: cov = cov.clone()
             if icov is not None: icov = icov.clone()
