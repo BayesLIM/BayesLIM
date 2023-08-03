@@ -85,7 +85,7 @@ class RIME(utils.Module):
         data_bls : list, optional
             List of all baselines in the output visibility.
             Default is just sim_bls. However, if simulating redundant
-            baseline groups and array.antpos is not a parameter
+            baseline groups and array.antvecs is not a parameter
             data_bls can contain bls not in sim_bls, and the
             redundant bl in sim_bls will be copied over to data_bls
             appropriately. If a bl in data_bls does not have a redudant
@@ -350,7 +350,7 @@ class RIME(utils.Module):
                                    zen, az, vis, sim2data_idx, j)
 
         history = io.get_model_description(self)[0]
-        vd.setup_meta(self.telescope, self.array.antpos)
+        vd.setup_meta(self.telescope, self.array.to_antpos())
         vd.setup_data(self.data_bls, self.sim_times, self.freqs, pol=pol,
                       data=vis, flags=None, cov=None, history=history)
 

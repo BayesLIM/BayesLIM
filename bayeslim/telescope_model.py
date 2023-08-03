@@ -161,7 +161,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             parent class, this is the pixelization scheme.
             Only used if cache_f is True
         parameter : bool, optional
-            If True, antenna positions become a parameter
+            If True, self.antvecs antenna positions become a parameter
             to be fitted. If False (default) they are held fixed.
         device : str, optional
             device to hold antenna positions and associated cache.
@@ -548,6 +548,12 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             reds = [red[:1] for red in reds]
 
         return utils.flatten(reds)
+
+    def to_antpos(self):
+        """
+        Make a new AntposDict out of self
+        """
+        return utils.AntposDict(self.ants, self.antvecs)
 
 
 def eq2top(location, time, ra, dec):
