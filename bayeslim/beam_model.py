@@ -596,7 +596,7 @@ class PixelResponse(utils.PixInterp):
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
                  powerbeam=True, Rchi=None, interp_gpu=False, interp_cache_depth=None,
-                 taper_kwargs=None, LM=None):
+                 taper_kwargs=None, LM=None, norm_pix=None):
         """
         Parameters
         ----------
@@ -655,6 +655,9 @@ class PixelResponse(utils.PixInterp):
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
+        norm_pix : int, optional
+            If provided, normalize the forwarded beam model
+            by this pixel value along the Npix axis.
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
@@ -672,6 +675,7 @@ class PixelResponse(utils.PixInterp):
         self.clear_beam_cache()
         self.taper_kwargs = taper_kwargs
         self.LM = LM
+        self.norm_pix = norm_pix
 
         freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
         self._setup(**freq_kwargs)
@@ -728,6 +732,10 @@ class PixelResponse(utils.PixInterp):
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
             beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
+
+        # normalize beam by a pixel if necessary
+        if self.norm_pix is not None:
+            beam /= beam[..., self.norm_pix:self.norm_pix+1].detach().abs()
 
         return p
 

@@ -17,7 +17,7 @@ class BaseResponse:
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
                  device=None, freq_kwargs={}, time_kwargs={}, LM=None,
-                 time_dim=3, freq_dim=4):
+                 time_dim=3, freq_dim=4, projection_kwargs={}):
         """
         Parameters
         ----------
@@ -46,6 +46,10 @@ class BaseResponse:
             Dimension of time axis
         freq_dim : int, optional
             Dimension of frequency axis
+        projection_kwargs : dict, optional
+            If passed, this creates an operation on the
+            fully complex parameters after passing through
+            the response. See setup_projection() for details.
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -57,6 +61,7 @@ class BaseResponse:
         self.freq_dim = freq_dim
         self.setup_freqs(**freq_kwargs)
         self.setup_times(**time_kwargs)
+        self.setup_projection(**projection_kwargs)
         self.LM = LM
 
         # construct _args for str repr
@@ -152,6 +157,9 @@ class BaseResponse:
 
         params = self.params2complex(params)
 
+        # project out some component of the complex parameters
+        params = self.projection(params)
+
         return params
 
     def params2complex(self, params):
@@ -185,6 +193,62 @@ class BaseResponse:
             self.freq_LM.push(device)
         if self.time_mode == 'linear':
             self.time_LM.push(device)
+
+    def setup_projection(self, abs_amp_gain=False, phs_slope_gain=False,
+                         antpos=None, refant_idx=None):
+        """
+        Setup a block that projects the complex parameters onto a subspace
+        after passing through the response.
+
+        Parameters
+        ----------
+        abs_amp_gain : bool, optional
+            If True, project out the antenna-averaged amplitude
+            assuming params is complex gains
+        phs_slope_gain : bool, optional
+            If True, project out the antenna phase slope
+            assuming params is complex gains
+        antpos : AntposDict object, optional
+            Antenna positions, needed for phs_slope_gain
+        refant_idx : int, optional
+            Rephase params to the index of this reference antenna
+            assuming params is complex gains
+        """
+        self._proj_abs_amp_gain = abs_amp_gain
+        self._proj_phs_slope_gain = phs_slope_gain
+        self._proj_refant_idx = refant_idx
+        self._projection = not abs_amp_gain or not phs_slope_gain or refant
+        self._antpos = antpos
+
+    def projection(self, params):
+        """
+        Project the complex params tensor onto a subspace.
+        See self.setup_projection()
+
+        Parameters
+        ----------
+        params : tensor
+            Complex gain or visibility tensor
+
+        Returns
+        -------
+        tensor
+        """
+        if not self._projection:
+            return params
+
+        # redcal degeneracies for gains
+        if self._proj_abs_amp_gain or self._proj_phs_slope_gain:
+            params = remove_redcal_degen(params, self._antpos.ants, self._antpos,
+                                         abs_amp=self._proj_abs_amp_gain,
+                                         phs_slope=self._proj_phs_slope_gain)[0]
+        # refernce antenna for gains
+        if self._proj_refant_idx:
+            idx = self._proj_refant_idx
+            phs = torch.angle(params[:, :, idx:idx+1].detach())
+            params /= torch.exp(1j*phs)
+
+        return params
 
 
 def params2complex(params, param_type):
@@ -2060,7 +2124,7 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
         Complex gain tensor of shape (Npol, Npol, Nants, Ntimes, Nfreqs)
     ants : list
         List of antenna numbers along Nants dim of gains
-    antpos : dict
+    antpos : AntposDict object
         Antenna position dictionary, ant num as key, ENU antvec [meter] as value
     degen : tensor, optional
         Complex gain tensor of new redcal degeneracy to insert into gains
@@ -2083,7 +2147,7 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
     degen_gains : tensor
     """
     # compute degenerate gains
-    rd = compute_redcal_degen(gains, ants, antpos, wgts=wgts, abs_amp=abs_amp, phs_slope=phs_slope)
+    rd = compute_redcal_degen(gains.detach(), ants, antpos, wgts=wgts, abs_amp=abs_amp, phs_slope=phs_slope)
     degen_gains = redcal_degen_gains(ants, antpos=antpos, abs_amp=rd[0], phs_slope=rd[1])
 
     if degen is not None:
@@ -2124,7 +2188,7 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, abs_amp=True, phs_slope
         Antenna gains of shape (Npol, Npol, Nant, Ntimes, Nfreqs)
     ants : list
         List of antenna numbers along the Nant axis
-    antpos : dict
+    antpos : AntposDict object
         Dictionary of ENU antenna vectors for each antenna number
     wgts : tensor, optional
         1D weight tensor to use in computing degenerate parameters
@@ -2169,7 +2233,7 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, abs_amp=True, phs_slope
     phs_slope_param = None
     if phs_slope:
         gain_phs = torch.angle(gains)
-        A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
+        A = antpos[[a for a in ants]][:, :2]
         if wgts is None:
             AtWAinvAtW = torch.pinverse(A.T @ A) @ A.T
         else:
@@ -2195,7 +2259,7 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
         Phase slope parameter of shape
         (Npol, Npol, 2, Ntimes, Nfreqs) where the two
         elements are the [East, North] gradients [rad / meter]
-    antpos : dict, optional
+    antpos : AntposDict object, optional
         Mapping of antenna number to antenna ENU vector [meters].
         Needed for phs_slope parameter
 
@@ -2219,21 +2283,22 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
 
     # incorporate phase slope
     if phs_slope is not None:
-        A = torch.stack([torch.as_tensor(antpos[a][:2]) for a in ants])
+        A = antpos[[a for a in antpos]][:, :2]
         phs = (phs_slope.moveaxis(2, -1) @ A.T).moveaxis(-1, 2)
         gains = gains * torch.exp(1j * phs)
 
     return gains
 
 
-def compute_redcal_degen_vis(vd, wgts=None, abs_amp=True, phs_slope=True):
+def compute_redcal_degen_vis(vd, wgts=None, abs_amp=True, phs_slope=True,
+                             bls=None, antpos=None):
     """
     Given a VisData, compute the redcal degeneracies
     (absolute amplitude and X-Y phase slope) and return
 
     Parameters
     ----------
-    vd : VisData object
+    vd : tensor or VisData object
         Visibility data to compute redcal degeneracies from
     wgts : tensor, optional
         Weight tensor to multiply into data along Nbls axis
@@ -2242,6 +2307,12 @@ def compute_redcal_degen_vis(vd, wgts=None, abs_amp=True, phs_slope=True):
         If True, compute the absolute amplitude parameter
     phs_slope : bool, optional
         If True, compute the phase slope parameter
+    bls : list, optional
+        List of baseline antenna-pairs of the data along
+        its Nbls axis, if vd is passed as a tensor
+    antpos : AntposDict, optional
+        Antenna number keys and ENU vectors [m] values if
+        vd is passed as a tensor
 
     Returns
     -------
@@ -2251,66 +2322,100 @@ def compute_redcal_degen_vis(vd, wgts=None, abs_amp=True, phs_slope=True):
         Phase slope gradient [rad/m] of shape (Npol, Npol, 2, Ntimes, Nfreqs)
         where the 2nd axis holds (Phi_EW, Phi_NS).
     """
+    data = vd.data if isinstance(vd, dataset.VisData) else vd
     # get weights
     if wgts is None:
-        wgts = torch.ones(vd.data.shape[2], dtype=utils._float())
-    wsum = torch.sum(wgts)
-    wgts = wgts[:, None, None]
+        w = 1.
+        wsum = 1.
+    else:
+        w = wgts[:, None, None]
+        wsum = torch.sum(wgts)
 
     # compute absolute amplitude parameter: average abs of gains
     abs_amp_param = None
     if abs_amp:
-        abs_amp_param = torch.sum(torch.abs(vd.data) * wgts, dim=2, keepdims=True) / wsum
+        abs_amp_param = torch.sum(torch.abs(data) * w, dim=2, keepdims=True) / wsum
         abs_amp_param = torch.log(abs_amp_param)
 
     # compute phase slope parameter
     phs_slope_param = None
     if phs_slope:
-        vis_phs = torch.angle(vd.data)
-        A = torch.stack([torch.as_tensor(vd.antpos[bl[1]] - vd.antpos[bl[0]])[:2] for bl in vd.bls])
-        W = torch.eye(vd.Nbls) * wgts.squeeze()
-        AtWAinvAt = torch.linalg.pinv(A.T @ W @ A) @ A.T
-        phs_slope_param = torch.einsum("ab,ijblm->ijalm", AtWAinvAt, vis_phs)
+        vis_phs = torch.angle(data)
+        bls = vd.bls if isinstance(vd, dataset.VisData) else bls
+        antpos = vd.antpos if isinstance(vd, dataset.VisData) else antpos
+        ant1, ant2 = zip(*bls)
+        A = (antpos[ant1] - antpos[ant2])[:, :2]
+        if wgts is None:
+            AtWAinvAtW = torch.pinverse(A.T @ A) @ A.T
+        else:
+            W = torch.eye(Nants, device=gains.device) * wgts / wsum
+            AtWAinvAtW = torch.pinverse(A.T @ W @ A) @ A.T @ W
+        phs_slope_param = torch.einsum("ab,ijblm->ijalm", AtWAinvAtW, vis_phs)
 
     return abs_amp_param, phs_slope_param
 
 
-def redcal_degen_vis(vd, abs_amp=None, phs_slope=None):
+def redcal_degen_vis(abs_amp=None, phs_slope=None, vd=None, bls=None, antpos=None):
     """
     Given redcal degeneracies for a visibility, compute the
-    degenerate visibilities and return a new VisData
+    degenerate visibilities
 
     Parameters
     ----------
-    vd : VisData
-        Use this object for metadata of the output
-        VisData
     abs_amp : tensor, optional
         Absolute amplitude visibility parameter of shape
         (Npol, Npol, 1, Ntimes, Nfreqs)
     phs_slope : tensor, optional
         Phase slope visibility parameter
         (Npol, Npol, 2, Ntimes, Nfreqs)
+    vd : VisData
+        Holding the original visibilities of shape
+        (Npol, Npol, Nbls, Ntimes, Nfreqs). If provided,
+        the output will be a new VisData with the degnerate
+        visibilities and the same metadata. Otherwise
+        output is a tensor.
+    bls : list, optional
+        List of baseline antenna-pairs of the data along
+        its Nbls axis, if vd is not passed
+    antpos : AntposDict, optional
+        Antenna number keys and ENU vectors [m] values if
+        vd is not passed
 
     Returns
     -------
-    VisData
+    VisData or tensor
     """
-    out = dataset.VisData()
-    out.setup_meta(telescope=vd.telescope, antpos=vd.antpos)
-    data = torch.ones_like(vd.data)
+    if vd:
+        out = dataset.VisData()
+        out.setup_meta(telescope=vd.telescope, antpos=vd.antpos)
 
     if abs_amp is not None:
-        data *= torch.ones_like(vd.data) * torch.exp(abs_amp)
+        amp_data = torch.exp(abs_amp)
 
     if phs_slope is not None:
-        A = torch.stack([torch.as_tensor(vd.antpos[bl[1]] - vd.antpos[bl[0]])[:2] for bl in vd.bls])
+        bls = vd.bls if vd else bls
+        antpos = vd.antpos if isinstance(vd, dataset.VisData) else antpos
+        ant1, ant2 = zip(*bls)
+        A = (antpos[ant1] - antpos[ant2])[:, :2]
         phs = (phs_slope.moveaxis(2, -1) @ A.T).moveaxis(-1, 2)
-        data *= torch.exp(1j * phs)
+        phs_data = torch.exp(1j * phs)
 
-    out.setup_data(vd.bls, vd.times, vd.freqs, pol=vd.pol,
-                   data=data, flags=vd.flags, cov=vd.cov, cov_axis=vd.cov_axis,
-                   icov=vd.icov, history=vd.history)
+    data = None
+    if abs_amp and phs_slope:
+        data = amp_data * phs_data
+    elif abs_amp and not phs_slope:
+        data = amp_data
+    elif phs_slope and not abs_amp:
+        data = phs_data
+
+    if vd:
+        if data is None:
+            data = torch.zeros_like(vd.data)
+        out.setup_data(vd.bls, vd.times, vd.freqs, pol=vd.pol,
+                       data=data, flags=vd.flags, cov=vd.cov, cov_axis=vd.cov_axis,
+                       icov=vd.icov, history=vd.history)
+    else:
+        out = data
 
     return out
 
