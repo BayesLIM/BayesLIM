@@ -595,8 +595,8 @@ class PixelResponse(utils.PixInterp):
     def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
-                 powerbeam=True, Rchi=None, interp_gpu=False, interp_cache_depth=None,
-                 taper_kwargs=None, LM=None, norm_pix=None):
+                 powerbeam=True, realbeam=True, Rchi=None, interp_gpu=False,
+                 interp_cache_depth=None, taper_kwargs=None, LM=None, norm_pix=None):
         """
         Parameters
         ----------
@@ -639,6 +639,10 @@ class PixelResponse(utils.PixInterp):
             'linear' : pass kwargs to linear_model.LinearModel
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
+        realbeam : bool, optional
+            Whether the output beam in the image domain should be real-valued
+            (True; default) or complex-valued (False). If powerbeam = True
+            then the beam is assumed to be real regardless of this value.
         Rchi : tensor, optional
             Polarization rotation matrix, rotating polarized Jones
             matrix from J phi theta to J alpha delta (see Memo 1),
@@ -664,6 +668,7 @@ class PixelResponse(utils.PixInterp):
                          gpu=interp_gpu, interp_cache_depth=interp_cache_depth)
         self.theta, self.phi = theta, phi
         self.powerbeam = powerbeam
+        self.realbeam = True if powerbeam else realbeam
         self.freqs = freqs
         self.comp_params = comp_params
         assert isinstance(comp_params, bool)
@@ -692,8 +697,7 @@ class PixelResponse(utils.PixInterp):
             kwgs['x'] = self.freqs
             linear_mode = kwgs.pop('linear_mode')
             kwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
-            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device,
-                                                    **kwgs)
+            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device, **kwgs)
 
     def push(self, device):
         """push attrs to device"""
@@ -711,7 +715,8 @@ class PixelResponse(utils.PixInterp):
             self.LM.push(device)
 
     def forward(self, params):
-        """forward pixelized beam through frequency response"""
+        """forward angle pixelized beam through frequency response
+        and other operators"""
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 
@@ -729,13 +734,19 @@ class PixelResponse(utils.PixInterp):
         elif self.freq_mode == 'linear':
             p = self.freq_LM(params)
 
+        if self.realbeam:
+            p = p.real
+
+        if self.log:
+            p = torch.exp(p)
+
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
-            beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
+            p *= beam_edge_taper(zen, device=p.device, **self.taper_kwargs)
 
         # normalize beam by a pixel if necessary
         if self.norm_pix is not None:
-            beam /= beam[..., self.norm_pix:self.norm_pix+1].detach().abs()
+            p /= p[..., self.norm_pix:self.norm_pix+1].detach().abs()
 
         return p
 
@@ -744,22 +755,12 @@ class PixelResponse(utils.PixInterp):
         if self.beam_cache is None:
             self.set_beam_cache(params)
 
-        # cast to complex if needed
-        if self.comp_params and not torch.is_complex(params):
-            params = utils.viewcomp(params)
-
         # interpolate at sky values
         b = self.interp(self.beam_cache, zen, az)
-
-        if torch.is_complex(b):
-            b = torch.real(b)
 
 #        if self.powerbeam:
 #            ## TODO: replace abs with non-neg prior on beam?
 #            b = torch.abs(b)
-
-        if self.log:
-            b = torch.exp(b)
 
         # apply polarization rotation if desired
         b = self.apply_Rchi(b)
@@ -1004,12 +1005,12 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
     automatically when using the rime_model.RIME object.
     """
     def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
-                 real_beam=False, mode='interpolate', device=None, interp_mode='nearest',
+                 realbeam=False, mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
-                 nside=None, powerbeam=True, log=False, freq_mode='channel',
+                 nside=None, powerbeam=True, realbeam=True, log=False, freq_mode='channel',
                  freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
                  separable=False, interp_cache_depth=None, taper_kwargs=None,
-                 LM=None):
+                 LM=None, norm_pix=None):
         """
         Note that for 'interpolate' mode, you must first call the object with a healpix map
         of zen, az (i.e. theta, phi) to "set" the beam, which is then interpolated with later
@@ -1030,8 +1031,6 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             x, y = x.ravel(), y.ravel()
         comp_params : bool, optional
             If True, cast params to complex if they are in 2-real form.
-        real_beam : bool, optional
-            Cast output beam to real if True, otherwise keep as-is.
         mode : str, options=['generate', 'interpolate']
             generate - generate exact Y_lm for each zen, az call. Slow and not recommended.
             interpolate - interpolate existing beam onto zen, az. See warning
@@ -1054,6 +1053,11 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         powerbeam : bool, optional
             If True, beam is a baseline beam, purely real and non-negative. Else,
             beam is a (possibly complex) antenna farfield beam.
+        realbeam : bool, optional
+            Whether the output beam in the image domain should be real-valued
+            (True; default) or complex-valued (False). If powerbeam = True
+            then the beam is assumed to be real regardless of this value.
+            This feeds into AlmModel(real_output=realbeam) kwarg.
         log : bool, optional
             If True assume params is logged and take exp(params) before returning.
         freq_mode : str, optional
@@ -1083,20 +1087,24 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
+        norm_pix : int, optional
+            If provided, normalize the forwarded beam model
+            by this pixel value along the Npix axis.
         """
+        realbeam = True if powerbeam else realbeam
         # init PixelResponse
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
                                           interp_mode=interp_mode, theta=theta, phi=phi,
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
                                           theta_grid=theta_grid, phi_grid=phi_grid,
-                                          interp_gpu=interp_gpu,
-                                          interp_cache_depth=interp_cache_depth)
+                                          interp_gpu=interp_gpu, norm_pix=norm_pix,
+                                          interp_cache_depth=interp_cache_depth,
+                                          powerbeam=powerbeam, realbeam=realbeam)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
         super(utils.PixInterp, self).__init__(l, m, default_kw=Ylm_kwargs,
-                                              real_output=real_beam, LM=LM)
+                                              real_output=realbeam, LM=LM)
         dtype = utils._cfloat() if comp_params else utils._float()
-        self.powerbeam = powerbeam
         self.mode = mode
         self.beam_cache = None
         self.freq_ax = 3
@@ -1158,14 +1166,16 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # this also casts beam to real if real_beam
         beam = self.forward_alm(p, Ylm=Ylm, alm_mult=alm_mult, ignoreLM=True)
 
+       if self.log:
+            beam = torch.exp(beam)
+
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
             beam *= beam_edge_taper(zen, device=beam.device, **self.taper_kwargs)
 
-        if self.log:
-            if torch.is_complex(beam):
-                beam = beam.real
-            beam = torch.exp(beam)
+        # normalize beam by a pixel if necessary
+        if self.norm_pix is not None:
+            beam /= beam[..., self.norm_pix:self.norm_pix+1].detach().abs()
 
         if self.mode != 'generate':
             # apply polarization rotation to beam_cache
