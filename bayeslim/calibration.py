@@ -2219,7 +2219,6 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, abs_amp=True, phs_slope
         elements are the [East, North] gradients respectively
     """
     # get weights
-    Nants = len(ants)
     if wgts is None:
         w = 1.
         wsum = 1.
@@ -2245,7 +2244,7 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, abs_amp=True, phs_slope
         if wgts is None:
             AtWAinvAtW = torch.pinverse(A.T @ A) @ A.T
         else:
-            W = torch.eye(Nants, device=gains.device) * wgts / wsum
+            W = torch.eye(len(ants), device=gains.device) * wgts / wsum
             AtWAinvAtW = torch.pinverse(A.T @ W @ A) @ A.T @ W
         phs_slope_param = torch.einsum("ab,ijblm->ijalm", AtWAinvAtW, gain_phs)
 
