@@ -2156,7 +2156,7 @@ def remove_redcal_degen(gains, ants, antpos, degen=None,
     """
     # compute degenerate gains
     rd = compute_redcal_degen(gains.detach(), ants, antpos, wgts=wgts, abs_amp=abs_amp, phs_slope=phs_slope)
-    degen_gains = redcal_degen_gains(ants, antpos=antpos, abs_amp=rd[0], phs_slope=rd[1])
+    degen_gains = redcal_degen_gains(ants=ants, antpos=antpos, abs_amp=rd[0], phs_slope=rd[1])
 
     if degen is not None:
         degen_gains /= degen
@@ -2252,14 +2252,12 @@ def compute_redcal_degen(gains, ants, antpos, wgts=None, abs_amp=True, phs_slope
     return abs_amp_param, phs_slope_param
 
 
-def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
+def redcal_degen_gains(abs_amp=None, phs_slope=None, ants=None, antpos=None):
     """
     Given redcal degenerate parameters, transform to their complex gains
 
     Parameters
     ----------
-    ants : list
-        List of antenna numbers for the output gains
     abs_amp : tensor, optional
         Absolute amplitude parameter of shape
         (Npol, Npol, 1, Ntimes, Nfreqs)
@@ -2267,6 +2265,8 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
         Phase slope parameter of shape
         (Npol, Npol, 2, Ntimes, Nfreqs) where the two
         elements are the [East, North] gradients [rad / meter]
+    ants : list
+        List of antenna numbers for the output gains
     antpos : AntposDict object, optional
         Mapping of antenna number to antenna ENU vector [meters].
         Needed for phs_slope parameter
@@ -2277,13 +2277,12 @@ def redcal_degen_gains(ants, abs_amp=None, phs_slope=None, antpos=None):
         Complex gains of shape (Npol, Npol, Nant, Ntimes, Nfreqs)
     """
     # fill unit gains
-    Nants = len(ants)
     device = None
     if abs_amp is not None:
         device = abs_amp.device
     elif phs_slope is not None:
         device = phs_slope.device
-    gains = torch.ones(1, 1, Nants, 1, 1, dtype=utils._cfloat(), device=device)
+    gains = torch.ones(1, 1, 1, 1, 1, dtype=utils._cfloat(), device=device)
 
     # incorporate absolute amplitude
     if abs_amp is not None:
