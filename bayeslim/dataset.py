@@ -425,18 +425,50 @@ class VisData(TensorData):
         ant1, ant2 = zip(*bls)
         return self.antpos[ant1] - self.antpos[ant2]
 
-    def copy(self, detach=True):
+    def copy(self, deepcopy=False, detach=True):
         """
         Copy and return self. This is equivalent
         to a detach and clone. Detach is optional
+
+        Parameters
+        ----------
+        deepcopy : bool, optional
+            If True (default) also make a copy of metadata
+            like telescope, antpos, times, freqs, flags, etc.
+            Note that this also copies things like the telescope cache,
+            which can be large in memory. Otherwise, only make a clone
+            of data and make all other (meta)data a pointer to self.
         """
         vd = VisData()
-        vd.setup_meta(telescope=self.telescope, antpos=self.antpos)
-        data = self.data.detach() if detach else self.data
-        vd.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
-                      data=data.clone(),
-                      flags=self.flags, cov=self.cov, icov=self.icov,
-                      cov_axis=self.cov_axis, history=self.history)
+        telescope, antpos = self.telescope, self.antpos
+        times, freqs, bls = self.times, self.freqs, self.bls
+        flags, cov, icov = self.flags, self.cov, self.icov
+        history = self.history
+
+        # clone data
+        data = self.data
+        if data is not None:
+            if detach:
+                data = data.detach()
+            data = data.clone()
+
+        if deepcopy:
+            if telescope is not None:
+                telescope = telescope_model.TelescopeModel(telescope.location, device=telescope.device)
+            if antpos is not None:
+                antpos = utils.AntposDict(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
+            times = copy.deepcopy(times)
+            freqs = copy.deepcopy(freqs)
+            bls = copy.deepcopy(bls)
+            history = copy.deepcopy(history)
+            if flags is not None: flags = flags.clone()
+            if cov is not None: cov = cov.clone()
+            if icov is not None: icov = icov.clone()
+
+        vd.setup_meta(telescope=telescope, antpos=antpos)
+        vd.setup_data(bls, times, freqs, pol=self.pol,
+                      data=data, flags=flags, cov=cov, icov=icov,
+                      cov_axis=self.cov_axis, history=history)
         return vd
 
     def _bl2ind(self, bl):
