@@ -245,7 +245,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             antenna number in self.ants
         """
         # call AntposDict's getitem
-        return super(toch.nn.Module, self).__getitem__(ant)
+        return super(torch.nn.Module, self).__getitem__(ant)
 
     def match_bl_len(self, bl, bls):
         """
