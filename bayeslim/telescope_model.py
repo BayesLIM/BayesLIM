@@ -139,11 +139,6 @@ class ArrayModel(utils.PixInterp, utils.AntposDict, utils.Module):
         This recomputes the fringes exactly
     2. caching the fringe on the sky
         This interpolates an existing fringe (experimental)
-
-    Note that for performance reasons in the RIME object,
-    self.antpos is always kept on the CPU. If the model is pushed
-    to the GPU, the antpos tensor becomes pinned to speed
-    up CPU -> GPU transfer.
     """
     def __init__(self, antpos, freqs=None, pixtype='healpix', parameter=False,
                  device=None, cache_s=True, cache_f=False, cache_f_angs=None,
