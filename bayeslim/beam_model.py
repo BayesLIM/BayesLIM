@@ -952,7 +952,8 @@ class UniformResponse:
     """
     A uniform beam response
     """
-    def __init__(self, device=None, taper_kwargs=None):
+    def __init__(self, freqs=None, device=None, taper_kwargs=None):
+        self.freqs = freqs
         self.taper_kwargs = taper_kwargs
         self.device = device
 

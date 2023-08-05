@@ -121,7 +121,6 @@ class RIME(utils.Module):
     def Nbls_all(self):
         return len(self.all_sim_bls)
 
-
     def setup_freqs(self, freqs):
         """
         Set frequency array
