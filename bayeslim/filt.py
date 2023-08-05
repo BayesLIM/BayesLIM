@@ -163,7 +163,12 @@ class GPFilter(BaseFilter):
             return out
 
         # assume inp is a tensor from here
+        # get G matrix
         G = self.G if Cs is None else Cs @ self.C_inv
+
+        # index it if necessary
+        if hasattr(self, "_idx") and self._idx is not None:
+            G = G[self._rowidx, self._idx]
 
         ein = self.ein.copy()
         ein = ein[:inp.ndim]
@@ -196,6 +201,33 @@ class GPFilter(BaseFilter):
 
         return y_filt
 
+    def set_G_idx(self, idx=None, rowidx=None):
+        """
+        Set indexing of G before applying to input
+
+        Parameters
+        ----------
+        idx : tensor or slice object, optional
+            Pick out these elements from rows and cols of G.
+        rowidx : list or slice object, optional
+            If provided, treat idx as column indexing of G,
+            and this as row indexing of G, otherwise use
+            idx for column and row indexing (default)
+        """
+        if idx is not None:
+            if isinstance(idx, slice):
+                pass
+            else:
+                idx = torch.atleast_2d(torch.as_tensor(idx))
+        self._idx = idx
+
+        rowidx = rowidx if rowidx is not None else idx
+        if rowidx is not None:
+            if isinstance(rowidx, slice):
+                pass
+            else:
+                rowidx = torch.atleast_2d(torch.as_tensor(rowidx)).T
+        self._rowidx = rowidx
 
 def rbf_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
