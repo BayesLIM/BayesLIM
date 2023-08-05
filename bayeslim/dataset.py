@@ -438,6 +438,8 @@ class VisData(TensorData):
             Note that this also copies things like the telescope cache,
             which can be large in memory. Otherwise, only make a clone
             of data and make all other (meta)data a pointer to self.
+        detach : bool, optional
+            If True (default) detach self.data for new object
         """
         vd = VisData()
         telescope, antpos = self.telescope, self.antpos
@@ -1443,8 +1445,6 @@ class VisData(TensorData):
         from bayeslim import telescope_model
         if self.telescope is not None:
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        if self.antpos is not None:
-            assert isinstance(self.antpos, dict)
         if self.data is not None:
             assert isinstance(self.data, torch.Tensor)
             assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
@@ -2052,16 +2052,22 @@ class CalData(TensorData):
         ----------
         telescope : TelescopeModel, optional
             Telescope location
-        antpos : dict, optional
+        antpos : AntposDict, optional
             Antenna position dictionary in ENU [meters].
             Antenna number integer as key, position vector as value
         """
         self.telescope = telescope
-        self.ants, self.antvecs = None, None
-        self.antpos = antpos
         if antpos is not None:
-            self.ants = np.array(list(antpos.keys()))
-            self.antvecs = np.array(list(antpos.values()))
+            if isinstance(antpos, utils.AntposDict):
+                pass
+            else:
+                antpos = utils.AntposDict(list(antpos.keys()),
+                    list(torch.vstack(antpos.values())))
+        self.antpos = antpos
+        self.ants, self.antvecs = None, None
+        if antpos is not None:
+            self.ants = antpos.ants
+            self.antvecs = antpos.antvecs
 
     def setup_data(self, ants, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -2127,18 +2133,52 @@ class CalData(TensorData):
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
-    def copy(self, detach=True):
+    def copy(self, deepcopy=False, detach=True):
         """
         Copy and return self. This is equivalent
         to a detach and clone. Detach is optional
+
+        Parameters
+        ----------
+        deepcopy : bool, optional
+            If True (default) also make a copy of metadata
+            like telescope, antpos, times, freqs, flags, etc.
+            Note that this also copies things like the telescope cache,
+            which can be large in memory. Otherwise, only make a clone
+            of data and make all other (meta)data a pointer to self.
+        detach : bool, optional
+            If True (default) detach self.data for new object
         """
         cd = CalData()
-        cd.setup_meta(telescope=self.telescope, antpos=self.antpos)
-        data = self.data.detach() if detach else self.data
-        cd.setup_data(self.ants, self.times, self.freqs, pol=self.pol,
-                      data=data.clone(),
-                      flags=self.flags, cov=self.cov, icov=self.icov,
-                      cov_axis=self.cov_axis, history=self.history)
+        telescope, antpos = self.telescope, self.antpos
+        times, freqs, ants = self.times, self.freqs, self.ants
+        flags, cov, icov = self.flags, self.cov, self.icov
+        history = self.history
+
+        # clone data
+        data = self.data
+        if data is not None:
+            if detach:
+                data = data.detach()
+            data = data.clone()
+
+        if deepcopy:
+            if telescope is not None:
+                telescope = telescope.__class__(telescope.location, tloc=telescope.tloc,
+                                                device=telescope.device)
+            if antpos is not None:
+                antpos = antpos.__class__(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
+            times = copy.deepcopy(times)
+            freqs = copy.deepcopy(freqs)
+            ants = copy.copy(ants)
+            if flags is not None: flags = flags.clone()
+            if cov is not None: cov = cov.clone()
+            if icov is not None: icov = icov.clone()
+
+        cd.setup_meta(telescope=telescope, antpos=antpos)
+        cd.setup_data(ants, times, freqs, pol=self.pol,
+                      data=data, flags=flags, cov=cov, icov=icov,
+                      cov_axis=self.cov_axis, history=history)
         return cd
 
     def _ant2ind(self, ant):
@@ -2731,7 +2771,7 @@ class CalData(TensorData):
             _ants = [int(_ant) for _ant in f['ants'][:]]
             if 'antvecs' in f:
                 _antvec = np.asarray(f['antvecs'][:])
-                _antpos = dict(zip(_ants, _antvec))
+                _antpos = utils.AntposDict(_ants, _antvec)
             else:
                 _antpos = None
             _times = f['times'][:]
@@ -2805,8 +2845,6 @@ class CalData(TensorData):
         from bayeslim import telescope_model
         if self.telescope:
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
-        if self.antpos:
-            assert isinstance(self.antpos, dict)
         if self.data:
             assert isinstance(self.data, torch.Tensor)
             assert self.data.shape == (self.Npol, self.Npol, self.Nants, self.Ntimes, self.Nfreqs)
