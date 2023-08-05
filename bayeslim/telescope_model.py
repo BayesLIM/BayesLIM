@@ -292,11 +292,30 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         return ang, match
 
     def set_freqs(self, freqs):
-        """set frequency array"""
+        """
+        Set the frequency array. Note if self.cache_f
+        this clears all of self.fringe_cache()
+        """
         self.freqs = freqs
-        if freqs is not None:
+        if self.freqs is not None:
             self.freqs = torch.as_tensor(self.freqs, dtype=_float(), device=self.device)
-        self.clear_cache()
+        if self.cache_f:
+            self.clear_cache()
+
+    def set_freq_index(self, idx=None):
+        """
+        Set indexing of frequency axis.
+        Note this is functionally the same as self.set_freqs(freqs[idx])
+        Note if self.cache_f this clears all of self.fringe_cache()
+
+        Parameters
+        ----------
+        idx : list or slice object, optional
+            Indexing along frequency axis
+        """
+        self._freq_idx = idx
+        if self.cache_f:
+            self.clear_cache()
 
     def clear_cache(self, depth=None):
         """
@@ -372,7 +391,10 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
             # get fringe pattern: shape (Nbls, Nfreqs, Npix)
             sign = -2j if conj else 2j
-            f = torch.exp(sign * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * self.freqs[:, None])
+            freqs = self.freqs
+            if hasattr(self, '_freq_idx') and self._freq_idx is not None:
+                freqs = freqs[self._freq_idx]
+            f = torch.exp(sign * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * freqs[:, None])
 
             # if fringe caching, store the full fringe (this is large in memory!)
             if self.cache_f:
