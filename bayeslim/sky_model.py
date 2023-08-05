@@ -14,7 +14,7 @@ class SkyBase(utils.Module):
     """
     Base class for various pixelized sky model representations
     """
-    def __init__(self, params, freqs, R=None, name=None,
+    def __init__(self, params, R=None, name=None,
                  parameter=True, p0=None):
         """
         Base class for a pixel sky model representation.
@@ -25,8 +25,6 @@ class SkyBase(utils.Module):
             A sky model parameterization as a tensor to
             be pushed through the response function R().
             In general this should be (Nstokes, 1, Nfreqs, Nsources)
-        freqs : tensor
-            Frequency array of sky model [Hz]
         R : callable, optional
             An arbitrary response function for the
             point source model, mapping self.params
@@ -52,10 +50,6 @@ class SkyBase(utils.Module):
         if R is None:
             R = DefaultResponse()
         self.R = R
-        self.freqs = freqs
-        self.Nfreqs = len(freqs)
-        if self.R.freq_mode == 'channel':
-            assert len(self.freqs) == self.params.shape[2]
 
         # construct _args for str repr
         self._args = dict(name=name)
@@ -79,7 +73,6 @@ class SkyBase(utils.Module):
         # push basic attrs
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
-        self.freqs = self.freqs.to(device)
         for attr in attrs:
             if hasattr(self, attr):
                 setattr(self, attr, getattr(self, attr).to(device))
@@ -102,7 +95,7 @@ class SkyBase(utils.Module):
         """
         Interpolate params onto new set of frequencies
         if response freq_mode is channel. If freq_mode is
-        linear or powerlaw, just update response frequencies
+        powerlaw, just update response frequencies.
 
         Parameters
         ----------
@@ -113,11 +106,11 @@ class SkyBase(utils.Module):
             see scipy.interp1d for options
         """
         # only interpolate if new freqs don't match current freqs to 1 Hz
-        if len(freqs) != len(self.freqs) or not np.isclose(self.freqs, freqs, atol=1.0).all():
+        if len(freqs) != len(self.R.freqs) or not np.isclose(self.R.freqs, freqs, atol=1.0).all():
             freqs = torch.as_tensor(freqs)
             if self.R.freq_mode == 'channel':
                 # interpolate params across frequency
-                interp = interpolate.interp1d(utils.tensor2numpy(self.freqs),
+                interp = interpolate.interp1d(utils.tensor2numpy(self.R.freqs),
                                               utils.tensor2numpy(self.params),
                                               axis=2, kind=kind, fill_value='extrapolate')
                 params = torch.as_tensor(interp(utils.tensor2numpy(freqs)), device=self.device,
@@ -127,7 +120,6 @@ class SkyBase(utils.Module):
                 else:
                     self.params = params
 
-            self.freqs = freqs.to(self.device)
             self.R.freqs = freqs.to(self.device)
             self.R._setup()
 
@@ -136,8 +128,12 @@ class DefaultResponse:
     """
     Default response function for SkyBase  
     """
-    def __init__(self):
+    def __init__(self, freqs=None):
+        self.freqs = freqs
         self.freq_mode = 'channel'
+
+    def set_freq_index(self, idx=None):
+        pass
 
     def _setup(self):
         pass
@@ -160,7 +156,7 @@ class PointSky(SkyBase):
     Returns point source flux density and their sky
     locations in equatorial coordinates.
     """
-    def __init__(self, params, angs, freqs, R=None, name=None,
+    def __init__(self, params, angs, R=None, name=None,
                  parameter=True, p0=None):
         """
         Fixed-location point source model with
@@ -183,8 +179,6 @@ class PointSky(SkyBase):
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
             first axis holds RA and Dec [deg], respectively.
-        freqs : tensor
-            Frequency array of sky model [Hz].
         R : callable, optional
             An arbitrary response function for the
             point source model, mapping self.params
@@ -220,10 +214,9 @@ class PointSky(SkyBase):
                 S = params[0][..., None]
                 spix = params[1]
                 return S * (freqs / freqs[0])**spix
-            P = bayeslim.sky.PointSky([amps, alpha],
-                                      angs, Nfreqs, R=R)
+            P = PointSky([amps, alpha], angs, R=R)
         """
-        super().__init__(params, freqs, R=R, name=name,
+        super().__init__(params, R=R, name=name,
                          parameter=parameter, p0=p0)
         self.angs = angs
 
@@ -272,7 +265,11 @@ class PointSky(SkyBase):
             angs = torch.vstack(self.angs)
         else:
             angs = torch.as_tensor(self.angs)
-        skycomp.setup_data(freqs=self.freqs, data=sky, angs=angs)
+
+        freqs = self.R.freqs
+        if hasattr(self.R, '_freq_idx') and self.R._freq_idx is not None:
+            freqs = freqs[self.R._freq_idx]
+        skycomp.setup_data(freqs=freqs, data=sky, angs=angs)
 
         return skycomp
 
@@ -286,8 +283,9 @@ class PointSky(SkyBase):
 class PointSkyResponse:
     """
     Frequency parameterization of point sources at
-    fixed locations but variable flux wrt frequency
-    options include
+    fixed locations but variable flux wrt frequency.
+    The params tensor of shape (Nstokes, 1, Ncoeff, Nsources).
+    frequency parameterizations include
         - channel : vary all frequency channels
         - linear : linear mapping across frequency
         - powerlaw : amplitude and exponent, centered at f0.
@@ -373,7 +371,22 @@ class PointSkyResponse:
         if self.log and self.freq_mode in ['channel', 'linear']:
             params = torch.exp(params)
 
+        if hasattr(self, '_freq_idx') and self._freq_idx is not None:
+            params = params[..., self._freq_idx, :]
+
         return params
+
+    def set_freq_index(self, idx=None):
+        """
+        Set indexing of frequency axis after pushing through
+        the response
+
+        Parameters
+        ----------
+        idx : list or slice object, optional
+            Indexing along frequency axis
+        """
+        self._freq_idx = idx
 
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
@@ -396,7 +409,7 @@ class PixelSky(SkyBase):
     of the forward model is in flux density [Jy]
     (i.e. we multiply by each cell's solid angle).
     """
-    def __init__(self, params, angs, freqs, px_area, R=None, name=None,
+    def __init__(self, params, angs, px_area, R=None, name=None,
                  parameter=True, p0=None):
         """
         Pixelized model of the sky brightness distribution.
@@ -422,8 +435,6 @@ class PixelSky(SkyBase):
             Point source unit vectors on the sky in equatorial
             coordinates of shape (2, Nsources), where the
             last two axes are RA and Dec [deg].
-        freqs : tensor
-            Frequency array of sky model [Hz].
         px_area : tensor or float
             Contains the solid angle of each pixel [str]. This is multiplied
             into the final sky model, and thus needs to be a scalar or
@@ -442,7 +453,7 @@ class PixelSky(SkyBase):
             response function. Redefines params as a deviation
             from p0. Must have same shape as params.
         """
-        super().__init__(params, freqs, R=R, name=name,
+        super().__init__(params, R=R, name=name,
                          parameter=parameter, p0=p0)
         self.angs = angs
         self.px_area = torch.as_tensor(px_area)
@@ -491,7 +502,11 @@ class PixelSky(SkyBase):
             angs = torch.vstack(self.angs)
         else:
             angs = torch.as_tensor(self.angs)
-        skycomp.setup_data(freqs=self.freqs, data=sky * self.px_area, angs=angs)
+
+        freqs = self.R.freqs
+        if hasattr(self, '_freq_idx') and self.R._freq_idx is not None:
+            freqs = freqs.self.R._freq_idx
+        skycomp.setup_data(freqs=freqs, data=sky * self.px_area, angs=angs)
 
         return skycomp
 
@@ -752,7 +767,22 @@ class PixelSkyResponse:
         if hasattr(self, 'log') and self.log:
             params = torch.exp(params)
 
+        if hasattr(self, '_freq_idx') and self._freq_idx is not None:
+            params = params[..., self._freq_idx, :]
+
         return params
+
+    def set_freq_index(self, idx=None):
+        """
+        Set indexing of frequency axis after pushing through
+        the response
+
+        Parameters
+        ----------
+        idx : list or slice object, optional
+            Indexing along frequency axis
+        """
+        self._freq_idx = idx
 
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
