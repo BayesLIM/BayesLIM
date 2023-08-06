@@ -1452,7 +1452,7 @@ class VisData(TensorData):
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
         if self.cov is not None:
-            assert self.cov_axis is not 'full', "full data-sized covariance not implemented"
+            assert self.cov_axis != 'full', "full data-sized covariance not implemented"
             if self.cov_axis is None:
                 assert self.cov.shape == self.data.shape
             elif self.cov_axis == 'bl':
