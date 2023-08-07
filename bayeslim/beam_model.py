@@ -592,7 +592,7 @@ class PixelResponse(utils.PixInterp):
     where the rotation matrix is DD and is derived in
     BayesLIM Memo 1.
     """
-    def __init__(self, freqs, pixtype, comp_params=False, interp_mode='nearest',
+    def __init__(self, freqs, pixtype, beam0=None, comp_params=False, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
                  powerbeam=True, realbeam=True, Rchi=None, interp_gpu=False,
@@ -608,6 +608,11 @@ class PixelResponse(utils.PixInterp):
             For rect, pixel ordering should be
             x, y = meshgrid(phi_grid, theta_grid)
             x, y = x.ravel(), y.ravel()
+        beam0 : tensor, optional
+            Starting pixelized beam to sum with the forward modeled beam
+            before returning. This recasts the parameters as perturbation
+            about this beam after the forward model. This must have
+            the same shape as the forward beam model.
         comp_params : bool, optional
             If True, cast params to complex via utils.viewcomp
         interp_mode : str, optional
@@ -652,7 +657,8 @@ class PixelResponse(utils.PixInterp):
             If True and pixtype is 'rect', use GPU when solving
             for pixel interpolation weights for speedup (PixInterp)
         interp_cache_depth : int, optional
-            Depth of interpolation cache, following FIFO (PixInterp)
+            Depth of interpolation cache, following FIFO (PixInterp).
+            Default is no max depth.
         taper_kwargs : dict, optional
             Taper the edge of the beam using beam_edge_taper()
             with these kwargs. Default is no tapering.
@@ -666,6 +672,7 @@ class PixelResponse(utils.PixInterp):
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
                          gpu=interp_gpu, interp_cache_depth=interp_cache_depth)
+        self.beam0 = beam0
         self.theta, self.phi = theta, phi
         self.powerbeam = powerbeam
         self.realbeam = True if powerbeam else realbeam
@@ -713,6 +720,8 @@ class PixelResponse(utils.PixInterp):
             self.phi = self.phi.to(device)
         if self.LM is not None:
             self.LM.push(device)
+        if self.beam0 is not None:
+            self.beam0 = utils.push(self.beam0, device)
 
     def forward(self, params):
         """forward angle pixelized beam through frequency response
@@ -739,6 +748,10 @@ class PixelResponse(utils.PixInterp):
 
         if self.log:
             p = torch.exp(p)
+
+        # sum with starting beam if necessary
+        if self.beam0 is not None:
+            p += self.beam0
 
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
@@ -1005,7 +1018,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
     and you get a RunTimeError. Note this is performed
     automatically when using the rime_model.RIME object.
     """
-    def __init__(self, l, m, freqs, pixtype='healpix', comp_params=False,
+    def __init__(self, l, m, freqs, pixtype='healpix', beam0=None, comp_params=False,
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, realbeam=True, log=False, freq_mode='channel',
@@ -1030,6 +1043,11 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             pixel ordering should be
             x, y = meshgrid(phi_grid, theta_grid)
             x, y = x.ravel(), y.ravel()
+        beam0 : tensor, optional
+            Starting pixelized beam to sum with the forward modeled beam
+            before returning. This recasts the parameters as perturbation
+            about this beam after the forward model. This must have
+            the same shape as the forward beam model.
         comp_params : bool, optional
             If True, cast params to complex if they are in 2-real form.
         mode : str, options=['generate', 'interpolate']
@@ -1094,7 +1112,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         """
         realbeam = True if powerbeam else realbeam
         # init PixelResponse
-        super(YlmResponse, self).__init__(freqs, pixtype, nside=nside,
+        super(YlmResponse, self).__init__(freqs, pixtype, nside=nside, beam0=beam0,
                                           interp_mode=interp_mode, theta=theta, phi=phi,
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
@@ -1169,6 +1187,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
 
         if self.log:
             beam = torch.exp(beam)
+
+        # sum with beam0 if necessary
+        if self.beam0 is not None:
+            beam += self.beam0
 
         # apply edge taper if necessary
         if hasattr(self, 'taper_kwargs') and self.taper_kwargs is not None:
