@@ -495,7 +495,7 @@ def _bessel_integrand(x, tau, n=1):
     return torch.cos(n * tau - x * torch.sin(tau))
 
 
-def j1(x, Ntau=100, brute_force=True):
+def j1(x, Ntau=100, brute_force=False):
     """
     Bessel function of the first kind,
     derived from trapezoidal integration

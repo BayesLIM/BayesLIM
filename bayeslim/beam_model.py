@@ -891,7 +891,7 @@ class AiryResponse:
 
     The output beam has shape (Npol, Nvec, Nmodel, Nfreqs, Npix).
     """
-    def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=True, Ntau=100,
+    def __init__(self, freq_ratio=1.0, powerbeam=True, brute_force=False, Ntau=100,
                  taper_kwargs=None):
         """
         .. math::
