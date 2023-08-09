@@ -18,7 +18,7 @@ class LinearModel:
 
         y = Ax
     """
-    def __init__(self, linear_mode, dim=0, coeff=None, diag=False,
+    def __init__(self, linear_mode, dim=0, coeff=None, diag=False, kron=False,
                  out_dtype=None, out_shape=None, meta=None, **kwargs):
         """
         Parameters
@@ -34,6 +34,9 @@ class LinearModel:
         diag : bool, optional
             If True, assume A is diagonal and use element-wise product.
             (only for linear_mode='custom'). Only stores diagonal of A.
+        kron : bool, optional
+            If True, take kronecker product of A with input instead
+            of matrix multiplication. Otherwise (False, default) use mat-mul.
         out_dtype : dtype, optional
             Cast output of forward as this dtype if desired
         out_shape : tuple, optional
@@ -109,7 +112,11 @@ class LinearModel:
         ndim = params.ndim
 
         # forward model
-        if self.diag:
+        if self.kron:
+            # take kronecker product
+            out = torch.kron(params, self.A)
+
+        elif self.diag:
             # if A is diagonal, this is just a element-wise product
             if len(A) > 1:
                 pshape = [-1 if i == self.dim else 1 for i in range(ndim)]
@@ -159,6 +166,8 @@ class LinearModel:
         -------
         tensor
         """
+        if self.kron:
+            raise ValueError("cannot least-squares when kron=True")
         if y.dtype != self.A.dtype:
             y = y.to(self.A.dtype)
         A = self.A
