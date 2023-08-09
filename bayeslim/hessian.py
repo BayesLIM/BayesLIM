@@ -811,8 +811,8 @@ class PartitionedMat(BaseMat):
         """
         for matcol in self.matcols:
             matcol.push(device)
-        self.dtype = self.matcols[0].dtype
-        self.device = self.matcols[0].device
+        self.dtype = self.matcols[0].mats[0].dtype
+        self.device = self.matcols[0].mats[0].device
 
     def scalar_mul(self, scalar):
         """
