@@ -18,7 +18,7 @@ class LinearModel:
 
         y = Ax
     """
-    def __init__(self, linear_mode, dim=0, coeff=None, diag=False, kron=False,
+    def __init__(self, linear_mode, dim=0, coeff=None, diag=False, idx=None,
                  out_dtype=None, out_shape=None, meta=None, **kwargs):
         """
         Parameters
@@ -34,9 +34,10 @@ class LinearModel:
         diag : bool, optional
             If True, assume A is diagonal and use element-wise product.
             (only for linear_mode='custom'). Only stores diagonal of A.
-        kron : bool, optional
-            If True, take kronecker product of A with input instead
-            of matrix multiplication. Otherwise (False, default) use mat-mul.
+        idx : tensor, optional
+            This indexes the input params along dim, if provided.
+            Note that if coeff is provided, the order of operations is
+            (params * coeff)[idx]
         out_dtype : dtype, optional
             Cast output of forward as this dtype if desired
         out_shape : tuple, optional
@@ -49,6 +50,7 @@ class LinearModel:
         self.linear_mode = linear_mode
         self.dim = dim
         self.coeff = coeff
+        self.idx = idx
         self.out_dtype = out_dtype
         self.out_shape = out_shape
         self.meta = meta if meta is not None else {}
@@ -107,16 +109,17 @@ class LinearModel:
         # get matrices and metadata
         A = A if A is not None else self.A
         coeff = coeff if coeff is not None else self.coeff
+        idx = self.idx if hasattr(self, 'idx') else None
         if coeff is not None:
             params = params * coeff
         ndim = params.ndim
 
-        # forward model
-        if self.kron:
-            # take kronecker product
-            out = torch.kron(params, self.A)
+        # index params if needed
+        if idx is not None:
+            params = torch.index_select(params, self.dim, idx)
 
-        elif self.diag:
+        # forward model
+        if self.diag:
             # if A is diagonal, this is just a element-wise product
             if len(A) > 1:
                 pshape = [-1 if i == self.dim else 1 for i in range(ndim)]
@@ -166,8 +169,6 @@ class LinearModel:
         -------
         tensor
         """
-        if self.kron:
-            raise ValueError("cannot least-squares when kron=True")
         if y.dtype != self.A.dtype:
             y = y.to(self.A.dtype)
         A = self.A
@@ -217,7 +218,10 @@ class LinearModel:
         self.A = utils.push(self.A, device)
         if self.coeff is not None:
             self.coeff = utils.push(self.coeff, device)
-        if not dtype: self.device = device
+        if not dtype:
+            self.device = device
+            if hasattr(self, 'idx') and self.idx is not None:
+                self.idx = utils.push(self.idx, device)
 
 
 class MultiLM:
