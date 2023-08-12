@@ -539,6 +539,84 @@ class ZeroMat(BaseMat):
         return self
 
 
+class OneMat(BaseMat):
+    """
+    A ones matrix filled with any scalar value
+    """
+    def __init__(self, shape, scalar=1.0, dtype=None, device=None):
+        """
+        Parameters
+        ----------
+        shape : tuple
+            Holds (Nrows, Ncols) of a scalar value
+        scalar : float
+            The value of the matrix elements
+        """
+        self._shape = shape
+        self.scalar = scalar
+        self.dtype = dtype if dtype is not None else utils._float()
+        self.device = device
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def mat_vec_mul(self, vec, transpose=False):
+        vsum = vec.sum(0) * self.scalar
+        out = torch.ones(self.shape[0], device=self.device, dtype=self.dtype) * vsum
+        return out
+
+    def mat_mat_mul(self, mat, transpose=False):
+        msum = mat.sum(dim=0, keepdims=True) * self.scalar
+        out = torch.ones(self.shape[0], mat.shape[1]) * msum
+        return out
+
+    def __call__(self, vec, **kwargs):
+        if vec.ndim == 1:
+            return self.mat_vec_mul(vec, **kwargs)
+        else:
+            return self.mat_mat_mul(vec, **kwargs)
+
+    def to_dense(self, transpose=False):
+        shape = self.shape if not transpose else self.shape[::-1]
+        return torch.ones(shape, dtype=self.dtype, device=self.device) * self.scalar
+
+    def push(self, device):
+        if isinstance(device, torch.dtype):
+            self.dtype = device
+        else:
+            self.device = device
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        self.scalar *= scalar
+
+    def __mul__(self, other):
+        if isinstance(other, OneMat):
+            return OneMat(self.shape, self.scalar * other.scalar, device=self.device, dtype=self.dtype)
+        else:
+            return OneMat(self.shape, self.scalar * other, device=self.device, dtype=self.dtype)
+
+    def __rmul__(self, other):
+        if isinstance(other, OneMat):
+            return OneMat(self.shape, self.scalar * other.scalar, device=self.device, dtype=self.dtype)
+        else:
+            return OneMat(self.shape, self.scalar * other, device=self.device, dtype=self.dtype)
+
+    def __imul__(self, other):
+        if isinstance(other, OneMat):
+            return self * other.scalar
+        else:
+            return self * other
+
+
 class TransposedMat(BaseMat):
     """
     A shallow wrapper around a *Mat object to
