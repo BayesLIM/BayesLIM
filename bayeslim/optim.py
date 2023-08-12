@@ -276,12 +276,14 @@ class LogGaussPrior(BaseLogPrior):
         elif self.side == 'lower':
             res[res > 0] = 0
         if self.sparse_cov:
+            res = torch.abs(res) if torch.is_complex(res) else res
             chisq = torch.sum(res**2 * self.icov)
         else:
             res = res.ravel()
-            chisq = torch.sum(res @ self.icov @ res)
+            res2 = res.conj() if torch.is_complex(res) else res
+            chisq = torch.sum(res @ self.icov @ res2)
 
-        out = -0.5 * chisq
+        out = -0.5 * chisq.real
         if self.density:
             out -= self.norm
 
@@ -1521,7 +1523,38 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     return icov
 
 
-def compute_hessian(prob, pdict, rm_offdiag=False, **kwargs):
+def _hessian(func, inputs, vectorize=False, N=None):
+    """
+    A close copy of torch.autograd.functional.hessian but
+    with some added functionality
+    
+    Parameters
+    ----------
+    func : callable
+        A function that takes inputs and returns a scalar
+    inputs : tensor
+        Inputs to func, over which to compute hessian
+    vectorize : bool, optional
+        Kwarg to torchautograd.functional.hessian()
+    N : int, optional
+        If provided, only compute hessian[:N, :] component
+        of the hessian, such that output is non-square.
+
+    Returns
+    -------
+    tensor
+    """
+    def jac_func(*inputs, N=N):
+        jac = torch.autograd.functional.jacobian(func, inputs, create_graph=True)
+        if N is not None:
+            jac = (jac[0][:N],)
+        return jac
+
+    res = torch.autograd.functional.jacobian(jac_func, inputs, vectorize=vectorize)
+    return res[0]
+
+
+def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False):
     """
     Compute Hessian of prob with respect to params.
     Note that this edits params in prob inplace!
@@ -1536,14 +1569,16 @@ def compute_hessian(prob, pdict, rm_offdiag=False, **kwargs):
     rm_offdiag : bool, optional
         If True, only keep the diagonal of the Hessian and
         reshape to match input params shape.
-    **kwargs : kwargs for autograd.functional.hessian
+    Npdict : dict, optional
+        N parameter, see optim._hessian(), for each key in pdict
+    vectorize : bool, optional
+        kwarg for torch.autograd.functional.hessian
 
     Returns
     -------
     ParamDict object
         Hessian of prob
     """
-    ### TODO: enable Hessian between params
     # get all leaf variables on prob
     named_params = prob.named_params
 
@@ -1557,13 +1592,14 @@ def compute_hessian(prob, pdict, rm_offdiag=False, **kwargs):
         inp = pdict[param]
         shape = inp.shape
         N = shape.numel()
+        _N = None if Npdict is None else Npdict[param]
         def func(x):
             utils.set_model_attr(prob, param, x, clobber_param=True)
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
             prob.set_batch_idx(i)
-            h = torch.autograd.functional.hessian(func, inp, **kwargs).reshape(N, N)
+            h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N, N)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
             if i == 0:
