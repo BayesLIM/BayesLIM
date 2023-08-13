@@ -1591,15 +1591,16 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
         # setup func
         inp = pdict[param]
         shape = inp.shape
-        N = shape.numel()
         _N = None if Npdict is None else Npdict[param]
+        N2 = shape.numel()
+        N1 = _N if _N is not None else N2
         def func(x):
             utils.set_model_attr(prob, param, x, clobber_param=True)
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
             prob.set_batch_idx(i)
-            h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N, N)
+            h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N1, N2)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
             if i == 0:
