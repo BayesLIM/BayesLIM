@@ -1618,3 +1618,111 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
 
     return hess
 
+
+def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
+                   rm_offdiag=False, rcond=1e-15, eps=None, hermitian=True, return_hess=False):
+    """
+    Invert a Hessian (Fisher Information) matrix (H) to get a covariance
+    matrix
+
+    Parameters
+    ----------
+    hess : tensor or ParamDict
+        The Hessian matrix (see optim.compute_hessian)
+    inv : str, optional
+        If not diag, this is the inversion method. One of
+        'pinv' : use pseudo-inverse, takes kwargs: rcond, hermitian
+        'lstsq' : use least-squares, takes kwargs: rcond
+        'chol' : use cholesky
+        'diag' : just invert the diagonal component
+    diag : bool, optional
+        If True, the input hess tensor represents the diagonal
+        of the Hessian, regardless of its shape or ndim.
+    idx : array or slice object, optional
+        Only used if diag=False. Grab these indices of the 2D hess
+        matrix before inverting. Output covariance has rm_fill in
+        the diagonal of non-inverted components
+    rm_thresh : float, optional
+        For diagonal elements of hess below this
+        value, truncate these row/columns before inversion.
+        If passing idx, rm_thresh operates after applying idx.
+    rm_fill : float, optional
+        For row/columns that are truncated by rm_thresh,
+        this fills the diagonal of the output covariance
+    rm_offdiag : bool, optional
+        If True, remove the off-diagonal components of hess if
+        it has any.
+    rcond : float, optional
+        rcond parameter for pinverse
+    eps : float, optional
+        Small value to add to diagonal of hessian (only if diag=False or rm_offdiag=False)
+    hermitian : bool, optional
+        Hermitian parameter for torch.pinverse
+    return_hess : bool, optional
+        If True, return downselected Hessian matrix
+    
+    Returns
+    -------
+    tensor
+    """
+    if isinstance(hess, paramdict.ParamDict):
+        cov = {}
+        for k in hess:
+            cov[k] = invert_hessian(hess[k], diag=diag, idx=idx, eps=eps,
+                                    rm_offdiag=rm_offdiag, hermitian=hermitian,
+                                    rm_thresh=rm_thresh, rm_fill=rm_fill)
+        return paramdict.ParamDict(cov)
+
+    if diag:
+        # assume hessian holds diagonal, can be any shape
+        cov = torch.ones_like(hess, device=hess.device, dtype=hess.dtype)
+        s = hess > rm_thresh
+        cov[s] = 1 / hess[s]
+        cov[~s] = rm_fill
+        if return_hess:
+            cov = hess
+
+        return cov
+
+    else:
+        # assume hessian is 2D
+        if rm_offdiag:
+            hess = torch.diag(hess.diag())
+
+        H = hess
+
+        # get idx array
+        if idx is None:
+            idx = np.arange(len(H))
+        elif isinstance(idx, slice):
+            start = idx.start if idx.start is not None else 0
+            stop = idx.stop if idx.stop is not None else len(H)
+            if stop < 0: stop = len(H)
+            step = idx.step if idx.step is not None else 1
+            idx = np.arange(start, stop, step)
+        elif isinstance(idx, (list, tuple)):
+            idx = np.asarray(idx)
+
+        # combine idx with rm_thresh
+        good_idx = np.where(H.diagonal() > rm_thresh)[0]
+        idx = np.array([i for i in idx if i in good_idx])
+
+        # select out indices
+        H = H[idx[:, None], idx[None, :]]
+
+        if return_hess:
+            return H
+
+        # add eps if desired, do it not inplace here, as oppossed to in invert_matrix
+        if eps is not None:
+            H = H + eps * torch.eye(len(H), dtype=H.dtype, device=H.device)
+
+        # take inverse to get cov
+        C = linalg.invert_matrix(H, inv=inv, rcond=rcond, hermitian=hermitian)
+
+        # fill cov with shape of hess
+        cov = torch.eye(len(hess), device=hess.device, dtype=hess.dtype) * rm_fill
+        cov[idx[:, None], idx[None, :]] = C
+
+        return cov
+
