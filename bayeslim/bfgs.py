@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.optim.optimizer import Optimizer
 
-from . import optim, hessian, paramdict
+from . import optim, hmat, paramdict
 
 
 class BFGS:
@@ -413,7 +413,7 @@ class LBFGS(BFGS):
             If True, multiply the starting Hessian with Eqn. 7.20 of [1]
             for every step.
         """
-        assert not isinstance(H0, torch.Tensor), "H0 should be a hessian.BaseMat subclass"
+        assert not isinstance(H0, torch.Tensor), "H0 should be a hmat.BaseMat subclass"
         super().__init__(params, H0=H0, lr=lr, max_iter=max_iter,
                          max_ls_eval=max_ls_eval, tolerance_grad=tolerance_grad, store_Hy=store_Hy,
                          tolerance_change=tolerance_change, line_search_fn=line_search_fn)
@@ -445,10 +445,10 @@ class LBFGS(BFGS):
         # check if starting Hessian needs defining
         if self.H is None:
             # just use I
-            self.H = hessian.DiagMat(self._numel(),
-                                     torch.tensor([1.],
-                                     device=self.params[0].device,
-                                     dtype=self.params[0].dtype))
+            self.H = hmat.DiagMat(self._numel(),
+                                  torch.tensor([1.],
+                                  device=self.params[0].device,
+                                  dtype=self.params[0].dtype))
 
         # only update if sufficient curvature
         if (1. / rho) > 1e-10:
@@ -542,7 +542,7 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
             r = H0 * q
         else:
             r = H0 @ q
-    elif isinstance(H0, hessian.BaseMat):
+    elif isinstance(H0, hmat.BaseMat):
         r = H0(q)
     else:
         raise NameError
@@ -576,7 +576,7 @@ def implicit_to_dense(H0, s, y):
     tensor
     """
     N = len(s[0])
-    if isinstance(H0, hessian.BaseMat):
+    if isinstance(H0, hmat.BaseMat):
         H0 = H0.to_dense()
     elif H0 is None:
         H0 = torch.eye(N, dtype=s[0].dtype, device=s[0].device)
