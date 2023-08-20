@@ -1726,3 +1726,55 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
 
         return cov
 
+
+def main_params_index(prob, main_index, subset_index):
+    """
+    Take a LogProb object and its main_index dictionary
+    and index a subset of its elements.
+
+    Parameters
+    ----------
+    prob : LobProb object
+        A LogProb with set_main_params() activated
+    main_index : dict
+        The prob._main_index dictionary
+    subset_index : dict
+        Similar in structure to main_index, except
+        now values index the tensor params[main_index[param]]
+
+    Returns
+    -------
+    list
+    """
+    def update(p, main_idx, subset_idx, start):
+        p = p[main_idx]
+        _idx = np.arange(p.numel()).reshape(p.shape) + start
+        start += _idx.max() + 1
+        if subset_idx is not None:
+            _idx = _idx[subset_idx]
+        else:
+            return start
+        if len(_idx) == 0:
+            return start
+        if isinstance(_idx, (int, np.integer)):
+            _idx = [_idx]
+        else:
+            _idx = _idx.ravel()
+        idx.extend(_idx)
+        return start
+
+    idx = []
+    start = 0
+    for k, v in main_index.items():
+        p = prob.model[k]
+        s_idx = subset_index[k] if k in subset_index else None
+        if isinstance(v, list):
+            # v holds multiple indexing tuple
+            for i, _v in enumerate(v):
+                start = update(p, _v, s_idx[i], start)
+        else:
+            # v is just a single indexing tuple
+            start = update(p, v, s_idx, start)
+
+    return idx
+
