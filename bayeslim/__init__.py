@@ -20,7 +20,7 @@ from . import fft
 from . import sph_harm
 from . import filt
 from . import linear_model
-from . import hessian
+from . import hmat
 from . import bfgs
 
 from .paramdict import ParamDict
