@@ -388,7 +388,7 @@ class LBFGS(BFGS):
             is to use y @ s / y @ y of most recent step in history.
             Note this is not the same as BFGS H0 parameter, which accepts
             a dense (N, N) tensor. Here, this should be a hesssian.DiagMat,
-            hessian.SparseMat or hessian.PartitionedMat. Note this is
+            hmat.SparseMat or hmat.PartitionedMat. Note this is
             saved as self.H.
         lr : float, optional
             Learning rate (default: 1)
