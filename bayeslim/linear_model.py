@@ -317,6 +317,7 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
         A = gen_poly_A(x, Ndeg, basis=basis, d0=d0, logx=logx, whiten=whiten,
                        x0=x0, dx=dx, qr=qr)
     elif linear_mode == 'custom':
+        assert A is not None
         A = torch.as_tensor(A)
     elif linear_mode == 'fourier':
         A, _ = gen_fourier_A(x, Ndeg=Ndeg, device=device, fft_norm=fft_norm)
