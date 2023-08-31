@@ -1747,7 +1747,8 @@ def main_params_index(prob, main_index, subset_index):
     list
     """
     def update(p, main_idx, subset_idx, start):
-        p = p[main_idx]
+        if main_index is not None:
+            p = p[main_idx]
         _idx = np.arange(p.numel()).reshape(p.shape) + start
         start += _idx.max() + 1
         if subset_idx is not None:
