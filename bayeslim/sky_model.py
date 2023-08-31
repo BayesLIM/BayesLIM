@@ -942,10 +942,10 @@ class CompositeModel(utils.Module):
         if self.sum_output:
             # use first sky_component as placeholder
             output = sky_components[0]
-            sky = torch.zeros_like(output.data, device=self.device)
+            sky = output.data
 
             # iterate over sky components and sum with sky
-            for i, (comp, mod) in enumerate(zip(sky_components, self.eval_models)):
+            for i, (comp, mod) in enumerate(zip(sky_components[1:], self.eval_models[1:])):
                 # check if we need to index sky or comp
                 if self.index is not None and mod in self.index and i > 0:
                     data = comp.data
@@ -964,6 +964,7 @@ class CompositeModel(utils.Module):
 
             # assign sky to output
             output.data = sky
+
             # make sure other keys are on the same device
 #            for k in output:
 #                if isinstance(output[k], torch.Tensor):
