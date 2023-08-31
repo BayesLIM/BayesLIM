@@ -947,7 +947,7 @@ class CompositeModel(utils.Module):
             # iterate over sky components and sum with sky
             for i, (comp, mod) in enumerate(zip(sky_components[1:], self.eval_models[1:])):
                 # check if we need to index sky or comp
-                if self.index is not None and mod in self.index and i > 0:
+                if self.index is not None and mod in self.index:
                     data = comp.data
                     idx = self.index[mod]
                     assert isinstance(idx, (tuple, list))
