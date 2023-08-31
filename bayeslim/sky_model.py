@@ -852,7 +852,7 @@ class CompositeModel(utils.Module):
     sky models that don't have parameters first in "models"
     """
     def __init__(self, models, sum_output=False, device=None,
-                 index=None):
+                 index=None, name=None):
         """
         Multiple sky models to be evaluated
         and returned in a list
@@ -894,8 +894,10 @@ class CompositeModel(utils.Module):
             Here the second model is of lower resolution, so its values need to be copied
             onto the higher resolution map and then directly summed w/ its predecessor
                 index = {'diff2': (None, [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, ....])}
+        name : str, optional
+            A name for this object
         """
-        super().__init__()
+        super().__init__(name=name)
         self.eval_models = list(models.keys())
         for k in models:
             setattr(self, k, models[k])

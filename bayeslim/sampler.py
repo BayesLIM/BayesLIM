@@ -1111,7 +1111,7 @@ class NUTS(HMC):
                 return False, torch.tensor(0.)
 
         # evaluate metropolis acceptance
-        prob = min(torch.tensor(1.), torch.exp(H_start - base_tree.q_prop_H))
+        prob = min(torch.tensor(1.), torch.exp(H_start - base_tree.q_prop_H).cpu())
         accept = np.random.rand() < prob
 
         # attach this tree for inspection
