@@ -925,7 +925,7 @@ class LogProb(utils.Module):
             If passed also sets self.batch_idx.
         """
         assert self.compute in ['post', 'like', 'prior']
-        prob = torch.as_tensor(0.0)
+        prob = torch.as_tensor(0.0, device=self.device)
 
         # evaluate and add likelihood
         if self.compute in ['post', 'like']:
