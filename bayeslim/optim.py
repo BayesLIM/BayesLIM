@@ -925,11 +925,11 @@ class LogProb(utils.Module):
             If passed also sets self.batch_idx.
         """
         assert self.compute in ['post', 'like', 'prior']
-        prob = torch.as_tensor(0.0, device=self.device)
+        prob = None
 
         # evaluate and add likelihood
         if self.compute in ['post', 'like']:
-            prob = prob + self.forward_like(idx, **kwargs)
+            prob = self.forward_like(idx, **kwargs)
 
         # evalute and add prior
         if self.compute in ['post', 'prior']:
@@ -941,7 +941,8 @@ class LogProb(utils.Module):
                     mod.clear_graph_tensors()
 
             # evaluate prior
-            prob = prob + self.forward_prior(**kwargs)
+            pr = self.forward_prior(**kwargs)
+            prob = pr if prob is None else prob + pr
 
         self.clear_prior_cache()
 
