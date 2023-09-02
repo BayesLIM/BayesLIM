@@ -301,8 +301,7 @@ class RIME(utils.Module):
         else:
             pol = None
         vd = VisData()
-        vis = torch.zeros((Npol, Npol, self.Ndata_bls, self.Ntimes, self.Nfreqs),
-                          dtype=_cfloat(), device=self.device)
+        vis = []
 
         # clear pre-computed beam for YlmResponse type if needed
         if hasattr(self.beam.R, 'clear_beam_cache'):
@@ -339,6 +338,9 @@ class RIME(utils.Module):
                 self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
                                    zen, az, vis, sim2data_idx, j)
 
+        # stack along 3rd ax
+        vis = torch.stack(vis, dim=3)
+
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope, self.array.to_antpos())
         vd.setup_data(self.data_bls, self.sim_times, self.freqs, pol=pol,
@@ -363,9 +365,8 @@ class RIME(utils.Module):
             of such to operate on simultaneously
         zen, az : tensor
             Zenith and azimuth angles of sky model [degrees]
-        vis : tensor
-            Visibility tensor to insert results
-            (Npol, Npol, Nbls, Ntimes, Nfreqs)
+        vis : list
+            Visibility list to append to
         sim2data_idx : tensor
             Indexing tensor that expands sim_bls into data_bls
             for the current baseline group. If None, no expansion
@@ -393,8 +394,8 @@ class RIME(utils.Module):
         if sim2data_idx is not None:
             sum_sky = torch.index_select(sum_sky, 2, sim2data_idx)
 
-        # sum across sky
-        vis[:, :, :, obs_ind, :] += sum_sky
+        # append to vis
+        vis.append(sum_sky)
 
     def run_batches(self, concat=True):
         """
