@@ -524,7 +524,7 @@ class PixelBeam(utils.Module):
         self.theta_x = theta_x
         self.theta_y = theta_y
 
-    def set_sky_cut(self, zen, az, cut, device=None):
+    def set_skycut_cache(self, zen, az, cut, device=None):
         """
         Insert a sky cut index array into the cache
 
