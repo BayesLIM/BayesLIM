@@ -55,7 +55,8 @@ class PixelBeam(utils.Module):
     """
     def __init__(self, params, freqs, R=None, ant2beam=None,
                  parameter=True, pol=None, powerbeam=True,
-                 fov=180, name=None, p0=None, offset=None):
+                 fov=180, name=None, p0=None, offset=None,
+                 skycut_cache=True, skycut_device=None):
         """
         A generic beam model evaluated on the pixelized sky
 
@@ -117,6 +118,12 @@ class PixelBeam(utils.Module):
         offset : tuple, optional
             A small-angle pointing offset in (theta_x, theta_y)
             where theta_x is a rotation about x-hat vector [rad]
+        skycut_cache : bool, optional
+            If True, cache the topocentric sky angle masking tensor
+            for fast access
+        skycut_device : str, optional
+            If caching the skycut tensor, push it to this device. This
+            should be the device of the sky object (not the beam object).
         """
         super().__init__(name=name)
         self.params = params
@@ -152,6 +159,8 @@ class PixelBeam(utils.Module):
         self.set_pointing_offset(*offset)
 
         # caching
+        self.skycut_cache = skycut_cache
+        self.skycut_device = skycut_device
         self.clear_cache()
 
         # construct _args for str repr
@@ -206,11 +215,17 @@ class PixelBeam(utils.Module):
             truncated zen and az tensors
         """
         # enact fov cut
-        if self.fov < 360:
-            cut = torch.where(zen < self.fov / 2)[0]
+        cache_output = self.query_cache(zen) if self.skycut_cache else None
+        if cache_output is None:
+            if self.fov < 360:
+                cut = torch.where(zen < self.fov / 2)[0]
+            else:
+                cut = slice(None)
+            if self.skycut_cache:
+                self.set_skycut_cache(zen, az, cut, device=self.skycut_device)
+            zen, az = zen[cut], az[cut]
         else:
-            cut = slice(None)
-        zen, az = zen[cut], az[cut]
+            zen, az, cut = cache_output
 
         # add prior model for params
         if self.p0 is None:
@@ -312,7 +327,7 @@ class PixelBeam(utils.Module):
                 if self.powerbeam:
                     psky = beam1 * sky
                 else:
-                    psky = beam1 * sky * beam2.conj()
+                    psky = (beam1 * beam2.conj()) * sky
             else:
                 # full stokes
                 assert sky.shape[:2] == (2, 2)
@@ -382,14 +397,14 @@ class PixelBeam(utils.Module):
         # evaluate beam
         beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
         sky = cut_sky_fov(sky_comp.data, cut)
-        alt = alt[cut]
+        alt = utils.colat2lat(zen, deg=True)
 
         # apply beam to sky to get perceived sky
         psky = self.apply_beam(beam, bls, sky)
 
         out_comp = {}
         out_comp['sky'] = psky
-        out_comp['angs'] = sky_comp.angs[:, cut]
+        out_comp['angs'] = cut_sky_fov(sky_comp.angs, cut)
         out_comp['altaz'] = torch.vstack([alt, az])
 
         return out_comp
@@ -509,24 +524,29 @@ class PixelBeam(utils.Module):
         self.theta_x = theta_x
         self.theta_y = theta_y
 
-    def set_sky_cut(self, zen, cut, device=None):
+    def set_sky_cut(self, zen, az, cut, device=None):
         """
         Insert a sky cut index array into the cache
 
         Parameters
         ----------
         zen : tensor
-            zenith angle tensor for a sky model
+            zenith angle tensor
+        az : tensor
+            azimuth angle tensor
         cut : tensor
-            indexing tensor of that sky model given FOV
+            indexing tensor of that sky model given zen < FOV/2
         device : str, optional
             Device to push cut
         """
         h = utils.arr_hash(zen)
         if h not in self.cache:
+            cut_cpu = cut
             if isinstance(cut, torch.Tensor):
-                cut = cut.to(device)
-            self.cache[h] = cut
+                cut_cpu = cut.cpu()
+                if device is not None and not utils.check_devices(cut.device, device):
+                    cut = cut.to(device)
+            self.cache[h] = (zen[cut_cpu], az[cut_cpu], cut)
 
     def query_cache(self, zen):
         """

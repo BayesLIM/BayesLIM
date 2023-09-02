@@ -1605,8 +1605,8 @@ def arr_hash(arr):
     Hash an array or list by using its
     first value, last value and length as a
     unique identifier of the array.
-    Note that if arr is a tensor, the device and
-    require_grad values will affect the hash!
+    Note that if arr is a tensor the hash will be
+    assigned as arr._arr_hash for fast caching.
     Also note, normally array hash is not allowed.
 
     Parameters

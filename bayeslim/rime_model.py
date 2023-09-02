@@ -39,7 +39,7 @@ class RIME(utils.Module):
     """
     def __init__(self, sky, telescope, beam, array, sim_bls,
                  times, freqs, data_bls=None, device=None, name=None,
-                 cache_skycut=True, verbose=False):
+                 verbose=False):
         """
         RIME object. Takes a model of the sky brightness,
         passes it through a primary beam model (optional) and a
@@ -93,11 +93,6 @@ class RIME(utils.Module):
             are computed by the array object.
         name : str, optional
             Name for this object, stored as self.name
-        cache_skycut : bool, optional
-            If True, cache the beam FOV cut indexing tensor
-            on sky.device. This sidesteps need to move
-            cut from beam.device to sky.device, which can
-            be a perf bottleneck
         verbose : bool, optional
             If True, print simulation progress info
         """
@@ -107,7 +102,6 @@ class RIME(utils.Module):
         self.beam = beam
         self.array = array
         self.device = device
-        self.cache_skycut = cache_skycut
         self.verbose = verbose
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
@@ -335,12 +329,8 @@ class RIME(utils.Module):
                 # evaluate beam response
                 zen = utils.colat2lat(alt, deg=True)
                 ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
-                # cache a version of cut on sky.device: this prevents repeated
-                # calls to cut.to(sky.device) which can be a bottleneck if beam and
-                # sky are on different devices
-                if self.cache_skycut:
-                    self.beam.set_sky_cut(zen, cut, device=sky.device)
-                    cut = self.beam.query_cache(zen)
+
+                # cut down sky to beam FOV
                 cut_sky = beam_model.cut_sky_fov(sky, cut)
 
                 # apply beam and fringe for all bls to sky and sum into vis
