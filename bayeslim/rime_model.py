@@ -307,6 +307,7 @@ class RIME(utils.Module):
         # clear pre-computed beam for YlmResponse type if needed
         if hasattr(self.beam.R, 'clear_beam_cache'):
             self.beam.R.clear_beam_cache()
+        self.beam.skycut_device = self.sky.device
 
         # iterate over sky components
         start = datetime.now().timestamp()
