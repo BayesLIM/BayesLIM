@@ -249,9 +249,9 @@ class RIME(utils.Module):
 
     @batch_idx.setter
     def batch_idx(self, val):
-        assert idx < self.Nbatch and idx >= 0
-        self.time_group_id = int(np.floor(idx / len(self.sim_bl_groups)))
-        self.bl_group_id = idx % len(self.sim_bl_groups)
+        assert val < self.Nbatch and val >= 0
+        self.time_group_id = int(np.floor(val / len(self.sim_bl_groups)))
+        self.bl_group_id = val % len(self.sim_bl_groups)
         self._set_group()
 
     def _set_group(self):

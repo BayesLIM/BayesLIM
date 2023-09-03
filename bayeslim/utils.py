@@ -1297,7 +1297,10 @@ class Sequential(Module):
 
     The forward call takes a parameter dictionary that updates
     the model before evaluation, which must conform to 
-    torch.nn.Module.named_parameters() styel
+    torch.nn.Module.named_parameters() stye.
+
+    Note that for batch_idx API, this assumes a
+    RIME object is the first model in self._models
     """
     def __init__(self, models):
         """
