@@ -1170,6 +1170,7 @@ class DistributedLogProb(utils.Module):
             Device to hold the master main_params tensor.
             Default is the device of the first LogProb in probs
         """
+        super().__init__()
         self.probs = probs
         self.check()
         self.device = device if device is not None else probs[0].device
