@@ -47,7 +47,7 @@ class TensorData:
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
-    def push(self, device):
+    def push(self, device, return_obj=False):
         """
         Push data, flags, cov and icov to device
         """
@@ -61,6 +61,8 @@ class TensorData:
             self.cov = utils.push(self.cov, device)
         if self.icov is not None:
             self.icov = utils.push(self.icov, device)
+        if return_obj:
+            return self
 
     def set_cov(self, cov, cov_axis, icov=None):
         """
@@ -223,7 +225,7 @@ class VisData(TensorData):
         self.atol = 1e-10
         self.setup_meta()
 
-    def push(self, device):
+    def push(self, device, return_obj=False):
         """
         Push data to a new device
         """
@@ -232,6 +234,8 @@ class VisData(TensorData):
         # and push antpos if needed
         if self.antpos:
             self.antpos.push(device)
+        if return_obj:
+            return self
 
     def setup_meta(self, telescope=None, antpos=None):
         """
@@ -2009,7 +2013,7 @@ class MapData(TensorData):
                             pols=self.pols, data=data, flags=flags, cov=cov, norm=norm,
                             cov_axis=cov_axis, icov=icov, history=history)
 
-    def push(self, device):
+    def push(self, device, return_obj=False):
         """
         Push data, flags, cov and icov to device
         """
@@ -2025,6 +2029,8 @@ class MapData(TensorData):
             self.icov = utils.push(self.icov, device)
         if self.norm is not None:
             self.norm = utils.push(self.norm, device)
+        if return_obj:
+            return self
 
 
 class CalData(TensorData):
