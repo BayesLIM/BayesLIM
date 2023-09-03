@@ -1354,12 +1354,13 @@ class Sequential(Module):
         else:
             return 0
 
-    def set_batch_idx(self, idx):
+    @batch_idx.setter
+    def batch_idx(self, val):
         """Set the current batch index"""
-        if hasattr(self.get_submodule(self._models[0]), 'set_batch_idx'):
-            self.get_submodule(self._models[0]).set_batch_idx(idx)
-        elif idx > 0:
-            raise ValueError("No method set_batch_idx and requested idx > 0")
+        if hasattr(self.get_submodule(self._models[0]), 'batch_idx'):
+            self.get_submodule(self._models[0]).batch_idx = val
+        elif val > 0:
+            raise ValueError("No batch_idx and requested idx > 0")
 
     def push(self, device):
         """

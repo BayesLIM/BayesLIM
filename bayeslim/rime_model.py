@@ -247,15 +247,8 @@ class RIME(utils.Module):
         else:
             return None
 
-    def set_batch_idx(self, idx):
-        """
-        Set the batch index
-
-        Parameters
-        ----------
-        idx : int
-            Index of current batch from 0 to Nbatch-1
-        """
+    @batch_idx.setter
+    def batch_idx(self, val):
         assert idx < self.Nbatch and idx >= 0
         self.time_group_id = int(np.floor(idx / len(self.sim_bl_groups)))
         self.bl_group_id = idx % len(self.sim_bl_groups)
@@ -415,7 +408,7 @@ class RIME(utils.Module):
         vis_bls = []
         # iterate over all batches
         for i in range(self.Nbatch):
-            self.set_batch_idx(i)
+            self.batch_idx = i
             vis = self.forward()
             vis_bls.append(vis)
             if self.Nbatch == 1:
@@ -435,7 +428,7 @@ class RIME(utils.Module):
         else:
             vis = vis_times
 
-        self.set_batch_idx(0)
+        self.batch_idx = 0
 
         return vis
 

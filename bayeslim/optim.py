@@ -747,12 +747,13 @@ class LogProb(utils.Module):
         else:
             return 0
 
-    def set_batch_idx(self, idx):
+    @batch_idx.setter
+    def batch_idx(self, val):
         """Set the current batch index"""
-        if hasattr(self.model, 'set_batch_idx'):
-            self.model.set_batch_idx(idx)
-        elif idx > 0:
-            raise ValueError("No method set_batch_idx and requested idx > 0")
+        if hasattr(self.model, 'batch_idx'):
+            self.model.batch_idx = val
+        elif val > 0:
+            raise ValueError("No attr batch_idx and requested idx > 0")
 
     def get_batch_data(self, idx=None):
         """
@@ -771,7 +772,7 @@ class LogProb(utils.Module):
         target object, starting input object
         """
         if idx is not None:
-            self.set_batch_idx(idx)
+            self.batch_idx = idx
         target = self.target[self.batch_idx]
         inp = None if self.start_inp is None else self.start_inp[self.batch_idx]
 
@@ -1144,6 +1145,149 @@ class LogProb(utils.Module):
 
         if self.parameter:
             self.icov = torch.nn.Parameter(self.icov.detach().clone())
+
+
+class DistributedLogProb(utils.Module):
+    """
+    A distributed set of individual LogProb objects working
+    in a data-parallel manner (i.e. assuming they are on separate
+    devices but have the same model structure). Each LogProb must have
+    a main_params tensor defined and have identical downsteam
+    model structure, with the only difference being the dataset
+    they are predicting and comparing against.
+
+    Note: this assumes all devices are on the same
+    node (i.e. devices can pass information to each other directly).
+    For multi-node distributed training see pytorch DDP.
+    """
+    def __init__(self, probs, device=None):
+        """
+        Parameters
+        ----------
+        probs : list of LogProb
+            Holding each LogProb model to evaluate in parallel
+        device : str, optional
+            Device to hold the master main_params tensor.
+            Default is the device of the first LogProb in probs
+        """
+        self.probs = probs
+        self.check()
+        self.device = device if device is not None else probs[0].device
+        self.main_params = torch.nn.Parameter(self.probs[0].main_params.detach().clone().to(self.device))
+
+    def check(self):
+        """
+        Run basic checks on LogProb objs
+        """
+        for i, prob in enumerate(self.probs):
+            assert isinstance(prob, LogProb)
+            assert hasattr(prob, 'main_params')
+            assert prob.main_params.is_leaf
+            if i == 0:
+                main_params = prob.main_params
+                Nbatch = prob.Nbatch
+            else:
+                assert main_params.shape == prob.main_params.shape
+                assert Nbatch == prob.Nbatch
+
+    @property
+    def devices(self):
+        return [prob.device for prob in self.probs]
+
+    def collect_main_params(self, **kwargs):
+        """
+        Shallow wrapper around prob.collect_main_params(),
+        and then collect onto self.main_params
+        """
+        for prob in self.probs:
+            prob.collect_main_params()
+        self.main_params.data = self.probs[0].main_params.data.to(self.device)
+
+    def send_main_params(self, **kwargs):
+        """
+        Copy self.main_params to each object in self.prob.
+        Note this does not also call self.probs[i].send_main_params()
+        """
+        for prob, device in zip(self.probs, self.devices):
+            prob.main_params.data = self.main_params.data.to(device)
+
+    def closure(self):
+        """
+        Function for evaluating the model, performing
+        backprop, and returning output given self.grad_type
+        for each LogProb in self.probs
+        """
+        if torch.is_grad_enabled():
+            self.zero_grad()
+
+        # send over main_params to self.probs
+        self.send_main_params()
+
+        # evaluate closures in parallel
+        loss = []
+        for prob in self.probs:
+            loss.append(prob.closure())
+
+        # synchronize
+        torch.cuda.synchronize(self.devices)
+
+        # collect gradients
+        for i, prob in enumerate(self.probs):
+            if i == 0:
+                self.main_params.grad = prob.main_params.grad.to(self.device)
+            else:
+                self.main_params.grad += prob.main_params.grad.to(self.device)
+
+        return sum([l.to(self.device) for l in loss])
+
+    @property
+    def closure_eval(self):
+        return self.probs[0].closure_eval
+
+    @property
+    def Nbatch(self):
+        """get total number of batches in model"""
+        return self.probs[0].Nbatch
+
+    @property
+    def batch_idx(self):
+        """return current batch index in model"""
+        return self.probs[0].batch_idx
+
+    @batch_idx.setter
+    def batch_idx(self, val):
+        """Set the current batch index"""
+        for prob in self.probs:
+            prob.batch_idx = val
+
+    @property
+    def compute(self):
+        return self.probs[0].compute
+
+    @compute.setter
+    def compute(self, val):
+        for prob in self.probs:
+            prob.compute = val
+
+    @property
+    def negate(self):
+        return self.probs[0].negate
+
+    @negate.setter
+    def negate(self, val):
+        for prob in self.probs:
+            prob.negate = val
+
+    @property
+    def grad_type(self):
+        return self.probs[0].grad_type
+
+    def push(self, device):
+        """
+        Push main_params to a new device
+        """
+        self.main_params = utils.push(self.main_params, device)
+        self.device = device
 
 
 class Trainer:
@@ -1600,7 +1744,7 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
-            prob.set_batch_idx(i)
+            prob.batch_idx = i
             h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N1, N2)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
