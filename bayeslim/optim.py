@@ -1160,7 +1160,7 @@ class DistributedLogProb(utils.Module):
     node (i.e. devices can pass information to each other directly).
     For multi-node distributed training see pytorch DDP.
     """
-    def __init__(self, probs, device=None):
+    def __init__(self, probs, device=None, check=True):
         """
         Parameters
         ----------
@@ -1172,7 +1172,8 @@ class DistributedLogProb(utils.Module):
         """
         super().__init__()
         self.probs = probs
-        self.check()
+        if check:
+            self.check()
         self.device = device if device is not None else probs[0].device
         self.main_params = torch.nn.Parameter(self.probs[0].main_params.detach().clone().to(self.device))
 
@@ -1194,6 +1195,8 @@ class DistributedLogProb(utils.Module):
     @property
     def devices(self):
         return [prob.device for prob in self.probs]
+
+    def set_main_params(self, **kwargs):
 
     def collect_main_params(self, **kwargs):
         """
@@ -1725,6 +1728,24 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
     ParamDict object
         Hessian of prob
     """
+    if isinstance(prob, DistributedLogProb):
+        # run hessian for each submodule in multiproc
+        from torch import multiprocessing as mp
+        if mp.get_start_method(True) is None:
+            mp.set_start_method('spawn')
+        Nproc = len(prob.probs)
+        def func(args, **kwargs):
+            return compute_hessian(*args, **kwargs)
+        args = []
+        for p in prob.probs:
+            pd = pdict.clone()
+            pd.push(p.device)
+            args.append((p, pd))
+        with mp.Pool(Nproc) as pool:
+            hess = pool.map(func, args)
+
+        return hess
+
     # get all leaf variables on prob
     named_params = prob.named_params
 
@@ -1745,7 +1766,7 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
-            prob.batch_idx = i
+            prob.batch_idx = if
             h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N1, N2)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
