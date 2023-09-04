@@ -1704,6 +1704,14 @@ def _hessian(func, inputs, vectorize=False, N=None):
     return res[0]
 
 
+def _pool_hessian(inp):
+    """
+    takes (args, kwargs) as input and passes to compute_hessian()
+    """
+    args, kwargs = inp
+    return compute_hessian(*args, **kwargs)
+
+
 def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False):
     """
     Compute Hessian of prob with respect to params.
@@ -1735,15 +1743,14 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
         if mp.get_start_method(True) is None:
             mp.set_start_method('spawn')
         Nproc = len(prob.probs)
-        def func(args, **kwargs):
-            return compute_hessian(*args, **kwargs)
-        args = []
+        kwgs = dict(rm_offdiag=rm_offdiag, Npdict=Npdict, vectorize=vectorize)
+        iterable = []
         for p in prob.probs:
             pd = pdict.clone()
             pd.push(p.device)
-            args.append((p, pd))
+            iterable.append(((p, pd), kwgs))
         with mp.Pool(Nproc) as pool:
-            hess = pool.map(func, args)
+            hess = pool.map(_pool_hessian, iterable)
 
         return hess
 
