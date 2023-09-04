@@ -1767,7 +1767,7 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
             return prob()
         # iterate over batches
         for i in range(prob.Nbatch):
-            prob.batch_idx = if
+            prob.batch_idx = i
             h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N1, N2)
             if rm_offdiag:
                 h = h.diag().reshape(shape)
