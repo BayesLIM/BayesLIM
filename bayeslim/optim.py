@@ -1197,6 +1197,7 @@ class DistributedLogProb(utils.Module):
         return [prob.device for prob in self.probs]
 
     def set_main_params(self, **kwargs):
+        pass
 
     def collect_main_params(self, **kwargs):
         """
