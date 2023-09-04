@@ -937,7 +937,8 @@ class LogProb(utils.Module):
             if self.compute == 'prior':
                 # if compute is prior, clear any attached graph tensors
                 # in all modules such they are regenerated during this
-                # forward call (e.g. beam.R.beam_cache)
+                # forward call (e.g. beam.R.beam_cache).
+                # if compute == 'post' then this has already been done
                 for mod in self.modules():
                     mod.clear_graph_tensors()
 
@@ -1146,6 +1147,14 @@ class LogProb(utils.Module):
         if self.parameter:
             self.icov = torch.nn.Parameter(self.icov.detach().clone())
 
+    def clear_graph_tensors(self):
+        """
+        Clear non-leaf tensors with requires_grad (i.e. ones that
+        may be stale), specifically the end-result of send_main_params()
+        """
+        for param in self._main_indices:
+            self.model[param] = self.model[param].detach()
+
 
 class DistributedLogProb(utils.Module):
     """
@@ -1175,7 +1184,7 @@ class DistributedLogProb(utils.Module):
         if check:
             self.check()
         self.device = device if device is not None else probs[0].device
-        self.main_params = torch.nn.Parameter(self.probs[0].main_params.detach().clone().to(self.device))
+        self.collect_main_params()
 
     def check(self):
         """
@@ -1197,7 +1206,14 @@ class DistributedLogProb(utils.Module):
         return [prob.device for prob in self.probs]
 
     def set_main_params(self, **kwargs):
-        pass
+        """
+        Set main_params on sub-prob objects
+        and set main_params on this object on self.device
+        """
+        for prob in self.probs:
+            prob.set_main_params(**kwargs)
+
+        self.collect_main_params()
 
     def collect_main_params(self, **kwargs):
         """
@@ -1206,7 +1222,8 @@ class DistributedLogProb(utils.Module):
         """
         for prob in self.probs:
             prob.collect_main_params()
-        self.main_params.data = self.probs[0].main_params.data.to(self.device)
+        if hasattr(self.probs[0], 'main_params'):
+            self.main_params.data = self.probs[0].main_params.data.to(self.device)
 
     def send_main_params(self, **kwargs):
         """
