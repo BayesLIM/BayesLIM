@@ -1311,6 +1311,17 @@ class DistributedLogProb(utils.Module):
         self.main_params = utils.push(self.main_params, device)
         self.device = device
 
+    def clear_graph_tensors(self):
+        """
+        Clear non-leaf tensors with requires_grad on all this object
+        and all LogProb sub-modules (i.e. graph tensors that are stale after
+        a backward pass)
+        """
+        for prob in self.probs:
+            prob.clear_graph_tensors()
+            for mod in prob.modules():
+                mod.clear_graph_tensors()
+
 
 class Trainer:
     """Object for training a model wrapped with
