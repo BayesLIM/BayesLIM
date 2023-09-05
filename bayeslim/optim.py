@@ -1223,7 +1223,7 @@ class DistributedLogProb(utils.Module):
         for prob in self.probs:
             prob.collect_main_params()
         if self.probs[0].main_params is not None:
-            self.main_params.data = self.probs[0].main_params.data.to(self.device)
+            self.main_params = torch.nn.Parameter(self.probs[0].main_params.data.to(self.device))
 
     def send_main_params(self, **kwargs):
         """
