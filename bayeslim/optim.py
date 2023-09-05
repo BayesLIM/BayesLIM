@@ -609,7 +609,7 @@ class LogProb(utils.Module):
             and update self.main_params inplace. Otherwise
             collect sub-params and return tensor.
         """
-        if len(self._main_indices) > 0:
+        if self._main_indices is not None and len(self._main_indices) > 0:
             params = torch.zeros(self._main_N, dtype=utils._float(), device=self.device)
             for k in self._main_indices:
                 idx, indices = self._main_index[k], self._main_indices[k]

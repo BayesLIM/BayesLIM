@@ -1891,7 +1891,7 @@ class SimpleIndex:
         return self.value
 
 
-def split_into_groups(arr, Nelem=10):
+def split_into_groups(arr, Nelem=10, interleave=False):
     """
     Split a list or array of elements into
     a nested list of groups each being Nelem long
@@ -1902,13 +1902,20 @@ def split_into_groups(arr, Nelem=10):
         List of elements
     Nelem : int, optional
         Number of elements in each sublist
+    interleave : bool, optional
+        If True, split into groups by interleaving,
+        otherwise split groups by chunks (default)
 
     Returns
     -------
     array or list
     """
     N = len(arr)
-    sublist = [arr[i*Nelem:(i+1)*Nelem] for i in range(N//Nelem + 1)]
+    if interleave:
+        Nthin = N // Nelem + 1
+        sublist = [arr[i::Nthin] for i in range(Nthin)]
+    else:
+        sublist = [arr[i*Nelem:(i+1)*Nelem] for i in range(N//Nelem + 1)]
     if len(sublist[-1]) == 0:
         sublist.pop(-1)
 
