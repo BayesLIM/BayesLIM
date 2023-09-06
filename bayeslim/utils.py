@@ -1994,8 +1994,9 @@ def _idx2ten(idx, device=None):
     if isinstance(idx, (list, np.ndarray, tuple)):
         # check if idx is a bool ndarray, if so convert to int
         if isinstance(idx, np.ndarray) and idx.dtype == np.dtype(bool):
-            idx = torch.where(idx)[0]
-        idx = torch.as_tensor(idx, dtype=torch.long)
+            idx = torch.as_tensor(np.where(idx)[0])
+        else:
+            idx = torch.as_tensor(idx, dtype=torch.long)
     # check if idx is a bool tensor
     if isinstance(idx, torch.Tensor) and idx.dtype == torch.bool:
         idx = torch.where(idx)[0]
@@ -2003,6 +2004,26 @@ def _idx2ten(idx, device=None):
         idx = idx.to(device)
 
     return idx
+
+
+def _tensor_concat(tensors, dim=0, interleave=False):
+    """
+    Given a list of tensors of the same ndim but
+    possibly different length along dim, concatenate them
+    with optional interleaving
+    """
+    if interleave:
+        shape = list(tensors[0].shape)
+        shape[dim] = sum(t.shape[dim] for t in tensors)
+        N = shape[dim]
+        out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
+        indices = [torch.arange(i, N, len(tensors), device=tensors[0].device) for i in range(len(tensors))]
+        for ten, idx in zip(tensors, indices):
+            out.index_add_(dim, idx, ten)
+    else:
+        out = torch.cat(tensors, dim=dim)
+
+    return out
 
 
 class AntposDict:

@@ -2943,27 +2943,13 @@ def concat_VisData(vds, axis, run_check=True, interleave=False):
     out = VisData()
     flags, cov, icov = None, None, None
 
-    def tensor_concat(tensors, dim=0):
-        if interleave:
-            shape = list(tensors[0].shape)
-            shape[dim] = sum(t.shape[dim] for t in tensors)
-            N = shape[dim]
-            out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
-            indices = [torch.arange(i, N, len(tensors), device=tensors[0].device) for i in range(len(tensors))]
-            for ten, idx in zip(tensors, indices):
-                out.index_add_(dim, idx, ten)
-        else:
-            out = torch.cat(tensors, dim=dim)
-
-        return out
-
     if axis == 'bl':
         dim = 2
         times = vd.times
         freqs = vd.freqs
         pol = vd.pol
         if interleave:
-            bls = tensor_concat([torch.as_tensor(o.bls) for o in vds])
+            bls = utils._tensor_concat([torch.as_tensor(o.bls) for o in vds], interleave=interleave)
             bls = [tuple(bl) for bl in bls.tolist()]
         else:
             bls = []
@@ -2975,27 +2961,27 @@ def concat_VisData(vds, axis, run_check=True, interleave=False):
         freqs = vd.freqs
         pol = vd.pol
         bls = vd.bls
-        times = tensor_concat([torch.as_tensor(o.times) for o in vds])
+        times = utils._tensor_concat([torch.as_tensor(o.times) for o in vds], interleave=interleave)
 
     elif axis == 'freq':
         dim = 4
         times = vd.times
         pol = vd.pol
         bls = vd.bls
-        freqs = tensor_concat([torch.as_tensor(o.freqs) for o in vds])
+        freqs = utils._tensor_concat([torch.as_tensor(o.freqs) for o in vds], interleave=interleave)
 
     # stack data and flags
-    data = tensor_concat([o.data for o in vds], dim=dim)
+    data = utils._tensor_concat([o.data for o in vds], dim=dim, interleave=interleave)
     if vd.flags is not None:
-        flags = tensor_concat([o.flags for o in vds], dim=dim)
+        flags = utils._tensor_concat([o.flags for o in vds], dim=dim, interleave=interleave)
 
     # stack cov and icov
     if vd.cov_axis is not None:
         raise NotImplementedError
     if vd.cov is not None:
-        cov = tensor_concat([o.cov for o in vds], dim=dim)
+        cov = utils._tensor_concat([o.cov for o in vds], dim=dim, interleave=interleave)
     if vd.icov is not None:
-        icov = tensor_concat([o.icov for o in vds], dim=dim)
+        icov = utils._tensor_concat([o.icov for o in vds], dim=dim, interleave=interleave)
 
     out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
