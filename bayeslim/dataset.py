@@ -2949,7 +2949,7 @@ def concat_VisData(vds, axis, run_check=True, interleave=False):
             shape[dim] = sum(t.shape[dim] for t in tensors)
             N = shape[dim]
             out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
-            indices = [torch.arange(i, N, len(tensors)).cuda() for i in range(len(tensors))]
+            indices = [torch.arange(i, N, len(tensors), device=tensors[0].device) for i in range(len(tensors))]
             for ten, idx in zip(tensors, indices):
                 out.index_add_(dim, idx, ten)
         else:
