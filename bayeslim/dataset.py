@@ -2917,7 +2917,7 @@ class Dataset(TorchDataset):
         return self.read_fn(self.data[idx], **self.read_kwargs[idx])
 
 
-def concat_VisData(vds, axis, run_check=True):
+def concat_VisData(vds, axis, run_check=True, interleave=False):
     """
     Concatenate VisData objects together
 
@@ -2927,6 +2927,11 @@ def concat_VisData(vds, axis, run_check=True):
     axis : str, ['bl', 'time', 'freq']
         Axis to concatenate over. All other
         axes must match exactly in all vds.
+    interleave : bool, optional
+        If True, interleave the data along
+        the desired axis. Note this is probably
+        slow so its not recommended for repeated
+        forward passes.
     """
     if isinstance(vds, VisData):
         return vds
@@ -2937,41 +2942,60 @@ def concat_VisData(vds, axis, run_check=True):
     vd = vds[0]
     out = VisData()
     flags, cov, icov = None, None, None
+
+    def tensor_concat(tensors, dim=0):
+        if interleave:
+            shape = list(tensors[0].shape)
+            shape[dim] = sum(t.shape[dim] for t in tensors)
+            N = shape[dim]
+            out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
+            indices = [torch.arange(i, N, len(tensors)).cuda() for i in range(len(tensors))]
+            for ten, idx in zip(tensors, indices):
+                out.index_add_(dim, idx, ten)
+        else:
+            out = torch.cat(tensors, dim=dim)
+
+        return out
+
     if axis == 'bl':
         dim = 2
         times = vd.times
         freqs = vd.freqs
         pol = vd.pol
-        bls = []
-        for o in vds:
-            bls.extend(o.bls)
+        if interleave:
+            bls = tensor_concat([torch.as_tensor(o.bls) for o in vds])
+            bls = [tuple(bl) for bl in bls.tolist()]
+        else:
+            bls = []
+            for o in vds:
+                bls.extend(o.bls)
 
     elif axis == 'time':
         dim = 3
-        times = torch.cat([torch.as_tensor(o.times) for o in vds])
         freqs = vd.freqs
         pol = vd.pol
         bls = vd.bls
+        times = tensor_concat([torch.as_tensor(o.times) for o in vds])
 
     elif axis == 'freq':
         dim = 4
         times = vd.times
-        freqs = torch.cat([torch.as_tensor(o.freqs) for o in vds])
         pol = vd.pol
         bls = vd.bls
+        freqs = tensor_concat([torch.as_tensor(o.freqs) for o in vds])
 
     # stack data and flags
-    data = torch.cat([o.data for o in vds], dim=dim)
+    data = tensor_concat([o.data for o in vds], dim=dim)
     if vd.flags is not None:
-        flags = torch.cat([o.flags for o in vds], dim=dim)
+        flags = tensor_concat([o.flags for o in vds], dim=dim)
 
     # stack cov and icov
     if vd.cov_axis is not None:
         raise NotImplementedError
     if vd.cov is not None:
-        cov = torch.cat([o.cov for o in vds], dim=dim)
+        cov = tensor_concat([o.cov for o in vds], dim=dim)
     if vd.icov is not None:
-        icov = torch.cat([o.icov for o in vds], dim=dim)
+        icov = tensor_concat([o.icov for o in vds], dim=dim)
 
     out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
