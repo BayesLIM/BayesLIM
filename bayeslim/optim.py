@@ -558,6 +558,9 @@ class LogProb(utils.Module):
                         # no indexing,take the whole tensor
                         p = self.model[param].detach()
                     else:
+                        # ensure idx is tensor on param device
+                        device = self.model[param].device
+                        idx = tuple(utils._idx2ten(i, device=device) for i in idx)
                         # single indexing, take part of tensor
                         p = self.model[param][idx].detach()
 
@@ -572,7 +575,11 @@ class LogProb(utils.Module):
                     # this is mult-indexing
                     shape = []
                     indices = []
+                    # ensure idx holds tensors on param's device
+                    device = self.model[param].device
+                    idx = [tuple(utils._idx2ten(i, device=device) for i in _idx) for _idx in idx]
                     for _idx in idx:
+                        # index param
                         p = self.model[param][_idx].detach()
                         p_shape = p.shape
                         shape.append(p_shape)

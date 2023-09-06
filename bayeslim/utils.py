@@ -1987,6 +1987,24 @@ def _list2slice(inds):
     return inds
 
 
+def _idx2ten(idx, device=None):
+    """Convert a 1d indexing list or ndarray to tensor
+    and push to a desired device.
+    if idx is a slice or int, do nothing"""
+    if isinstance(idx, (list, np.ndarray, tuple)):
+        # check if idx is a bool ndarray, if so convert to int
+        if isinstance(idx, np.ndarray) and idx.dtype == np.dtype(bool):
+            idx = torch.where(idx)[0]
+        idx = torch.as_tensor(idx, dtype=torch.long)
+    # check if idx is a bool tensor
+    if isinstance(idx, torch.Tensor) and idx.dtype == torch.bool:
+        idx = torch.where(idx)[0]
+    if device is not None and isinstance(idx, torch.Tensor):
+        idx = idx.to(device)
+
+    return idx
+
+
 class AntposDict:
     """
     A dictionary for antenna positions
