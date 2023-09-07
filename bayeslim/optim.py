@@ -8,6 +8,7 @@ from collections import OrderedDict
 import time
 import pickle
 from collections.abc import Iterable
+import copy
 
 from . import utils, paramdict, linalg
 from .dataset import VisData, MapData, TensorData
@@ -536,6 +537,9 @@ class LogProb(utils.Module):
         self._main_shapes = None
         self._main_devices = None
         self._main_index = None
+        if not utils.check_devices(LM.device, self.device):
+            LM = copy.deepcopy(LM)
+            LM.push(self.device)
         self._main_LM = LM
         self._main_set_p0 = set_p0
         self._main_N = None
