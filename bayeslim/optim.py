@@ -1780,7 +1780,7 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
     """
     if isinstance(prob, DistributedLogProb):
         # run hessian for each submodule in multiproc
-        from torch import multiprocessing as mp
+        import multiprocess as mp
         if mp.get_start_method(True) is None:
             mp.set_start_method('spawn')
         Nproc = len(prob.probs)
