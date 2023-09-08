@@ -537,7 +537,7 @@ class LogProb(utils.Module):
         self._main_shapes = None
         self._main_devices = None
         self._main_index = None
-        if not utils.check_devices(LM.device, self.device):
+        if LM is not None and not utils.check_devices(LM.device, self.device):
             LM = copy.deepcopy(LM)
             LM.push(self.device)
         self._main_LM = LM
