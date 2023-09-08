@@ -725,22 +725,23 @@ class PartitionedMat(BaseMat):
     Note if symmetric=True then A21 is just a transpose of A12.
 
     The user should feed a blocks dictionary which holds
-    as a key each unique component str (e.g. '11', '22', '12', '33', ...)
+    as a key each unique component tuple, e.g. (1, 1), (2, 2), (1, 2), ...,
     and its value is a *Mat object.
     If an off-diagonal component is missing it is assumed zero.
+    If an on-diagonal component is missing its col & row is zero.
     """
     def __init__(self, blocks, symmetric=True):
         """
         Setup the matrix columns given a blocks dictionary
         e.g. of the form
         {
-        '11' : DenseMat
-        '12' : SparseMat
-        '22' : DiagMat
-        '23' : SparseMat
-        '33' : DiagMat
+        (1, 1) : DenseMat
+        (1, 2) : SparseMat
+        (2, 2) : DiagMat
+        (2, 3) : SparseMat
+        (3, 3) : DiagMat
         }
-        where '11' is an on-diagonal block and '12' is an off-diagonal block.
+        where (1, 2) is an on-diagonal block and (1, 2) is an off-diagonal block.
         Non-existant off-diagonal blocks treated as zero, non-existant on-diagonal
         blocks are ignored completely.
         Sets the self.matcols list and self.vec_idx list.
@@ -749,17 +750,17 @@ class PartitionedMat(BaseMat):
         ----------
         blocks : dict
             A dictionary holding the various independent blocks of the matrix.
-            with 'ij' string key and BaseMat value
+            with (i, j) tuple key and BaseMat value
         symmetric : bool, optional
             If True (default), then blocks should only hold one of the
-            off-diagonal components per unique 'ij' combination.
-            I.e. you should only provide '12' and not '21', and
-            '13' and not '31', and so on.
+            off-diagonal components per unique (i, j) combination.
+            I.e. you should only provide (1,2) and not (2,1), and
+            (1,3) and not (3,1), and so on.
             If False, you should provide all off-diagonal components,
             otherwise missing ones are assumed ZeroMat.
         """
         # get all the on-diagonal matrices
-        ondiag_keys = sorted([k for k in blocks if k[0] == k[1]])
+        ondiag_keys = sorted([k for k in blocks if len(set(k)) == 1])
 
         # get paritioned matrix metadata from on-diagonal blocks
         self._Ncols = len(ondiag_keys)
@@ -778,7 +779,7 @@ class PartitionedMat(BaseMat):
             size += blocks[k].shape[0]
 
             # get all the theoretical sub-blocks in this vertical column
-            block_keys = ["{}{}".format(j[0], k[1]) for j in ondiag_keys]
+            block_keys = [(j[0], k[1]) for j in ondiag_keys]
 
             # now fill a list with these matrix objects
             mats = []
@@ -793,7 +794,7 @@ class PartitionedMat(BaseMat):
 
                 else:
                     # make this a ZeroMat
-                    shape = (blocks["{}{}".format(bk[0],bk[0])].shape[0], blocks[k].shape[0])
+                    shape = (blocks[(bk[0],bk[0])].shape[0], blocks[k].shape[0])
                     blocks[bk] = ZeroMat(shape, dtype=self.dtype, device=self.device)
                     mats.append(blocks[bk])
 
@@ -879,7 +880,7 @@ class PartitionedMat(BaseMat):
         blocks = {}
         for i, matcol in enumerate(self.matcols):
             for j, mat in enumerate(matcol.mats):
-                blocks['{}{}'.format(i+1, j+1)] = TransposedMat(mat)
+                blocks[(i+1, j+1)] = TransposedMat(mat)
 
         return PartitionedMat(blocks, symmetric=self.symmetric)
 
@@ -908,14 +909,14 @@ class PartitionedMat(BaseMat):
         blocks = {}
         for i, matcol in enumerate(self.matcols):
             for j, mat in enumerate(matcol.mats):
-                blocks['{}{}'.format(j+1, i+1)] = mat * other
+                blocks[(j+1, i+1)] = mat * other
         return PartitionedMat(blocks, symmetric=self.symmetric)
 
     def __rmul__(self, other):
         blocks = {}
         for i, matcol in enumerate(self.matcols):
             for j, mat in enumerate(matcol.mats):
-                blocks['{}{}'.format(j+1, i+1)] = other * mat
+                blocks[(j+1, i+1)] = other * mat
         return PartitionedMat(blocks, symmetric=self.symmetric)
 
     def __imul__(self, other):
