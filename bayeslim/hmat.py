@@ -1,6 +1,6 @@
 """
 Module for computing, manipulating, inverting,
-and factorizing sparse matrices
+and factorizing sparse matrix representations
 """
 from abc import abstractmethod
 import numpy as np
@@ -702,7 +702,7 @@ class TransposedMat(BaseMat):
 
 class PartitionedMat(BaseMat):
     """
-    A square (possibly symmetric) matrix that has been partitioned into
+    A rectangular (possibly symmetric) matrix that has been partitioned into
     on-diagonal blocks and their correponding off-diagonal
     blocks, using DenseMat, DiagMat, SparseMat.
 
@@ -794,7 +794,7 @@ class PartitionedMat(BaseMat):
 
                 else:
                     # make this a ZeroMat
-                    shape = (blocks[(bk[0],bk[0])].shape[0], blocks[k].shape[0])
+                    shape = (blocks[(bk[0],bk[0])].shape[0], blocks[k].shape[1])
                     blocks[bk] = ZeroMat(shape, dtype=self.dtype, device=self.device)
                     mats.append(blocks[bk])
 
