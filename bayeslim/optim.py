@@ -218,11 +218,11 @@ class LogGaussPrior(BaseLogPrior):
     """
     log Gaussian prior. L2 norm regularization
     """
-    def __init__(self, mean, cov, sparse_cov=True, side='both',
+    def __init__(self, mean, cov, diag_cov=True, side='both',
                  density=True, index=None, func=None, fkwargs=None):
         """
         mean and cov must match shape of params, unless
-        sparse_cov == False, in which case cov is 2D matrix
+        diag_cov == False, in which case cov is 2D matrix
         dotted into params.ravel()
 
         Parameters
@@ -231,7 +231,7 @@ class LogGaussPrior(BaseLogPrior):
             mean tensor, broadcasting with (indexed) params shape
         cov : tensor
             covariance tensor, broadcasting with params
-        sparse_cov : bool, optional
+        diag_cov : bool, optional
             If True, cov is the diagonal of the covariance matrix
             with shape matching (indexed) data. Otherwise, cov
             is a 2D matrix dotted into (indexed) params.ravel()
@@ -256,7 +256,7 @@ class LogGaussPrior(BaseLogPrior):
                          attrs=['mean', 'icov'])
         self.mean = torch.atleast_1d(torch.as_tensor(mean))
         self.cov = torch.atleast_1d(torch.as_tensor(cov))
-        self.sparse_cov = sparse_cov
+        self.diag_cov = diag_cov
         self.side = side
         self.density = density
         self.compute_icov()
@@ -276,7 +276,7 @@ class LogGaussPrior(BaseLogPrior):
             res[res < 0] = 0
         elif self.side == 'lower':
             res[res > 0] = 0
-        if self.sparse_cov:
+        if self.diag_cov:
             res = torch.abs(res) if torch.is_complex(res) else res
             chisq = torch.sum(res**2 * self.icov)
         else:
@@ -298,9 +298,9 @@ class LogGaussPrior(BaseLogPrior):
         ----------
         kwargs : dict, optional
             Keyword arguments for linalg.invert_matrix() if
-            not sparse_cov. hermitian=True is hard-coded.
+            not diag_cov. hermitian=True is hard-coded.
         """
-        if self.sparse_cov:
+        if self.diag_cov:
             self.icov = 1. / self.cov
             self.logdet = torch.sum(torch.log(self.cov))
             self.ndim = sum(self.cov.shape)

@@ -187,7 +187,7 @@ class HMC(SamplerBase):
     and Nstep = max[1 / eps, 5] assuming the a (cov)variance
     is provided.
     """
-    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10,
+    def __init__(self, potential_fn, x0, eps, cov=None, diag_cov=True, Nstep=10,
                  dHmax=1000, record_divergences=False):
         """
         Parameters
@@ -202,8 +202,8 @@ class HMC(SamplerBase):
             Size of position step in units of x
         cov : ParamDict, optional
             Covariance matrix to inform momentum sampling.
-            You can also pass the Hessian via self.set_cov().
-        sparse_cov : bool, optional
+            You can also pass the Hessian or its cholesky via self.set_cov().
+        diag_cov : bool, optional
             If True, cov represents the diagonal
             of the cov matrix. Otherwise, it is
             a 2D tensor for each param.ravel()
@@ -233,9 +233,9 @@ class HMC(SamplerBase):
         self._gradU = None
         self.p = None    # ending momentum
         self.eps = eps
-        self.set_cov(cov=cov, sparse_cov=sparse_cov)
+        self.set_cov(cov=cov, diag_cov=diag_cov)
 
-    def set_cov(self, cov=None, hess=None, sparse_cov=True, inv='chol', rcond=1e-15):
+    def set_cov(self, cov=None, hess=None, diag_cov=True, inv='chol', rcond=1e-15):
         """
         Set the parameter covariance, aka the inverse mass matrix,
         used to define the kinetic energy.
@@ -252,7 +252,7 @@ class HMC(SamplerBase):
         hess : ParamDict, optional
             Hessian matrix for each parameter in ParamDict.
             Pass either hess or cov. This is aka the mass matrix.
-        sparse_cov : bool or ParamDict, optional
+        diag_cov : bool or ParamDict, optional
             If True, cov represents just the variance,
             otherwise it represents full covariance
         inv : str, optional
@@ -275,8 +275,8 @@ class HMC(SamplerBase):
         """
         ## TODO: allow for structured covariances between parameters
         assert not ((cov is not None) and (hess is not None)), "cannot pass both cov and hess"
-        if isinstance(sparse_cov, bool):
-            sparse_cov = {k: sparse_cov for k in self.x}
+        if isinstance(diag_cov, bool):
+            diag_cov = {k: diag_cov for k in self.x}
 
         # if only passed covariance, compute hessian
         if cov is not None:
@@ -294,18 +294,18 @@ class HMC(SamplerBase):
         elif cov is None and hess is None:
             # assign hess as identity (assign as None)
             hess = ParamDict({})
-            for k, sparse in sparse_cov.items():
+            for k, diag in diag_cov.items():
                 hess[k] = None
 
         # now get cholesky of hessian
-        self.sparse_cov = sparse_cov
+        self.diag_cov = diag_cov
         self.chol = ParamDict({})
         self.cov = ParamDict({})
         self.logdetM = torch.tensor(0.)
         for k in hess:
             if hess[k] is None:
                 _cov, _L = None, None
-            elif sparse_cov[k]:
+            elif diag_cov[k]:
                 _cov, _L = linalg.cholesky_inverse(hess[k].ravel())
                 _cov, _L = _cov.reshape(hess[k].shape), _L.reshape(hess[k].shape)
             else:
@@ -328,7 +328,7 @@ class HMC(SamplerBase):
 
             if hess[k] is None:
                 pass
-            elif sparse_cov[k]:
+            elif diag_cov[k]:
                 self.logdetM += torch.log(torch.prod(hess[k]))
             else:
                 self.logdetM += torch.log(torch.linalg.det(hess[k]))
@@ -356,7 +356,7 @@ class HMC(SamplerBase):
             for k in p:
                 if self.cov[k] is None:
                     K = torch.sum(p[k]**2 / 2)
-                elif self.sparse_cov[k]:
+                elif self.diag_cov[k]:
                     K += torch.sum(self.cov[k] * p[k]**2 / 2)
                 else:
                     prav = p[k].ravel()
@@ -418,7 +418,7 @@ class HMC(SamplerBase):
             momentum = torch.randn(N, device=x.device)
             if self.chol[k] is None:
                 p[k] = momentum.reshape(x.shape)
-            elif self.sparse_cov[k]:
+            elif self.diag_cov[k]:
                 p[k] = self.chol[k] * momentum.reshape(x.shape)
             else:
                 p[k] = (self.chol[k] @ momentum).reshape(x.shape)
@@ -461,7 +461,7 @@ class HMC(SamplerBase):
         # run leapfrog steps from current position inplace!
         dUdq0 = self._gradU
         leapfrog(q, p, self.dUdx, self.eps, self.Nstep,
-                 invmass=self.cov, sparse_mass=self.sparse_cov,
+                 invmass=self.cov, diag_mass=self.diag_cov,
                  dUdq0=dUdq0)
 
         # get final energies
@@ -541,7 +541,7 @@ class HMC(SamplerBase):
             else:
                 self.eps = torch.exp(torch.as_tensor(log_eps))
  
-    def estimate_cov(self, Nback=None, sparse_cov=True, robust=False):
+    def estimate_cov(self, Nback=None, diag_cov=True, robust=False):
         """
         Try to estimate the covariance of self.x given 
         recent sampling history of Nback most-recent samples.
@@ -551,11 +551,11 @@ class HMC(SamplerBase):
         Nback : int, optional
             Number of samples starting from the back of the chain
             to use. Default is all samples.
-        sparse_cov : bool, optional
+        diag_cov : bool, optional
             Compute diagonal (True) or full covariance (False)
             of covariance matrix
         robust : bool, optional
-            Use robust measure of the variance if sparse_cov is True.
+            Use robust measure of the variance if diag_cov is True.
         """
         Cov = ParamDict({})
         for k, chain in self.chain.items():
@@ -564,7 +564,7 @@ class HMC(SamplerBase):
             device = self.x[k].device
             dtype = self.x[k].dtype
             c = np.array(chain)[-Nback:].T
-            if sparse_cov:
+            if diag_cov:
                 if robust:
                     cov = torch.tensor(np.median(np.abs(c - np.median(c, axis=1)), axis=1),
                                         dtype=dtype, device=device)
@@ -575,7 +575,7 @@ class HMC(SamplerBase):
                 cov = torch.tensor(np.cov(c), dtype=dtype, device=device)
             Cov[k] = cov
 
-        self.set_cov(cov=Cov, sparse_cov=sparse_cov)
+        self.set_cov(cov=Cov, diag_cov=diag_cov)
 
     def write_chain(self, outfile, overwrite=False, description=''):
         """
@@ -600,7 +600,7 @@ class RecycledHMC(HMC):
     """
     Static trajectory, recycled HMC from Nishimura+2020
     """
-    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True, Nstep=10,
+    def __init__(self, potential_fn, x0, eps, cov=None, diag_cov=True, Nstep=10,
                  dHmax=1000, record_divergences=False):
         """
         Parameters
@@ -616,7 +616,7 @@ class RecycledHMC(HMC):
         cov : ParamDict, optional
             Covariance matrix to inform momentum sampling.
             You can also pass the Hessian via self.set_cov().
-        sparse_cov : bool, optional
+        diag_cov : bool, optional
             If True, cov represents the diagonal
             of the cov matrix. Otherwise, it is
             a 2D tensor for each param.ravel()
@@ -632,7 +632,7 @@ class RecycledHMC(HMC):
             If True, record metadata about divergences as they
             appear in self._divergences
         """
-        super().__init__(potential_fn, x0, eps, cov=cov, sparse_cov=sparse_cov, Nstep=Nstep,
+        super().__init__(potential_fn, x0, eps, cov=cov, diag_cov=diag_cov, Nstep=Nstep,
                          dHmax=dHmax, record_divergences=record_divergences)
 
     def step(self, sample_p=True):
@@ -674,7 +674,7 @@ class RecycledHMC(HMC):
         for i in range(self.Nstep):
             # run single step leapfrog
             leapfrog(q, p, self.dUdx, self.eps, 1,
-                     invmass=self.cov, sparse_mass=self.sparse_cov,
+                     invmass=self.cov, diag_mass=self.diag_cov,
                      dUdq0=self._gradU)
 
             K = self.K(p)
@@ -786,7 +786,7 @@ class NUTS(HMC):
     """ 
     No U-Turn Sampler variant of HMC.
     """
-    def __init__(self, potential_fn, x0, eps, cov=None, sparse_cov=True,
+    def __init__(self, potential_fn, x0, eps, cov=None, diag_cov=True,
                  dHmax=1000, record_divergences=False, max_tree_depth=6,
                  biased=True, track_states=False):
         """
@@ -802,7 +802,7 @@ class NUTS(HMC):
             Size of position step in units of x
         cov : ParamDict, optional
             Covariance matrix to inform momentum sampling
-        sparse_cov : bool, optional
+        diag_cov : bool, optional
             If True, cov represents the diagonal
             of the cov matrix. Otherwise, it is
             a 2D tensor for each param.ravel()
@@ -824,7 +824,7 @@ class NUTS(HMC):
         track_states : bool, optional
             If True, track all states visited in a single NUTS trajectory
         """
-        super().__init__(potential_fn, x0, eps, cov=cov, sparse_cov=sparse_cov,
+        super().__init__(potential_fn, x0, eps, cov=cov, diag_cov=diag_cov,
                          dHmax=dHmax, record_divergences=record_divergences)
         self.max_tree_depth = max_tree_depth
         self.biased = biased
@@ -920,7 +920,7 @@ class NUTS(HMC):
         # run leapfrog for 1 step and collect state values
         states = []
         q_new, p_new = leapfrog(q.clone(), p.clone(), self.dUdx, direction * self.eps, 1,
-                                invmass=self.cov, sparse_mass=self.sparse_cov,
+                                invmass=self.cov, diag_mass=self.diag_cov,
                                 dUdq0=dUdq0, states=states)
 
         # get state metadata
@@ -1224,7 +1224,7 @@ def hoffman_uturn(q_minus, q_plus, p_minus, p_plus):
     return (minus_angle < 0) or (plus_angle < 0)
 
 
-def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
+def leapfrog(q, p, dUdq, eps, N, invmass=1, diag_mass=True, dUdq0=None,
              states=None):
     """
     Perform N leapfrog steps for position and momentum
@@ -1248,7 +1248,7 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
     invmass : tensor, scalar, ParamDict, optional
         scalar or diagonal of inverse mass matrix
         if a tensor, must be on q device
-    sparse_mass : bool, ParamDict, optional
+    diag_mass : bool, ParamDict, optional
         If True, invmass is inverse of cov diagonal
         else, invmass is full inv cov
     dUdq0 : tensor or ParamDict, optional
@@ -1271,8 +1271,8 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
     ## TODO: incorporate friction term (Chen+2014 SGHMC)
     ## TODO: allow for more frequent update of "fast" parameters
     if isinstance(q, ParamDict):
-        if isinstance(sparse_mass, bool):
-            sparse_mass = {k: sparse_mass for k in q}
+        if isinstance(diag_mass, bool):
+            diag_mass = {k: diag_mass for k in q}
         if isinstance(eps, (float, int, torch.Tensor)):
             eps = ParamDict({k: eps for k in q})
         if isinstance(invmass, (float, int, torch.Tensor)):
@@ -1291,15 +1291,15 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
     # initial momentum half step
     p -= dUdq0 * (eps / 2)
 
-    def pos_step(q, p, invmass, eps, sparse_mass):
+    def pos_step(q, p, invmass, eps, diag_mass):
         if isinstance(q, ParamDict):
             for k in q:
                 imass = None if invmass is None else invmass[k]
-                pos_step(q[k], p[k], imass, eps[k], sparse_mass[k])
+                pos_step(q[k], p[k], imass, eps[k], diag_mass[k])
         else:
             if invmass is None:
                 q += eps * p
-            elif sparse_mass:
+            elif diag_mass:
                 q += eps * (invmass * p)
             else:
                 q += eps * (invmass @ p.ravel()).reshape(p.shape)
@@ -1308,7 +1308,7 @@ def leapfrog(q, p, dUdq, eps, N, invmass=1, sparse_mass=True, dUdq0=None,
     for i in range(N):
         # position full step update
         with torch.no_grad():
-            pos_step(q, p, invmass, eps, sparse_mass)
+            pos_step(q, p, invmass, eps, diag_mass)
 
         # momentum full step update if this isn't the last iteration
         if i != (N - 1):
