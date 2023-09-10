@@ -764,8 +764,9 @@ class PartitionedMat(BaseMat):
 
         # get paritioned matrix metadata from on-diagonal blocks
         self._Ncols = len(ondiag_keys)
-        length = sum([blocks[k].shape[0] for k in ondiag_keys])
-        self._shape = (length, length)
+        Nrows = sum([blocks[k].shape[0] for k in ondiag_keys])
+        Ncols = sum([blocks[k].shape[1] for k in ondiag_keys])
+        self._shape = (Nrows, Ncols)
         self.dtype = blocks[ondiag_keys[0]].dtype
         self.device = blocks[ondiag_keys[0]].device
         self.symmetric = symmetric
