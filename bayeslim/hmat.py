@@ -776,8 +776,8 @@ class PartitionedMat(BaseMat):
         # iterate over each major column object
         for i, k in enumerate(ondiag_keys):
             # get indexing for a vector dotted into this matrix column
-            self.vec_idx.append(slice(size, size+blocks[k].shape[0]))
-            size += blocks[k].shape[0]
+            self.vec_idx.append(slice(size, size+blocks[k].shape[1]))
+            size += blocks[k].shape[1]
 
             # get all the theoretical sub-blocks in this vertical column
             block_keys = [(j[0], k[1]) for j in ondiag_keys]
