@@ -1995,3 +1995,47 @@ def main_params_index(prob, main_index, subset_index):
 
     return idx
 
+
+def main_params_kron_hess(prob, hess, param, method='chol'):
+    """
+    Compute the Kronecker factorization of a hessian
+    matrix for a given sub-parameter in main_params
+
+    Parameters
+    ----------
+    prob : LogProb object
+        with main_params set
+    hess : tensor
+        A hessian matrix of shape
+        (main_params, main_params)
+    param : str
+        A parameter string in prob._main_index
+    method : str, optional
+        ['chol', 'svd'] how to take the decomposition.
+
+    Returns
+    -------
+    tensor
+    """
+    assert param in prob._main_index
+
+    # down select hess to this param
+    hidx = prob._main_indices[param]
+    hess = hess[hidx, :][:, hidx]
+
+    # now get param indexing
+    idx = prob._main_index[param]
+    shape = prob.model[param][idx].squeeze().shape
+    N = np.prod(shape[1:])
+
+    if method == 'chol':
+        L = torch.linalg.cholesky(hess[:N, :N])
+    elif method == 'svd':
+        u, s, v = torch.linalg.svd(hess[:N, :N])
+        L = u @ torch.diag(s**.5)
+
+    L = L.sum(1) / L.shape[1]**.5
+
+    kron = torch.kron(torch.eye(shape[0]), L).T
+
+    return kron
