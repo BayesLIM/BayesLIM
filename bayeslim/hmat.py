@@ -821,7 +821,7 @@ class PartitionedMat(BaseMat):
         if transpose:
             return self.to_transpose()(vec)
 
-        out = torch.zeros(len(vec), dtype=vec.dtype, device=vec.device)
+        out = torch.zeros(self.shape[0], dtype=vec.dtype, device=self.device)
         for i, matcol in enumerate(self.matcols):
             out += matcol(vec[self.vec_idx[i]])
 
@@ -843,7 +843,7 @@ class PartitionedMat(BaseMat):
         if transpose:
             return self.to_transpose()(mat)
 
-        out = torch.zeros(mat.shape, dtype=mat.dtype, device=mat.device)
+        out = torch.zeros((self.shape[0], mat.shape[1]), dtype=mat.dtype, device=self.device)
         for i, matcol in enumerate(self.matcols):
             out += matcol(mat[self.vec_idx[i]])
 
