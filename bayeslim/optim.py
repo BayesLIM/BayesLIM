@@ -1996,9 +1996,9 @@ def main_params_index(prob, main_index, subset_index):
     return idx
 
 
-def main_params_kron_hess(prob, hess, param, method='chol'):
+def main_params_kron_inv_hess(prob, hess, param, method='chol', **inv_kwargs):
     """
-    Compute the Kronecker factorization of a hessian
+    Compute the Kronecker factorization of the inverse hessian
     matrix for a given sub-parameter in main_params
 
     Parameters
@@ -2012,6 +2012,10 @@ def main_params_kron_hess(prob, hess, param, method='chol'):
         A parameter string in prob._main_index
     method : str, optional
         ['chol', 'svd'] how to take the decomposition.
+        'chol' : take inverse of hess sub-block, then cholesky
+        'svd'  : take svd of hess sub-block, use u @ 1/s^.5
+    inv_kwargs : dict, optional
+        kwargs for taking inv when method = 'chol'
 
     Returns
     -------
@@ -2025,14 +2029,15 @@ def main_params_kron_hess(prob, hess, param, method='chol'):
 
     # now get param indexing
     idx = prob._main_index[param]
-    shape = prob.model[param][idx].squeeze().shape
+    shape = prob.model[param][idx].shape
     N = np.prod(shape[1:])
 
     if method == 'chol':
-        L = torch.linalg.cholesky(hess[:N, :N])
+        cov = linalg.invert_matrix(hess, **inv_kwargs)
+        L = torch.linalg.cholesky(cov[:N, :N])
     elif method == 'svd':
         u, s, v = torch.linalg.svd(hess[:N, :N])
-        L = u @ torch.diag(s**.5)
+        L = u @ torch.diag(1 / s**.5)
 
     L = L.sum(1) / L.shape[1]**.5
 
