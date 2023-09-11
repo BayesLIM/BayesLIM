@@ -2033,8 +2033,8 @@ def main_params_kron_inv_hess(prob, hess, param, method='chol', **inv_kwargs):
     N = np.prod(shape[1:])
 
     if method == 'chol':
-        cov = linalg.invert_matrix(hess, **inv_kwargs)
-        L = torch.linalg.cholesky(cov[:N, :N])
+        cov = linalg.invert_matrix(hess[:N, :N], **inv_kwargs)
+        L = torch.linalg.cholesky(cov)
     elif method == 'svd':
         u, s, v = torch.linalg.svd(hess[:N, :N])
         L = u @ torch.diag(1 / s**.5)
