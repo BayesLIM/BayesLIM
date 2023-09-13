@@ -1247,16 +1247,16 @@ class DistributedLogProb(utils.Module):
         for prob, device in zip(self.probs, self.devices):
             prob.main_params.data = main_params.data.to(device)
 
-    def get_main_params(self):
+    def get_main_params(self, add_p0=False):
         """
-        Get a copy of self.main_params and, if available, main_p0
-        from the first object in self.probs
+        Get a copy of self.main_params and, if available and
+        if add_p0, add main_p0 from the first object in self.probs
         """
         main_params = None
         if hasattr(self, 'main_params') and self.main_params is not None:
             main_params = self.main_params.data.clone()
             prob = self.probs[0]
-            if prob.main_p0 is not None:
+            if add_p0 and prob.main_p0 is not None:
                 main_params += prob.main_p0.clone().to(self.device)
 
         return main_params
