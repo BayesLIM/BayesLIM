@@ -1238,13 +1238,28 @@ class DistributedLogProb(utils.Module):
         self._main_indices = self.probs[0]._main_indices
         self._main_index = self.probs[0]._main_index
 
-    def send_main_params(self, **kwargs):
+    def send_main_params(self, main_params=None, **kwargs):
         """
         Copy self.main_params to each object in self.prob.
         Note this does not also call self.probs[i].send_main_params()
         """
+        main_params = main_params if main_params is not None else self.main_params
         for prob, device in zip(self.probs, self.devices):
-            prob.main_params.data = self.main_params.data.to(device)
+            prob.main_params.data = main_params.data.to(device)
+
+    def get_main_params(self):
+        """
+        Get a copy of self.main_params and, if available, main_p0
+        from the first object in self.probs
+        """
+        main_params = None
+        if hasattr(self, 'main_params') and self.main_params is not None:
+            main_params = self.main_params.clone()
+            prob = self.probs[0]
+            if prob.main_p0 is not None:
+                main_params += prob.main_p0.clone().to(self.device)
+
+        return main_params
 
     def closure(self):
         """
