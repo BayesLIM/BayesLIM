@@ -1254,7 +1254,7 @@ class DistributedLogProb(utils.Module):
         """
         main_params = None
         if hasattr(self, 'main_params') and self.main_params is not None:
-            main_params = self.main_params.clone()
+            main_params = self.main_params.data.clone()
             prob = self.probs[0]
             if prob.main_p0 is not None:
                 main_params += prob.main_p0.clone().to(self.device)
