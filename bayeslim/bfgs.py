@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.optim.optimizer import Optimizer
 
-from . import optim, hmat, paramdict
+from . import optim, hmat, paramdict, utils
 
 
 class BFGS:
