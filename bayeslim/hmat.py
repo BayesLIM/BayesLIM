@@ -1,6 +1,7 @@
 """
 Module for computing, manipulating, inverting,
-and factorizing sparse matrix representations
+and factorizing (sparse) matrix representations,
+notably for hessian and inverse-hessian matrices
 """
 from abc import abstractmethod
 import numpy as np
