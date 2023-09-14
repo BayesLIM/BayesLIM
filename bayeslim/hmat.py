@@ -40,6 +40,10 @@ class BaseMat(object):
         pass
 
     @abstractmethod
+    def diagonal(self):
+        pass
+
+    @abstractmethod
     def __mul__(self, other):
         pass
 
@@ -151,6 +155,9 @@ class DenseMat(BaseMat):
         """
         self.H *= scalar
 
+    def diagonal(self):
+        return self.H.diagonal()
+
     def __mul__(self, other):
         return DenseMat(self.H * other)
 
@@ -253,6 +260,9 @@ class DiagMat(BaseMat):
         scalar : float
         """
         self.diag *= scalar
+
+    def diagonal(self):
+        return self.diag
 
     def __mul__(self, other):
         return DiagMat(self.size, self.diag * other)
@@ -441,6 +451,19 @@ class SparseMat(BaseMat):
         if self.Hdiag is not None:
             self.Hdiag *= scalar
 
+    def diagonal(self):
+        N = min(self._shape)
+        if self.Hdiag is not None:
+            diag = self.Hdiag
+        else:
+            diag = torch.zeros(N, device=self.device, dtype=self.dtype)
+
+        U = self.U
+        Vt = self.V.T if self.V is not None else self.U.conj()
+        diag = diag + (U[:N, :] * Vt[:N, :]).sum(1)
+
+        return diag
+
     def __mul__(self, other):
         U = self.U
         V = self.V
@@ -529,6 +552,9 @@ class ZeroMat(BaseMat):
         """
         pass
 
+    def diagonal(self):
+        return torch.zeros(min(self._shape), dtype=self.dtype, device=self.device)
+
     def __mul__(self, other):
         return ZeroMat(self.shape, device=self.device, dtype=self.dtype)
 
@@ -541,7 +567,8 @@ class ZeroMat(BaseMat):
 
 class OneMat(BaseMat):
     """
-    A ones matrix filled with any scalar value
+    A ones matrix filled with any scalar value. Note this is not identity or
+    a diagonal matrix! For that see DiagMat().
     """
     def __init__(self, shape, scalar=1.0, dtype=None, device=None):
         """
@@ -597,6 +624,9 @@ class OneMat(BaseMat):
         scalar : float
         """
         self.scalar *= scalar
+
+    def diagonal(self):
+        return torch.ones(min(self._shape), dtype=self.dtype, device=self.device) * self.scalar
 
     def __mul__(self, other):
         if isinstance(other, OneMat):
@@ -689,6 +719,9 @@ class TransposedMat(BaseMat):
             scalar = scalar.conj()
         self._matobj.scalar_mul(scalar)
 
+    def diagonal(self):
+        return self._matobj.diagonal()
+
     def __mul__(self, other):
         return TransposedMat(self._matobj * other)
 
@@ -771,10 +804,13 @@ class PartitionedMat(BaseMat):
         self.device = blocks[ondiag_keys[0]].device
         self.symmetric = symmetric
 
-        self.matcols, self.vec_idx = [], []
+        self.matcols, self.diagmats, self.vec_idx = [], [], []
         size = 0
         # iterate over each major column object
         for i, k in enumerate(ondiag_keys):
+            # append block to diagmats
+            self.diagmats.append(blocks[k])
+
             # get indexing for a vector dotted into this matrix column
             self.vec_idx.append(slice(size, size+blocks[k].shape[1]))
             size += blocks[k].shape[1]
@@ -905,6 +941,9 @@ class PartitionedMat(BaseMat):
         """
         for matcol in self.matcols:
             matcol.scalar_mul(scalar)
+
+    def diagonal(self):
+        return torch.cat([b.diagonal() for b in self.diagmats])
 
     def __mul__(self, other):
         blocks = {}
