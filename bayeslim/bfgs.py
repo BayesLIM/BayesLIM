@@ -200,7 +200,6 @@ class BFGS:
                 self._Hy = self.hvp(y)
             self._g = self.gather_flat_grad()
 
-
     def hvp(self, vec):
         """
         (Inv.) Hessian vector product
@@ -288,7 +287,7 @@ class BFGS:
             if self.line_search_fn is None:
                 # no search function: just use fixed learning rate
                 self.update_params(alpha, p)
-                
+
                 # now get new loss and grads at new position
                 loss = float(closure())
                 flat_grad = self.gather_flat_grad()
@@ -422,8 +421,14 @@ class LBFGS(BFGS):
         self._s, self._y, self._Hy = deque(), deque(), deque()
         # rho and alpha will be float-lists, so performance isn't as critical
         self._rho, self._alpha = [], []
-        self._Hdiag = None
         self.update_Hdiag = update_Hdiag
+
+        # compute starting Hdiag
+        if self.H is None:
+            self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=self.params[0].dtype)
+        else:
+            self._Hdiag = torch.median(self.H.diagonal())
+
 
     def update_hessian(self, s, y, alpha=None):
         """
