@@ -944,7 +944,7 @@ def _gen_bessel2freq_multiproc(job):
 
  
 def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
-                    device=None, method='shell', bc_type=2,
+                    device=None, dtype=None, method='shell', bc_type=2,
                     renorm=True, r_crit=None, use_pathos=False, **kln_kwargs):
     """
     Generate spherical Bessel forward model matrices sqrt(2/pi) r^2 k g_l(kr)
@@ -1018,7 +1018,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         if use_pathos:
             import multiprocess as mproc
         else:
-            import multiprocessing as mproc
+            from torch import multiprocessing as mproc
         start_method = mproc.get_start_method(allow_none=True)
         if start_method is None: mproc.set_start_method('spawn') 
         Njobs = len(ul) / Ntask
@@ -1029,7 +1029,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         for i in range(Njobs):
             _l = ul[i*Ntask:(i+1)*Ntask]
             args = (_l, r)
-            kwargs = dict(device=device, method=method, r_crit=r_crit,
+            kwargs = dict(device=device, dtype=dtype, method=method, r_crit=r_crit,
                           renorm=renorm, bc_type=bc_type)
             kwargs.update(kln_kwargs)
             jobs.append([args, kwargs])
@@ -1047,6 +1047,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         return gln, kln
 
     # run single proc mode
+    dtype = dtype if dtype is not None else utils._float()
     gln = {}
     kln = {}
     if kbins is None:
@@ -1061,10 +1062,10 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
             k = kbins[_l]
         # get basis function g_l
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
-                             device=device, r_crit=r_crit)
+                             device=device, r_crit=r_crit, dtype=dtype)
         # form transform matrix: sqrt(2/pi) k g_l
-        rt = torch.as_tensor(r, device=device, dtype=utils._float())
-        kt = torch.as_tensor(k, device=device, dtype=utils._float())
+        rt = torch.as_tensor(r, device=device, dtype=dtype)
+        kt = torch.as_tensor(k, device=device, dtype=dtype)
         gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-4) * gl
         kln[_l] = k
 
@@ -1074,7 +1075,8 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
     return gln, kln
 
 
-def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=False, device=None):
+def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=False,
+                    device=None, dtype=None):
     """
     Generate a spherical bessel radial basis function, g_l(k_n r)
 
@@ -1110,6 +1112,8 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
         itself equals pi/2 k^-2
     device : str, optional
         Device to place matrices on
+    dtype : dtype object, optional
+        Data type for gln matrices
 
     Returns
     -------
@@ -1121,7 +1125,8 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
     if method == 'shell':
         assert r_crit is not None
 
-    j = torch.zeros(Nk, len(r), dtype=utils._float(), device=device)
+    dtype = dtype if dtype is not None else utils._float()
+    j = torch.zeros(Nk, len(r), dtype=dtype, device=device)
     # loop over kbins and fill j matrix
     for i, _k in enumerate(k):
         if method == 'ball':
@@ -1144,11 +1149,11 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
         else:
             raise ValueError("didn't recognize method {}".format(method))
 
-        j[i] = torch.as_tensor(j_i, dtype=utils._float(), device=device)
+        j[i] = torch.as_tensor(j_i, dtype=dtype, device=device)
 
     # renormalize
     if renorm:
-        rt = torch.as_tensor(r, device=device, dtype=utils._float())
+        rt = torch.as_tensor(r, device=device, dtype=dtype)
         j *= torch.sqrt(np.pi/2 * k.clip(1e-4)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
 
     return j
