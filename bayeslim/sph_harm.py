@@ -2070,7 +2070,7 @@ def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=Non
         Nl = len(lbins)
 
     if wgts is None:
-        wgts = torch.ones_like(params)
+        wgts = torch.ones_like(params, dtype=utils._float())
 
     if lbins is None:
         # 1D binning
@@ -2080,7 +2080,7 @@ def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=Non
         # iterate over bins
         for i in range(Nk):
             idx = np.where(kinds == i)[0]
-            w = wgts[idx]
+            w = wgts[..., idx]
             w /= torch.sum(w).clip(1e-40)
             out[..., i] = torch.sum(params[..., idx] * w, dim=-1)
             vout[..., i] = torch.sum(var[..., idx] * w**2, dim=-1)
@@ -2094,7 +2094,7 @@ def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=Non
         for i in range(Nk):
             for j in range(Nl):
                 idx = np.where((kinds == i) & (linds == j))[0]
-                w = wgts[idx]
+                w = wgts[..., idx]
                 w /= torch.sum(w).clip(1e-40)
                 out[..., i, j] = torch.sum(params[..., idx] * w, dim=-1)
                 vout[..., i, j] = torch.sum(var[..., idx] * w**2, dim=-1)
