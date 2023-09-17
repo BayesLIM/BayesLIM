@@ -1364,15 +1364,16 @@ class DistributedLogProb(utils.Module):
         """
         for prob in self.probs:
             prob.collect_main_params()
+        self._main_indices = copy.deepcopy(self.probs[0]._main_indices)
+        self._main_index = self.probs[0]._main_index
         if self.probs[0].main_params is not None:
             self.main_params = torch.nn.Parameter(self.probs[0].main_params.data.to(self.device))
-        self._main_indices = copy.deepcopy(self.probs[0]._main_indices)
-        for k, v in self._main_indices.items():
-            if isinstance(v, list):
-                self._main_indices[k] = [utils._idx2ten(_v, self.device) for _v in v]
-            else:
-                self._main_indices[k] = utils._idx2ten(v, self.device)
-        self._main_index = self.probs[0]._main_index
+            
+            for k, v in self._main_indices.items():
+                if isinstance(v, list):
+                    self._main_indices[k] = [utils._idx2ten(_v, self.device) for _v in v]
+                else:
+                    self._main_indices[k] = utils._idx2ten(v, self.device)
 
     def send_main_params(self, main_params=None, **kwargs):
         """
