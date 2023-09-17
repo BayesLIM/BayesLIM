@@ -1036,7 +1036,7 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
 
         # run jobs
         with mproc.Pool(Nproc) as pool:
-            output = pool.map(_compute_lm_multiproc, jobs)
+            output = pool.map(_gen_bessel2freq_multiproc, jobs)
 
         # collect output
         gln, kln = {}, {}
