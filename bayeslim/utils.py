@@ -1997,6 +1997,17 @@ def _list2slice(inds):
     return inds
 
 
+def _slice2tensor(obj, device=None):
+    """Convert a slice object to a integer tensor"""
+    if isinstance(obj, slice):
+        start = obj.start if obj.start is not None else 0
+        stop = obj.stop
+        step = obj.step if obj.step is not None else 1
+        obj = torch.arange(start, stop, step, device=device)
+
+    return obj
+
+
 def _idx2ten(idx, device=None):
     """Convert a 1d indexing list or ndarray to tensor
     and push to a desired device.
@@ -2012,6 +2023,15 @@ def _idx2ten(idx, device=None):
         idx = torch.where(idx)[0]
     if device is not None and isinstance(idx, torch.Tensor):
         idx = idx.to(device)
+
+    return idx
+
+
+def _cat_idx(idx, device=None):
+    """Concatenate multiple 1D indexing objects (tensors, slice objects)
+    packed in a list and return as a int tensor"""
+    if isinstance(idx, list):
+        idx = torch.cat([_slice2tensor(_idx2ten(i, device=device), device=device) for i in idx])
 
     return idx
 

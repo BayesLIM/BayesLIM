@@ -606,6 +606,127 @@ class LogProb(utils.Module):
             # this sends values back to leaf tensors making them leaf views
             self.send_main_params()
 
+    def sort_main_params(self, new_main_indices, incomplete=False):
+        """
+        Given a previously defined main_params, resort the
+        elements of self.main_params to an arbitrary order
+        and create a new self._main_indices.
+
+        Parameters
+        ----------
+        new_main_indices : dict
+            The new main_indices dictionary, to replace
+            self._main_indices. Note this must conform
+            to shape of the existing self._main_indices
+            e.g. if _main_indices = {'a': [0,1,2,3], 'b': [4,5,6,7]}
+            a possible input is {'a': [0, 4, 1, 5], 'b': [2, 6, 3, 7]}
+            such that the even idx of 'a' and 'b' are stored at the front
+            of the tensors, and the odd indices are pushed to the back.
+        incomplete : bool, optional
+            If True, new_main_indices only holds the indices
+            *for each param* you want stored at the front of
+            the tensor, with all other elements to be pushed to
+            the back. I.e. the proper main_indices is computed for you.
+            e.g. if _main_indices = {'a': [0,1,2,3], 'b': [4,5,6,7]}
+            a possible input corresponding to the correct input
+            shown in the above parameter doc would be
+            {'a': [0, 2], 'b': [0, 2]}, which would then be transformed
+            as {'a': [0, 4, 1, 5], 'b': [2, 6, 3, 7]}.
+        """
+        # make sure this is located on self.device
+        new_main_indices = copy.deepcopy(new_main_indices)
+
+        # determine if we need to complete the dict
+        if incomplete:
+            # get the length of params moved to the front
+            def count(v):
+                length = 0
+                if v is None:
+                    pass
+                elif isinstance(v, slice):
+                    start = v.start if v.start is not None else 0
+                    stop = v.stop
+                    step = v.step if v.step is not None else 1
+                    length = (stop - start) // step
+                else:
+                    length = len(v)
+
+                return length
+
+            N = 0
+            for k, v in new_main_indices.items():
+                if isinstance(v, list):
+                    for _v in v:
+                        N += count(_v)
+                else:
+                    N += count(v)
+
+            # now iterate through params and make new indexing tensors
+            def new_indexing_tensor(old, new, n1, n2):
+                """n1 is start of first half, n2 is start of second half"""
+                # get length of the old
+                old_len = count(old)
+                # get new in integer form
+                new = utils._slice2tensor(new)
+                new = new if new is not None else []
+                # make new indexing tensor starting from n2
+                idx = torch.arange(n2, n2 + old_len)
+                n2 += old_len - len(new)
+                # now iterate through new and insert n1 indices
+                # and push forward idx when doing so
+                for n in new:
+                    idx[n] = n1
+                    idx[n+1:] -= 1
+                    n1 += 1
+
+                return idx, n1, n2
+
+            n1, n2 = 0, N
+            for k, new in new_main_indices.items():
+                old = self._main_indices[k]
+                if isinstance(new, list):
+                    idx = []
+                    for _new, _old in zip(new, old):
+                        _idx, n1, n2 = new_indexing_tensor(_old, _new, n1, n2)
+                        idx.append(_idx)
+                    new_main_indices[k] = idx
+
+                else:
+                    idx, n1, n2 = new_indexing_tensor(old, new, n1, n2)
+                    new_main_indices[k] = idx
+
+        # now iterate over completed indices and make sure then are tensors on self.device
+        for k, v in new_main_indices.items():
+            if isinstance(v, list):
+                new_main_indices[k] = [utils._idx2ten(_v, device=self.device) for _v in v]
+            else:
+                new_main_indices[k] = utils._idx2ten(v, device=self.device)
+
+        # create a new main_params tensor
+        main_params = torch.zeros_like(self.main_params)
+        if self.main_p0 is not None:
+            main_p0 = torch.zeros_like(self.main_p0)
+
+        # iterate over params
+        for k, new in new_main_indices.items():
+            old = self._main_indices[k]
+            if isinstance(new, list):
+                for _new, _old in zip(new, old):
+                    main_params[_new] = self.main_params.data[_old]
+                    if self.main_p0 is not None:
+                        main_p0[_new] = self.main_p0.data[_old]
+
+            else:
+                main_params[new] = self.main_params.data[old]
+                if self.main_p0 is not None:
+                    main_p0[new] = self.main_p0.data[old]
+
+        # assign
+        self.main_params = torch.nn.Parameter(main_params)
+        if self.main_p0 is not None:
+            self.main_p0 = main_p0
+        self._main_indices = new_main_indices
+
     def collect_main_params(self, inplace=True):
         """
         Take existing values of submodule params and using metadata like
@@ -1226,6 +1347,16 @@ class DistributedLogProb(utils.Module):
 
         self.collect_main_params()
 
+    def sort_main_params(self, new_main_indices, incomplete=False):
+        """
+        Resort elements of main_params, see LogProb.sort_main_params()
+        for details
+        """
+        for prob in self.probs:
+            prob.sort_main_params(new_main_indices, incomplete=incomplete)
+
+        self.collect_main_params()
+
     def collect_main_params(self, **kwargs):
         """
         Shallow wrapper around prob.collect_main_params(),
@@ -1235,7 +1366,12 @@ class DistributedLogProb(utils.Module):
             prob.collect_main_params()
         if self.probs[0].main_params is not None:
             self.main_params = torch.nn.Parameter(self.probs[0].main_params.data.to(self.device))
-        self._main_indices = self.probs[0]._main_indices
+        self._main_indices = copy.deepcopy(self.probs[0]._main_indices)
+        for k, v in self._main_indices.items():
+            if isinstance(v, list):
+                self._main_indices[k] = [utils._idx2ten(_v, self.device) for _v in v]
+            else:
+                self._main_indices[k] = utils._idx2ten(v, self.device)
         self._main_index = self.probs[0]._main_index
 
     def send_main_params(self, main_params=None, **kwargs):
