@@ -1858,7 +1858,7 @@ class SFBModel:
         """
         # compute gln dictionary if needed
         if not gln:
-            gln, kln = gen_bessel2freq(l, r, kbins=kln, **gln_kwargs)
+            gln, kln = gen_bessel2freq(l, r, kbins=kln, dtype=out_dtype, **gln_kwargs)
 
         self.gln = gln
         self.kln = kln
