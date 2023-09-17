@@ -1064,8 +1064,8 @@ def gen_bessel2freq(l, r, kbins=None, Nproc=None, Ntask=10,
         gl = sph_bessel_func(_l, k, r, method=method, bc_type=bc_type,
                              device=device, r_crit=r_crit, dtype=dtype)
         # form transform matrix: sqrt(2/pi) k g_l
-        rt = torch.as_tensor(r, device=device, dtype=dtype)
-        kt = torch.as_tensor(k, device=device, dtype=dtype)
+        rt = torch.as_tensor(r, device=device, dtype=utils._float())
+        kt = torch.as_tensor(k, device=device, dtype=utils._float())
         gln[_l] = np.sqrt(2 / np.pi) * rt**2 * kt[:, None].clip(1e-4) * gl
         kln[_l] = k
 
@@ -1153,7 +1153,7 @@ def sph_bessel_func(l, k, r, method='shell', bc_type=2, r_crit=None, renorm=Fals
 
     # renormalize
     if renorm:
-        rt = torch.as_tensor(r, device=device, dtype=dtype)
+        rt = torch.as_tensor(r, device=device, dtype=utils._float())
         j *= torch.sqrt(np.pi/2 * k.clip(1e-4)**-2 / torch.sum(rt**2 * torch.abs(j)**2, axis=1))[:, None]
 
     return j
@@ -1857,7 +1857,7 @@ class SFBModel:
             array of the same shape as self.l_arr
         """
         # compute gln dictionary if needed
-        if not gln:
+        if gln is None:
             gln, kln = gen_bessel2freq(l, r, kbins=kln, dtype=out_dtype, **gln_kwargs)
 
         self.gln = gln
