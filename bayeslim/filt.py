@@ -33,46 +33,28 @@ class BaseFilter(utils.Module):
                 setattr(self, attr, utils.push(getattr(self, attr), device))
 
 
-class GPFilter(BaseFilter):
+class MatFilter(BaseFilter):
     """
-    A Gaussian Process filter.
-    MAP prediction of a noisy signal (e.g. Wiener filter)
+    A generic matrix filtering of the form
 
-    y_filt = G y
+    y_filt = G @ y
 
-    where
+    if residual is True then the output is
 
-    G = C_signal [C_signal + C_noise]^-1
-    
-    where C_signal is the covariance of the signal
-    to remove from the data, and C_noise is the
-    covariance of the remaining parts of the data
-    (can include thermal noise and whatever other
-    terms in the data).
+    y_filt = y - G @ y
     """
-    def __init__(self, Cs, Cn, dim=0, hermitian=True, no_filter=False,
-                 rcond=1e-15, dtype=None, device=None, residual=False,
-                 name=None):
+    def __init__(self, G=None, dim=0, no_filter=False,  dtype=None, device=None,
+                 residual=False, name=None, attrs=None):
         """
         Parameters
         ----------
-        Cs : tensor
-            Square covariance of signal you want to estimate.
-            of shape (N_pred_samples, N_data_samples)
-        Cn : tensor
-            Square covariance of the noise (and other things)
-            of shape (N_data_samples, N_data_samples)
+        G : tensor
+            Filtering matrix of shape (N_pred_samples, N_data_samples)
         dim : int
             Dimension of input data to apply filter
-        hermitian : bool, optional
-            If input covariances are real-symmetric or complex-hermitian.
-            Generally this is true, unless one applies a 
-            complex phasor in front of Cs.
         no_filter : bool, optional
             If True, don't filter the input data and
             return as-is
-        rcond : float, optional
-            rcond parameter when taking pinv of C_data
         dtype : torch dtype, optional
             This is the data type of the input data to-be filtered.
         residual : bool, optional
@@ -81,123 +63,76 @@ class GPFilter(BaseFilter):
         name : str, optional
             Name of the filter
         """
-        attrs = ['Cs', 'Cn', 'C', 'C_inv', 'G', 'V']
+        attrs = ['G'] if attrs is None else list(set(attrs + ['G']))
         super().__init__(dim=dim, name=name, attrs=attrs)
-        self.Cs = torch.as_tensor(Cs, device=device)
-        self.Cn = torch.as_tensor(Cn, device=device)
+        self.G = torch.as_tensor(G, device=device) if G is not None else G
         self.dtype = dtype
-        self.rcond = rcond
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
-        self.hermitian = hermitian
         self.no_filter = no_filter
         self.residual = residual
 
-        self.setup_filter()
-
-    def setup_filter(self, Cs=None, Cn=None, **inv_kwargs):
+    def setup_filter(self, G=None):
         """
-        Setup the filter matrix given self.Cs, self.Cn
-        and self.rcond. This takes pseudo-inv of C_data
-        and sets self.G (signal map prediction matrix)
-        and self.V (signal variance matrix)
+        Setup the filter matrix
+        """
+        self.G = torch.as_tensor(G, device=device) if G is not None else self.G
+
+    def predict(self, y):
+        """
+        Filter the input data as
+
+        y_filt = G @ y
 
         Parameters
         ----------
-        Cs : tensor, optional
-            Set self.Cs as Cs if provided, otherwise keep self.Cs
-        Cn : tensor, optional
-            Set self.Cn as Cn if provided, otherwise keep self.Cn
-        inv_kwargs : dict, optional
-            Kwargs to send to linalg.invert_matrix() for
-            inverting self.C
-        """
-        # G = S [S + N]^-1
-        self.Cs = self.Cs if Cs is None else Cs
-        self.Cn = self.Cn if Cn is None else Cn
-        self.C = self.Cs + self.Cn
-        self.C_inv = linalg.invert_matrix(self.C, **inv_kwargs)
-        self.C_inv = self.C_inv.to(self.dtype).to(self.device)
-        self.Cs = self.Cs.to(self.dtype).to(self.device)
-
-        self.set_GV()
-
-    def set_GV(self):
-        """
-        Setup filtering matrices G and the variance matrix V
-        given self.Cs and self.C_inv
-        """
-        self.G = self.Cs @ self.C_inv
-        self.V = self.Cs - self.Cs @ self.C_inv @ self.Cs.T.conj()
-
-    def predict(self, inp, Cs=None):
-        """
-        Given input data, form the prediction
-        of the signal
-
-        y_map = G @ y_inp
-
-        Note that its covariance is held as self.V
-
-        Parameters
-        ----------
-        inp : tensor or dataset.TensorData subclass
+        y : tensor or dataset.TensorData subclass
             Data to filter
-        Cs : tensor, optional
-            Square (or rectangular) matrix holding the
-            covariance of the estimated signal for each
-            (x^prime, x), of shape (N_x_new, N_x),
-            where N_x are the number of data samples,
-            and N_x_new are the number of points to estimate
-            the signal. By default, x_new = x such that
-            Cs is square and stored as self.Cs. Passing
-            a Cs here allows one to estimate the signal at
-            new points along the data sampling axis.
 
         Returns
         -------
         tensor or dataset
         """
-        if isinstance(inp, dataset.TensorData):
-            out = inp.copy()
+        if isinstance(y, dataset.TensorData):
+            out = y.copy()
             out.data = self.predict(out.data)
             return out
 
-        # assume inp is a tensor from here
+        # assume y is a tensor from here
         # get G matrix
-        G = self.G if Cs is None else Cs @ self.C_inv
+        G = self.G
 
         # index it if necessary
         if hasattr(self, "_idx") and self._idx is not None:
             G = G[self._rowidx, self._idx]
 
         ein = self.ein.copy()
-        ein = ein[:inp.ndim]
+        ein = ein[:y.ndim]
         ein[self.dim] = 'j'
         ein = ''.join(ein)
-        y = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), G, inp)
+        y_filt = torch.einsum("ij,{}->{}".format(ein, ein.replace('j','i')), G, y)
 
-        return y
+        return y_filt
 
-    def forward(self, inp, Cs=None, **kwargs):
+    def forward(self, y, **kwargs):
         """
         Filter the input and return
         """
         if self.no_filter:
-            return inp
+            return y
 
-        if isinstance(inp, np.ndarray):
-            inp = torch.as_tensor(inp)
+        if isinstance(y, np.ndarray):
+            y = torch.as_tensor(y)
 
-        elif isinstance(inp, dataset.TensorData):
-            out = inp.copy()
-            out.data = self.forward(inp.data, **kwargs)
+        elif isinstance(y, dataset.TensorData):
+            out = y.copy()
+            out.data = self.forward(y.data, **kwargs)
             return out
 
-        # assume inp is a tensor from here
-        y_filt = self.predict(inp, Cs=Cs)
+        # assume y is a tensor from here
+        y_filt = self.predict(y, **kwargs)
 
         if self.residual:
-            y_filt = inp - y_filt
+            y_filt = y - y_filt
 
         return y_filt
 
@@ -228,6 +163,165 @@ class GPFilter(BaseFilter):
             else:
                 rowidx = torch.atleast_2d(torch.as_tensor(rowidx)).T
         self._rowidx = rowidx
+
+
+class GPFilter(MatFilter):
+    """
+    A Gaussian Process filter.
+    MAP prediction of a noisy signal (e.g. Wiener filter)
+
+    y_filt = G y
+
+    where
+
+    G = C_signal^pred [C_signal + C_noise]^-1
+    
+    where C_signal is the covariance of the signal
+    to remove from the data, and C_noise is the
+    covariance of the remaining parts of the data
+    (can include thermal noise and whatever other
+    terms in the data).
+    """
+    def __init__(self, Cs, Cn, Cs_pred=None, dim=0, no_filter=False,
+                 dtype=None, device=None, residual=False,
+                 name=None, inv='pinv', hermitian=False, rcond=1e-15, eps=None):
+        """
+        Parameters
+        ----------
+        Cs : tensor
+            Square covariance of signal you want to estimate.
+            of shape (N_pred_samples, N_data_samples)
+        Cn : tensor
+            Square covariance of the noise (and other things)
+            of shape (N_data_samples, N_data_samples)
+        Cs_pred : tensor, optional
+            Cross-covariance of signal between
+            (prediction points, data points). Default is Cs.
+        dim : int, optional
+            Dimension of input data to apply filter
+        no_filter : bool, optional
+            If True, don't filter the input data and
+            return as-is
+        dtype : torch dtype, optional
+            This is the data type of the input data to-be filtered.
+        residual : bool, optional
+            If True, subtract MAP estimate of signal from data to form
+            the residual, otherwise simply return its MAP estimate (default)
+        name : str, optional
+            Name of the filter
+        inv : str, optional
+            Inversion type, default is pinv
+        hermitian : bool, optional
+            If input covariances are real-symmetric or complex-hermitian.
+            Generally this is true, unless one applies a 
+            complex phasor in front of Cs.
+        rcond : float, optional
+            rcond parameter when taking pinv of C_data
+        eps : float, optional
+            Reguarlization parameter for inversion of C_data
+        """
+        attrs = ['Cs', 'Cn', 'C', 'C_inv', 'G', 'V']
+        super().__init__(dim=dim, name=name, attrs=attrs)
+        self.Cs = torch.as_tensor(Cs, device=device)
+        self.Cn = torch.as_tensor(Cn, device=device)
+        self.Cs_pred = torch.as_tensor(Cs_pred, device=device) if Cs_pred is not None else Cs_pred
+        self.dtype = dtype
+        self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+        self.no_filter = no_filter
+        self.residual = residual
+        self.rcond = rcond
+        self.hermitian = hermitian
+        self.eps = eps
+        self.inv = inv
+
+        self.setup_filter()
+
+    def setup_filter(self, Cs=None, Cn=None, Cs_pred=None, inv=None,
+                     hermitian=None, rcond=None, eps=None):
+        """
+        Setup the filter matrix given self.Cs, self.Cn
+        and self.rcond. This takes pseudo-inv of C_data
+        and sets self.G (signal map prediction matrix)
+        and self.V (signal variance matrix)
+
+        Parameters
+        ----------
+        Cs : tensor, optional
+            Set self.Cs as Cs if provided, otherwise keep self.Cs
+        Cn : tensor, optional
+            Set self.Cn as Cn if provided, otherwise keep self.Cn
+        Cs : tensor, optional
+            Set self.Cs as Cs if provided, otherwise keep self.Cs
+        kwargs : dict, optional
+            Kwargs to send to linalg.invert_matrix() for
+            inverting self.C. Overwrites current defaults if provided
+        """
+        # G = S [S + N]^-1
+        self.Cs = self.Cs if Cs is None else Cs
+        self.Cn = self.Cn if Cn is None else Cn
+        self.Cs_pred = self.Cs_pred if Cs_pred is None else Cs_pred
+        self.C = self.Cs + self.Cn
+        self.inv = self.inv if inv is None else inv
+        self.hermitian = self.hermitian if hermitian is None else hermitian
+        self.rcond = self.rcond if rcond is None else rcond
+        self.eps = self.eps if eps is None else eps
+        self.C_inv = linalg.invert_matrix(self.C, inv=self.inv, hermitian=self.hermitian,
+                                          rcond=self.rcond, eps=self.eps)
+        self.C_inv = self.C_inv.to(self.dtype).to(self.device)
+        self.Cs = self.Cs.to(self.dtype).to(self.device)
+        if self.Cs_pred is not None:
+            self.Cs_pred = self.Cs_pred.to(self.dtype).to(self.device)
+
+        self.set_GV()
+
+    def set_GV(self):
+        """
+        Setup filtering matrices G and the variance matrix V
+        given self.Cs and self.C_inv
+        """
+        Cs = self.Cs if self.Cs_pred is None else self.Cs_pred
+        self.G = Cs @ self.C_inv
+        self.V = Cs - Cs @ self.C_inv @ Cs.T.conj()
+
+
+class LstSqFilter(MatFilter):
+    """
+    A least squares filter
+    """
+    def __init__(self, G, dim=0, device=None, dtype=None,
+                 residual=True, no_filter=False, name=None):
+        """
+        Parameters
+        ----------
+        G : tensor
+            Filtering matrix of shape (N_pred_samples, N_data_samples)
+        dim : int
+            Dimension of input data to apply filter
+        no_filter : bool, optional
+            If True, don't filter the input data and
+            return as-is
+        dtype : torch dtype, optional
+            This is the data type of the input data to-be filtered.
+        residual : bool, optional
+            If True, subtract MAP estimate of signal from data to form
+            the residual, otherwise simply return its MAP estimate (default)
+        name : str, optional
+            Name of the filter
+        """
+        attrs = ['G']
+        super().__init__(dim=dim, name=name, attrs=attrs)
+        self.G = torch.as_tensor(G, device=device, dtype=dtype)
+        self.device = device
+        self.dtype = dtype
+        self.residual = residual
+        self.no_filter = no_filter
+        
+    def setup_filter(self, G=None):
+        """
+        Set filtering matrix
+        """
+        self.G = torch.as_tensor(G, device=device, dtype=dtype) if G is not None else self.G
+
 
 def rbf_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
