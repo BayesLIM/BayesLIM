@@ -43,7 +43,7 @@ class MatFilter(BaseFilter):
 
     y_filt = y - G @ y
     """
-    def __init__(self, G=None, dim=0, no_filter=False,  dtype=None, device=None,
+    def __init__(self, G=None, dim=-1, no_filter=False,  dtype=None, device=None,
                  residual=False, name=None, attrs=None):
         """
         Parameters
@@ -77,7 +77,7 @@ class MatFilter(BaseFilter):
         """
         self.G = torch.as_tensor(G, device=device) if G is not None else self.G
 
-    def predict(self, y):
+    def predict(self, y, **kwargs):
         """
         Filter the input data as
 
@@ -182,7 +182,7 @@ class GPFilter(MatFilter):
     (can include thermal noise and whatever other
     terms in the data).
     """
-    def __init__(self, Cs, Cn, Cs_pred=None, dim=0, no_filter=False,
+    def __init__(self, Cs, Cn, Cs_pred=None, dim=-1, no_filter=False,
                  dtype=None, device=None, residual=False,
                  name=None, inv='pinv', hermitian=False, rcond=1e-15, eps=None):
         """
@@ -288,7 +288,7 @@ class LstSqFilter(MatFilter):
     """
     A least squares filter
     """
-    def __init__(self, G, dim=0, device=None, dtype=None,
+    def __init__(self, G, dim=-1, device=None, dtype=None,
                  residual=True, no_filter=False, name=None):
         """
         Parameters
