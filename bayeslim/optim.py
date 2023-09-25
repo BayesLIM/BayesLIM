@@ -2145,6 +2145,8 @@ def main_params_index(prob, main_index, subset_index):
             # v is just a single indexing tuple
             start = update(p, v, s_idx, start)
 
+    idx = torch.as_tensor(idx, device=prob.device)
+
     return idx
 
 
