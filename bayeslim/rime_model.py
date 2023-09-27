@@ -304,6 +304,9 @@ class RIME(utils.Module):
         # iterate over sky components
         start = datetime.now().timestamp()
         for i, sky_comp in enumerate(sky_components):
+            # setup empty vis list for each time integration
+            skyvis = []
+
             sky = sky_comp.data
             ra, dec = sky_comp.angs
 
@@ -329,10 +332,19 @@ class RIME(utils.Module):
                 # apply beam and fringe for all bls to sky and sum into vis
                 sim2data_idx = self._sim2data[self.bl_group_id]
                 self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
-                                   zen, az, vis, sim2data_idx, j)
+                                   zen, az, skyvis, sim2data_idx, j)
 
-        # stack along 3rd ax
-        vis = torch.stack(vis, dim=3)
+            # stack along 3rd dim (time axis)
+            skyvis = torch.stack(skyvis, dim=3)
+
+            # append this sky component to vis
+            vis.append(skyvis)
+
+        # sum multiple sky components together
+        if len(vis) == 1:
+            vis = vis[0]
+        else:
+            vis = sum(vis)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope, self.array.to_antpos())
