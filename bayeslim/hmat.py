@@ -17,11 +17,11 @@ class BaseMat(object):
         pass
 
     @abstractmethod
-    def mat_vec_mul(self, vec, transpose=False):
+    def mat_vec_mul(self, vec, transpose=False, **kwargs):
         pass
 
     @abstractmethod
-    def mat_mat_mul(self, mat, transpose=False):
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
         pass
 
     @abstractmethod
@@ -29,7 +29,7 @@ class BaseMat(object):
         pass
 
     @abstractmethod
-    def __call__(self):
+    def __call__(self, **kwargs):
         pass
 
     @abstractmethod
@@ -56,6 +56,10 @@ class BaseMat(object):
     def __imul__(self, other):
         pass
 
+    @abstractmethod
+    def __str__(self):
+        pass
+
 
 class DenseMat(BaseMat):
     """
@@ -78,7 +82,7 @@ class DenseMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         """
         Matrix-vector multiplication
 
@@ -90,6 +94,8 @@ class DenseMat(BaseMat):
             If True, take (complex) transpose of self.H
             before multiplication, in which case vec
             must have length of self.shape[0]
+        out : tensor, optional
+            Put results into this tensor
 
         Returns
         -------
@@ -97,9 +103,14 @@ class DenseMat(BaseMat):
         """
         H = self.H.T if transpose else self.H
         H = H.conj() if transpose and self._complex else H
-        return H @ vec
+        result = H @ vec
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         """
         Matrix-matrix multiplication
 
@@ -112,6 +123,8 @@ class DenseMat(BaseMat):
         transpose : bool, optional
             If True, take (complex) transpose of self.H
             before multiplication
+        out : tensor, optional
+            Put results into this tensor
 
         Returns
         -------
@@ -119,7 +132,12 @@ class DenseMat(BaseMat):
         """
         H = self.H.T if transpose else self.H
         H = H.conj() if transpose and self._complex else H
-        return H @ mat
+        result = H @ mat
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def to_dense(self, transpose=False):
         """
@@ -169,6 +187,9 @@ class DenseMat(BaseMat):
         self.scalar_mul(other)
         return self
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class DiagMat(BaseMat):
     """
@@ -196,16 +217,21 @@ class DiagMat(BaseMat):
     def shape(self):
         return (self.size, self.size)
 
-    def mat_vec_mul(self, vec, transpose=False, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         """
         Matrix-vector multiplication
         """
         diag = self.diag
         if transpose and self._complex:
             diag = diag.conj()
-        return diag * vec
+        result = diag * vec
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         """
         Matrix-matrix multiplication
 
@@ -222,7 +248,12 @@ class DiagMat(BaseMat):
         diag = self.diag
         if transpose and self._complex:
             diag = diag.conj()
-        return diag[:, None] * mat
+        result = diag[:, None] * mat
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -275,6 +306,9 @@ class DiagMat(BaseMat):
         self.scalar_mul(other)
         return self
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class SparseMat(BaseMat):
     """
@@ -316,7 +350,7 @@ class SparseMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         """
         Matrix-vector multiplication
 
@@ -328,6 +362,8 @@ class SparseMat(BaseMat):
             If True, take (complex) transpose of self.U
             before multiplication, in which case vec
             must have length of self.shape[0]
+        out : tensor, optional
+            Put result into this tensor
 
         Returns
         -------
@@ -352,15 +388,19 @@ class SparseMat(BaseMat):
 
         # multiply by left-hand and right-hand modes
         assert V is not None
-        out = U @ (V @ vec)
+        result = U @ (V @ vec)
 
         if self.Hdiag is not None:
             N = len(self.Hdiag)
-            out[:N] += self.Hdiag * vec[:N]
+            result[:N] += self.Hdiag * vec[:N]
 
-        return out
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         """
         Matrix-matrix multiplication
 
@@ -372,6 +412,8 @@ class SparseMat(BaseMat):
             If True, take (complex) transpose of self.U
             before multiplication, in which case mat
             must have shape of (self.shape[0], M)
+        out : tensor, optional
+            Put result into this tensor
 
         Returns
         -------
@@ -396,13 +438,17 @@ class SparseMat(BaseMat):
 
         # multiply by left-hand and right-hand modes
         assert V is not None
-        out = U @ (V @ mat)
+        result = U @ (V @ mat)
 
         if self.Hdiag is not None:
             N = len(self.Hdiag)
-            out[:N] += self.Hdiag[:, None] * mat[:N]
+            result[:N] += self.Hdiag[:, None] * mat[:N]
 
-        return out
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def to_dense(self, transpose=False):
         """
@@ -498,6 +544,9 @@ class SparseMat(BaseMat):
         self.scalar_mul(other)
         return self
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class ZeroMat(BaseMat):
     """
@@ -518,13 +567,23 @@ class ZeroMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         size = self.shape[0] if not transpose else self.shape[1]
-        return torch.zeros(size, device=self.device, dtype=self.dtype)
+        result = torch.zeros(size, device=self.device, dtype=self.dtype)
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         size = self.shape[0] if not transpose else self.shape[1]
-        return torch.zeros((size, mat.shape[1]), device=self.device, dtype=self.dtype)
+        result = torch.zeros((size, mat.shape[1]), device=self.device, dtype=self.dtype)
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -565,6 +624,9 @@ class ZeroMat(BaseMat):
     def __imul__(self, other):
         return self
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class OneMat(BaseMat):
     """
@@ -589,15 +651,23 @@ class OneMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         vsum = vec.sum(0) * self.scalar
-        out = torch.ones(self.shape[0], device=self.device, dtype=self.dtype) * vsum
-        return out
+        result = torch.ones(self.shape[0], device=self.device, dtype=self.dtype) * vsum
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         msum = mat.sum(dim=0, keepdims=True) * self.scalar
-        out = torch.ones(self.shape[0], mat.shape[1]) * msum
-        return out
+        result = torch.ones(self.shape[0], mat.shape[1]) * msum
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -647,6 +717,9 @@ class OneMat(BaseMat):
         else:
             return self * other
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class TransposedMat(BaseMat):
     """
@@ -675,13 +748,13 @@ class TransposedMat(BaseMat):
         """
         Matrix-vector multiplication
         """
-        return self._matobj.mat_vec_mul(vec, transpose=transpose==False)
+        return self._matobj.mat_vec_mul(vec, transpose=transpose==False, **kwargs)
 
     def mat_mat_mul(self, mat, transpose=False, **kwargs):
         """
         Matrix-matrix multiplication
         """
-        return self._matobj.mat_mat_mul(mat, transpose=transpose==False)
+        return self._matobj.mat_mat_mul(mat, transpose=transpose==False, **kwargs)
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -732,6 +805,9 @@ class TransposedMat(BaseMat):
     def __imul__(self, other):
         self.scalar_mul(other)
         return self
+
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
 class PartitionedMat(BaseMat):
@@ -843,28 +919,38 @@ class PartitionedMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         """
         Return the matrix multiplied by a vector
 
         Parameters
         ----------
         vec : tensor
+            Vector to take product with
+        transpose : bool, optional
+            Transpose this column before mat-vec
+        out : tensor, optional
+            Put results into this tensor
         
         Returns
         -------
         tensor
         """
         if transpose:
-            return self.to_transpose()(vec)
+            return self.to_transpose()(vec, out=out, **kwargs)
 
-        out = torch.zeros(self.shape[0], dtype=vec.dtype, device=self.device)
+        shape = (self.shape[0],) + vec.shape[1:]
+        result = torch.zeros(shape, dtype=vec.dtype, device=self.device)
         for i, matcol in enumerate(self.matcols):
-            out += matcol(vec[self.vec_idx[i]])
+            result += matcol(vec[self.vec_idx[i]])
 
-        return out
+        if out is not None:
+            out[:] = result
+            result = out
 
-    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+        return result
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         """
         Return the matrix multiplied by a matrix
 
@@ -872,25 +958,19 @@ class PartitionedMat(BaseMat):
         ----------
         mat : tensor
             ndim=2 matrix of shape (self.shape[1], M)
+        transpose : bool, optional
+            Transpose this column before mat-mat
+        out : tensor, optional
+            Put results into this tensor
 
         Returns
         -------
         tensor
         """
-        if transpose:
-            return self.to_transpose()(mat)
-
-        out = torch.zeros((self.shape[0], mat.shape[1]), dtype=mat.dtype, device=self.device)
-        for i, matcol in enumerate(self.matcols):
-            out += matcol(mat[self.vec_idx[i]])
-
-        return out
+        return self.mat_vec_mul(mat, transpose=transpose, out=out, **kwargs)
 
     def __call__(self, vec, transpose=False, **kwargs):
-        if vec.ndim == 1:
-            return self.mat_vec_mul(vec, transpose=transpose, **kwargs)
-        else:
-            return self.mat_mat_mul(vec, transpose=transpose, **kwargs)
+        return self.mat_vec_mul(vec, transpose=transpose, **kwargs)
 
     def to_dense(self, transpose=False, **kwargs):
         """
@@ -964,10 +1044,13 @@ class PartitionedMat(BaseMat):
         self.scalar_mul(other)
         return self
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class InvSolveMat(BaseMat):
     """
-    A representation of the inverse matrix,
+    A representation of the inverse matrix product,
     where the matrix-vector product is solved
     via least squares, or if A is triangular via
     forward substituion. Solve the following for x
@@ -976,8 +1059,9 @@ class InvSolveMat(BaseMat):
 
     if chol == True, then assume we are solving
 
-        L L.T x = b
+        A A.T x = b
 
+    where A is a lower-tri Cholesky factor.
     """
     def __init__(self, A, tri=False, lower=True, chol=False):
         """
@@ -991,8 +1075,8 @@ class InvSolveMat(BaseMat):
             If True, assume A is lower triangular
             else upper triangular
         chol : bool, optional
-            If True, assume input is the cholesky
-            to A, in which case we do forward and
+            If True, assume input is the cholesky,
+            in which case we do forward and
             backward substitution to solve the system
         """
         self.A = A
@@ -1007,7 +1091,7 @@ class InvSolveMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         """
         Parameters
         ----------
@@ -1015,6 +1099,8 @@ class InvSolveMat(BaseMat):
             Vector to take linear solution against
         transpose : bool, optional
             If True, transpose self.A before solving system
+        out : tensor, optional
+            Put result into this tensor
 
         Returns
         -------
@@ -1025,21 +1111,25 @@ class InvSolveMat(BaseMat):
             # A is triangular
             ndim = vec.ndim
             if ndim == 1: vec = vec[:, None]
-
+            
             # do forward sub
-            out = torch.linalg.solve_triangular(A, vec, upper=not self.lowee)
+            result = torch.linalg.solve_triangular(A, vec, upper=not self.lowee)
 
             # check if we need to do backward sub
             if self.chol:
-                out = torch.linalg.solve_triangular(A.T.conj(), out, upper=self.lower)
+                result = torch.linalg.solve_triangular(A.T.conj(), result, upper=self.lower)
 
             if ndim == 1:
-                out = out.squeeze()
+                result = result.squeeze()
         else:
             # generic solve
-            out = torch.linalg.solve(A, vec)
+            result = torch.linalg.solve(A, vec)
 
-        return out
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
 
     def mat_mat_mul(self, mat, transpoes=False, **kwargs):
         """
@@ -1073,6 +1163,9 @@ class InvSolveMat(BaseMat):
     def __imul__(self, other):
         self.scalar_mul(other)
         return self
+
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
 class MatColumn:
@@ -1165,8 +1258,8 @@ class MatSum:
         """
         self.mats = mats
 
-    def mat_vec_mult(self, vec, transpose=False):
-        return torch.sum([m(vec, transpose=transpose) for m in self.mats], dim=0)
+    def mat_vec_mult(self, vec, **kwargs):
+        return torch.sum([m(vec, **kwargs) for m in self.mats], dim=0)
 
     def __call__(self, vec, **kwargs):
         return self.mat_vec_mult(vec, **kwargs)
@@ -1294,3 +1387,171 @@ class MatDict:
 
     def __iter__(self):
         return (p for p in self.mats)
+
+
+class HierMat:
+    """
+    A hierarchically nested set of 2x2
+    block matrices (e.g. HODLR)
+
+    | 0,0  0,1 |
+    | 1,0  1,1 |
+
+    which can be indexed as
+    H[0] or H[(0, 0)] for the first block and
+    H[(0, 1)] for the off-diagonals
+    """
+    def __init__(self, A00, A11, A01=None, A10=None, sym=False):
+        """
+        Initialize the 2x2 blocks of the matrix
+
+        Parameters
+        ----------
+        A00 : HierMat, BaseMat or tensor
+            The upper diagonal
+        A11 : HierMat, BaseMat, or tensor
+            The lower diagonal
+        A01 : HierMat, BaseMat or tensor
+            Upper off-diagonal, default is zeros
+        A10 : HierMat, BaseMat or tensor
+            Lower off-diagonal, default is zeros,
+            will use A01 if sym==True and vice-versa
+        sym : bool, optional
+            Whether this matrix is symmetric
+        """
+        # wrap tensors with DenseMat if needed
+        A00 = DenseMat(A00) if isinstance(torch.Tensor) else A00
+        A11 = DenseMat(A11) if isinstance(torch.Tensor) else A11
+        A01 = DenseMat(A01) if isinstance(torch.Tensor) else A01
+        A10 = DenseMat(A10) if isinstance(torch.Tensor) else A10
+
+        self.A00 = A00
+        self.A11 = A11
+        self.A01 = A01
+        self.A10 = A10
+
+        if A01 is not None:
+            assert A01.shape[0] == A00.shape[0]
+            assert A01.shape[1] == A11.shape[1]
+        if A10 is not None:
+            assert A10.shape[0] == A11.shape[0]
+            assert A10.shape[1] == A00.shape[1]
+
+        self.dtype = self.A00.dtype
+        self.device = self.A00.device
+        self.sym = sym
+
+        self._shape0 = A00.shape
+        self._shape1 = A11.shape
+        shape = (A00.shape[0] + A11.shape[0], A00.shape[1] + A11.shape[1])
+        self._shape = shape
+
+        # these are indexing arrays for mat-vec products
+        self._idx0 = (slice(self._shape0[0]), slice(self._shape0[1]),)
+        self._idx1 = (slice(self._shape0[0], self._shape0[0]+self._shape1[0]),
+                      slice(self._shape0[1], self._shape0[1]+self._shape1[1]))
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def diagonal(self, return_tensor=True):
+        """
+        Parameters
+        ----------
+        return_tensor : bool, optional
+            If True return a tensor, otherwise return
+            a list
+        """
+        diag = []
+        if isinstance(self.A00, HierMat):
+            diag.extend(self.A00.diagonal(False))
+        elif isinstance(self.A00, torch.Tensor):
+            diag.append(self.A00.diagonal())
+        elif isinstance(self.A00, BaseMat):
+            diag.append(self.A00.diagonal())
+
+        if isinstance(self.A11, HierMat):
+            diag.extend(self.A11.diagonal(False))
+        elif isinstance(self.A11, torch.Tensor):
+            diag.append(self.A11.diagonal())
+        elif isinstance(self.A11, BaseMat):
+            diag.append(self.A11.diagonal())
+
+        if return_tensor:
+            diag = torch.cat(diag)
+
+        return diag
+
+    def __getitem__(self, idx):
+        if idx in [0, (0, 0)]:
+            return self.A00
+        elif idx in [1, (1, 1)]:
+            return self.A11
+        elif idx == (0, 1):
+            return self.A01
+        elif idx == (1, 0):
+            return self.A10
+
+    def push(self, device):
+        self.A00 = utils.push(self.A00, device)
+        self.A11 = utils.push(self.A11, device)
+        if self.A01 is not None:
+            self.A01 = utils.push(self.A01, device)
+        if self.A10 is not None:
+            self.A10 = utils.push(self.A10, device)
+
+    def mat_vec_mul(self, vec, out=None, **kwargs):
+        """
+        Perform HierMat-vector product recursively
+
+        Parameters
+        ----------
+        vec : tensor
+            Tensor of shape (self.shape[1], ...)
+        out : tensor, optional
+            Insert output into this tensor
+
+        Returns
+        -------
+        tensor
+        """
+        # first column
+        out00 = self.A00(vec[self._idx0[1]], out=None if out is None else out[self._idx0[0]])
+        out10 = None
+        if self.A10 is not None:
+            out10 = self.A10(vec[self._idx1[1]], out=None if out is None else out[self._idx1[0]])
+
+        # second column
+        out11 = self.A11(vec[self._idx1[1]], out=None if out is None else out[self._idx1[0]])
+        out01 = None
+        if self.A01 is not None:
+            out01 = self.A01(vec[self._idx0[1]], out=None if out is None else out[self._idx0[0]])
+
+        if out is None:
+            if out01 is not None:
+                out00 += out01
+            if out10 is not None:
+                out11 += out10
+            out = torch.cat([out00, out11])
+
+        return out
+
+    def __call__(self, vec, **kwargs):
+        return self.mat_vec_mul(vec, **kwargs)
+
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
+    def __repr__(self):
+        a00 = self.A00
+        a11 = self.A11
+        a01 = self.A01
+        a10 = self.A10
+        return "| {}, {} |\n| {}, {} |".format(a00, a01, a10, a11)
+
+
+
+
+
+
