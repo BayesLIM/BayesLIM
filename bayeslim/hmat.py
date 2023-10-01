@@ -965,6 +965,116 @@ class PartitionedMat(BaseMat):
         return self
 
 
+class InvSolveMat(BaseMat):
+    """
+    A representation of the inverse matrix,
+    where the matrix-vector product is solved
+    via least squares, or if A is triangular via
+    forward substituion. Solve the following for x
+
+        Ax = b
+
+    if chol == True, then assume we are solving
+
+        L L.T x = b
+
+    """
+    def __init__(self, A, tri=False, lower=True, chol=False):
+        """
+        Parameters
+        ----------
+        A : tensor
+            The linear model matrix
+        tri : bool, optional
+            If True, treat A as triangular
+        lower : bool, optional
+            If True, assume A is lower triangular
+            else upper triangular
+        chol : bool, optional
+            If True, assume input is the cholesky
+            to A, in which case we do forward and
+            backward substitution to solve the system
+        """
+        self.A = A
+        self._shape = self.A.shape
+        self.device = A.device
+        self.tri = tri
+        self.lower = lower
+        self.chol = chol
+        if chol: assert self.tri, "If passing A as chol, it must also be triangular"
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def mat_vec_mul(self, vec, transpose=False, **kwargs):
+        """
+        Parameters
+        ----------
+        vec : tensor
+            Vector to take linear solution against
+        transpose : bool, optional
+            If True, transpose self.A before solving system
+
+        Returns
+        -------
+        tensor
+        """
+        A = self.A if not transpose else self.A.T.conj()
+        if self.tri:
+            # A is triangular
+            ndim = vec.ndim
+            if ndim == 1: vec = vec[:, None]
+
+            # do forward sub
+            out = torch.linalg.solve_triangular(A, vec, upper=not self.lowee)
+
+            # check if we need to do backward sub
+            if self.chol:
+                out = torch.linalg.solve_triangular(A.T.conj(), out, upper=self.lower)
+
+            if ndim == 1:
+                out = out.squeeze()
+        else:
+            # generic solve
+            out = torch.linalg.solve(A, vec)
+
+        return out
+
+    def mat_mat_mul(self, mat, transpoes=False, **kwargs):
+        """
+        Same as mat_vec_mul
+        """
+        return self.mat_vec_mul(mat, transpose=transpose, **kwargs)
+
+    def __call__(self, vec, **kwargs):
+        return self.mat_vec_mul(vec, **kwargs)
+
+    def push(self, device):
+        self.A = utils.push(self.A, device)
+        if isinstance(device, torch.dtype):
+            self.device = device
+
+    def to_dense(self, **kwargs):
+        return self(torch.eye(self.shape[1], device=self.device))
+
+    def scalar_mul(self, scalar):
+        self.A /= scalar
+
+    def diagonal(self):
+        return self.to_dense().diagonal()
+
+    def __mul__(self, other):
+        return InvSolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
+
+    def __rmul__(self, other):
+        return InvSolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
+
 class MatColumn:
     """
     A series of matrix objects that have the 
@@ -1184,4 +1294,3 @@ class MatDict:
 
     def __iter__(self):
         return (p for p in self.mats)
-
