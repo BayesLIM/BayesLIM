@@ -1658,7 +1658,7 @@ def push(tensor, device, parameter=False):
         The tensor on device (or as new dtype)
     """
     if tensor is None or device is None: return tensor
-    if hasattr(tensor, 'push'):
+    if hasattr(tensor, 'push') and not isinstance(tensor, torch.Tensor):
         # this is not a tensor but an object with a push() method
         tensor.push(device)
         return tensor
