@@ -1420,10 +1420,10 @@ class HierMat:
             Whether this matrix is symmetric
         """
         # wrap tensors with DenseMat if needed
-        A00 = DenseMat(A00) if isinstance(torch.Tensor) else A00
-        A11 = DenseMat(A11) if isinstance(torch.Tensor) else A11
-        A01 = DenseMat(A01) if isinstance(torch.Tensor) else A01
-        A10 = DenseMat(A10) if isinstance(torch.Tensor) else A10
+        A00 = DenseMat(A00) if isinstance(A00, torch.Tensor) else A00
+        A11 = DenseMat(A11) if isinstance(A11, torch.Tensor) else A11
+        A01 = DenseMat(A01) if isinstance(A01, torch.Tensor) else A01
+        A10 = DenseMat(A10) if isinstance(A10, torch.Tensor) else A10
 
         self.A00 = A00
         self.A11 = A11
@@ -1549,9 +1549,4 @@ class HierMat:
         a01 = self.A01
         a10 = self.A10
         return "| {}, {} |\n| {}, {} |".format(a00, a01, a10, a11)
-
-
-
-
-
 
