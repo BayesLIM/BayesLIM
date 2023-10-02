@@ -45,6 +45,10 @@ class BaseMat(object):
         pass
 
     @abstractmethod
+    def to_transpose(self):
+        pass
+
+    @abstractmethod
     def __mul__(self, other):
         pass
 
@@ -54,10 +58,6 @@ class BaseMat(object):
 
     @abstractmethod
     def __imul__(self, other):
-        pass
-
-    @abstractmethod
-    def __str__(self):
         pass
 
 
@@ -147,6 +147,9 @@ class DenseMat(BaseMat):
         H = H.T if transpose else H
         H = H.conj() if transpose and self._complex else H
         return H
+
+    def to_transpose(self):
+        return TransposedMat(self)
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -273,6 +276,9 @@ class DiagMat(BaseMat):
             diag = diag.conj()
 
         return torch.diag(diag)
+
+    def to_transpose(self):
+        return TransposedMat(self)
 
     def push(self, device):
         """
@@ -466,6 +472,9 @@ class SparseMat(BaseMat):
 
         return out
 
+    def to_transpose(self):
+        return TransposedMat(self)
+
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
             return self.mat_vec_mul(vec, **kwargs)
@@ -595,6 +604,9 @@ class ZeroMat(BaseMat):
         shape = self.shape if not transpose else self.shape[::-1]
         return torch.zeros(shape, dtype=self.dtype, device=self.device)
 
+    def to_transpose(self):
+        return TransposedMat(self)
+
     def push(self, device):
         if isinstance(device, torch.dtype):
             self.dtype = device
@@ -678,6 +690,9 @@ class OneMat(BaseMat):
     def to_dense(self, transpose=False):
         shape = self.shape if not transpose else self.shape[::-1]
         return torch.ones(shape, dtype=self.dtype, device=self.device) * self.scalar
+
+    def to_transpose(self):
+        return TransposedMat(self)
 
     def push(self, device):
         if isinstance(device, torch.dtype):
@@ -767,6 +782,9 @@ class TransposedMat(BaseMat):
         Return a dense representation of the matrix
         """
         return self._matobj.to_dense(transpose=transpose==False)
+
+    def to_transpose(self):
+        return TransposedMat(self)
 
     def push(self, device):
         """
@@ -1048,7 +1066,7 @@ class PartitionedMat(BaseMat):
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
-class InvSolveMat(BaseMat):
+class SolveMat(BaseMat):
     """
     A representation of the inverse matrix product,
     where the matrix-vector product is solved
@@ -1072,16 +1090,17 @@ class InvSolveMat(BaseMat):
         tri : bool, optional
             If True, treat A as triangular
         lower : bool, optional
-            If True, assume A is lower triangular
+            If True (and if tri), assume A is lower triangular
             else upper triangular
         chol : bool, optional
-            If True, assume input is the cholesky,
+            If True (and if tri), assume input is the cholesky,
             in which case we do forward and
             backward substitution to solve the system
         """
         self.A = A
         self._shape = self.A.shape
         self.device = A.device
+        self.dtype = A.dtype
         self.tri = tri
         self.lower = lower
         self.chol = chol
@@ -1113,7 +1132,7 @@ class InvSolveMat(BaseMat):
             if ndim == 1: vec = vec[:, None]
             
             # do forward sub
-            result = torch.linalg.solve_triangular(A, vec, upper=not self.lowee)
+            result = torch.linalg.solve_triangular(A, vec, upper=not self.lower)
 
             # check if we need to do backward sub
             if self.chol:
@@ -1131,7 +1150,7 @@ class InvSolveMat(BaseMat):
 
         return result
 
-    def mat_mat_mul(self, mat, transpoes=False, **kwargs):
+    def mat_mat_mul(self, mat, transpose=False, **kwargs):
         """
         Same as mat_vec_mul
         """
@@ -1148,6 +1167,13 @@ class InvSolveMat(BaseMat):
     def to_dense(self, **kwargs):
         return self(torch.eye(self.shape[1], device=self.device))
 
+    def to_transpose(self):
+        if self.tri:
+            # if triangular, need to change self.lower arg
+            return SolveMat(self.A.T.conj(), tri=self.tri, lower=self.lower==False, chol=self.chol)
+        else:
+            return TransposedMat(self)
+
     def scalar_mul(self, scalar):
         self.A /= scalar
 
@@ -1155,10 +1181,10 @@ class InvSolveMat(BaseMat):
         return self.to_dense().diagonal()
 
     def __mul__(self, other):
-        return InvSolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
+        return SolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
 
     def __rmul__(self, other):
-        return InvSolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
+        return SolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
 
     def __imul__(self, other):
         self.scalar_mul(other)
@@ -1168,7 +1194,7 @@ class InvSolveMat(BaseMat):
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
-class MatColumn:
+class MatColumn(BaseMat):
     """
     A series of matrix objects that have the 
     same Ncols but differing Nrows. E.g.
@@ -1189,10 +1215,12 @@ class MatColumn:
         """
         self.mats = mats
 
+        self.idx = []
         Nrows = 0
         Ncols = self.mats[0].shape[1]
         for m in self.mats:
             assert Ncols == m.shape[1]
+            self.idx.append(slice(Nrows, Nrows+m.shape[0]))
             Nrows += m.shape[0]
         self._shape = (Nrows, Ncols)
 
@@ -1200,17 +1228,31 @@ class MatColumn:
     def shape(self):
         return self._shape
 
-    def __call__(self, vec, **kwargs):
-        return torch.cat([m(vec) for m in self.mats], dim=0)
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
+        result = []
+        for i, mat in enumerate(self.mats):
+            if transpose:
+                result.append(mat(vec[self.idx[i]], transpose=transpose))
+            else:
+                _out = None if out is None else out[self.idx[i]]
+                result.append(mat(vec, out=_out))
 
-    def to_dense(self, transpose=False):
-        out = torch.cat([m.to_dense() for m in self.mats], dim=0)
-        if transpose:
-            out = out.T
-            if torch.is_complex(out):
-                out = out.conj()
+        if out is None:
+            if transpose:
+                out = sum(result)
+            else:
+                out = torch.cat(result, dim=0)
+        else:
+            if transpose:
+                out[:] = sum(result)
 
         return out
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
+        return self.mat_vec_mul(mat, transpose=transpose, out=out, **kwargs)
+
+    def __call__(self, vec, **kwargs):
+        return self.mat_vec_mul(vec, **kwargs)
 
     def push(self, device):
         for m in self.mats:
@@ -1231,11 +1273,124 @@ class MatColumn:
         for mat in self.mats:
             mat.scalar_mul(scalar)
 
+    def to_dense(self, transpose=False):
+        out = torch.cat([m.to_dense() for m in self.mats], dim=0)
+        if transpose:
+            out = out.T
+            if torch.is_complex(out):
+                out = out.conj()
+
+        return out
+
+    def to_transpose(self):
+        return MatRow([TransposedMat(m) for m in self.mats])
+
     def __mul__(self, other):
         return MatColumn([m * other for m in self.mats])
 
     def __rmul__(self, other):
         return MatColumn([other * m for m in self.mats])
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
+
+class MatRow(BaseMat):
+    """
+    A series of matrix objects that have the 
+    same Nrows but differing Cols. E.g.
+
+    | M1 M2 M3|
+
+    """
+    def __init__(self, mats):
+        """"
+        Parameters
+        ----------
+        mats : list
+            A list of BaseMat subclasses that represent
+            a single row of a partitioned matrix.
+            Each object must have the same Nrows.
+        """
+        self.mats = mats
+
+        self.idx = []
+        Nrows = self.mats[0].shape[0]
+        Ncols = 0
+        for m in self.mats:
+            assert Nrows == m.shape[0]
+            self.idx.append(slice(Ncols, Ncols+m.shape[1]))
+            Ncols += m.shape[1]
+        self._shape = (Nrows, Ncols)
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
+        result = []
+        for i, mat in enumerate(self.mats):
+            if transpose:
+                _out = None if out is None else out[self.idx[i]]
+                result.append(mat(vec, out=_out, transpose=transpose))
+            else:
+                result.append(mat(vec[self.idx[i]]))
+
+        if out is None:
+            if transpose:
+                out = torch.cat(result, dim=0)
+            else:
+                out = sum(result)
+
+        else:
+            if not transpose:
+                out[:] = sum(result)
+
+        return out
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
+        return mat_vec_mul(mat, transpose=transpose, out=out, **kwargs)
+
+    def __call__(self, vec, **kwargs):
+        return mat_vec_mul(vec, **kwargs)
+
+    def push(self, device):
+        for m in self.mats:
+            m.push(device)
+
+    def __repr__(self):
+        return "<MatRow of shape {}>".format(self.shape)
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        for mat in self.mats:
+            mat.scalar_mul(scalar)
+
+    def to_dense(self, transpose=False):
+        out = torch.cat([m.to_dense() for m in self.mats], dim=1)
+        if transpose:
+            out = out.T
+            if torch.is_complex(out):
+                out = out.conj()
+
+        return out
+
+    def to_transpose(self):
+        return MatColumn([TransposedMat(m) for m in self.mats])
+
+    def __mul__(self, other):
+        return MatRow([m * other for m in self.mats])
+
+    def __rmul__(self, other):
+        return MatRow([other * m for m in self.mats])
 
     def __imul__(self, other):
         self.scalar_mul(other)
@@ -1425,6 +1580,14 @@ class HierMat:
         A01 = DenseMat(A01) if isinstance(A01, torch.Tensor) else A01
         A10 = DenseMat(A10) if isinstance(A10, torch.Tensor) else A10
 
+        # check A01 and A10 if sym
+        if sym:
+            # use transposed version if needed
+            if A01 is None and A10 is not None:
+                A01 = TransposedMat(A10)
+            if A10 is None and A01 is not None:
+                A10 = TransposedMat(A01) 
+
         self.A00 = A00
         self.A11 = A11
         self.A01 = A01
@@ -1520,13 +1683,13 @@ class HierMat:
         out00 = self.A00(vec[self._idx0[1]], out=None if out is None else out[self._idx0[0]])
         out10 = None
         if self.A10 is not None:
-            out10 = self.A10(vec[self._idx1[1]], out=None if out is None else out[self._idx1[0]])
+            out10 = self.A10(vec[self._idx0[1]], out=None if out is None else out[self._idx1[0]])
 
         # second column
         out11 = self.A11(vec[self._idx1[1]], out=None if out is None else out[self._idx1[0]])
         out01 = None
         if self.A01 is not None:
-            out01 = self.A01(vec[self._idx0[1]], out=None if out is None else out[self._idx0[0]])
+            out01 = self.A01(vec[self._idx1[1]], out=None if out is None else out[self._idx0[0]])
 
         if out is None:
             if out01 is not None:
@@ -1537,6 +1700,17 @@ class HierMat:
 
         return out
 
+    def to_transpose(self):
+        """
+        Return a transposed version of self
+        """
+        A10t = None if self.A01 is None else self.A01.to_transpose() 
+        A01t = None if self.A10 is None else self.A10.to_transpose()
+        Ht = HierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
+                            A10=A10t, A01=A01t, sym=self.sym)
+
+        return Ht
+
     def __call__(self, vec, **kwargs):
         return self.mat_vec_mul(vec, **kwargs)
 
@@ -1544,9 +1718,123 @@ class HierMat:
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
     def __repr__(self):
-        a00 = self.A00
-        a11 = self.A11
-        a01 = self.A01
-        a10 = self.A10
-        return "| {}, {} |\n| {}, {} |".format(a00, a01, a10, a11)
+        return "{}\n| {}, {} |\n| {}, {} |".format(self, self.A00, self.A01, self.A10, self.A11)
+
+
+class SolveHierMat(HierMat):
+    """
+    A subclass of HierMat used specifically for
+    HODLR representation of Cholesky forms.
+
+    Given a lower-tri L, solve for z
+
+        L z = x
+    """
+    def __init__(self, A00, A11, A01=None, A10=None, lower=True):
+        """
+        Setup a hierarchical cholesky matrix where on-diagonal
+        are cholesky factors and off-diagonal are tensors or any sparse
+        representation
+
+        Parameters
+        ----------
+        A00 : tensor, SolveMat or SolveHierMat
+            Upper on-diagonal block. Note if passed as tensor, this
+            must be a dense tensor which will be turned into SolveMat
+        A11 : tensor, SolveMat or SolveHierMat
+            Lower on-diagonal block. Same type comment as above.
+        A01 : tensor or BaseMat, optional
+            Upper off-diagonal. This can be a sparse tensor.
+        A10 : tensor or BaseMat, optional
+            Lower off-diagonal. This can be a sparse tensor.
+        lower : bool, optional
+            If True, assume cholesky is lower triangular
+        """
+        if isinstance(A00, BaseMat) and not isinstance(A00, SolveMat):
+            A00 = A00.to_dense()
+        if isinstance(A11, BaseMat) and not isinstance(A11, SolveMat):
+            A11 = A11.to_dense()
+        if isinstance(A00, torch.Tensor):
+            A00 = SolveMat(A00, tri=True, lower=lower, chol=False)
+        if isinstance(A11, torch.Tensor):
+            A11 = SolveMat(A11, tri=True, lower=lower, chol=False)
+        super().__init__(A00, A11, A01, A10, sym=False)
+        self.lower = lower
+
+    def mat_vec_mul(self, vec, out=None, **kwargs):
+        """
+        Matrix-vector product using linear solves
+
+        Parameters
+        ----------
+        vec : tensor
+
+        Returns
+        -------
+        tensor
+        """
+        # forward substitution
+        if self.lower:
+            # first solve L_00 z_0 = v_0
+            v_0 = vec[self._idx0[1]]
+            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]])
+
+            # next solve L_11 z_1 = v_1 - L_10 z_0
+            v_1 = vec[self._idx1[1]]
+            if self[(1, 0)] is not None:
+                v_1 = v_1 - self[(1, 0)](z_0)
+            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]])
+
+        # backward substitution
+        else:
+            # first solve L_11 z_1 = v_1
+            v_1 = vec[self._idx1[1]]
+            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]])
+
+            # then solve L_00 z_0 = v_0 - L01 z_1
+            v_0 = vec[self._idx0[1]]
+            if self[(0, 1)] is not None:
+                v_0 = v_0 - self[(0, 1)](z_1)
+            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]])
+
+        if out is None:
+            out = torch.cat([z_0, z_1])
+
+        return out
+
+    def to_transpose(self):
+        """
+        Return a transposed version of self
+        """
+        A10t = None if self.A01 is None else self.A01.to_transpose() 
+        A01t = None if self.A10 is None else self.A10.to_transpose()
+        Ht = SolveHierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
+                          A10=A10t, A01=A01t, lower=self.lower==False)
+
+        return Ht
+
+
+def make_hodlr(mat, indices, trisolve=False, lower=True,
+               Nrank=None, rcond=None, sparse_tol=None):
+    """
+    Construct a hierarchical HODLR matrix
+
+    Parameters
+    ----------
+    mat : tensor or dict
+        This is the matrix to sub-divide into a HODLR form
+    indices : list of slice or tensor
+    trisolve : bool, optional
+        If True, treat mat as triangular and return
+        a SolveHierMat, otherwise return a HierMat
+    lower : bool, optional
+        If True (and if trisolve), treat mat as lower
+        triangular
+
+    Returns
+    -------
+    (Solve)HierMat
+    """
+    raise NotImplementedError
+
 
