@@ -107,7 +107,7 @@ class DenseMat(BaseMat):
         H = H.conj() if transpose and self._complex else H
         result = H @ vec
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -136,7 +136,7 @@ class DenseMat(BaseMat):
         H = H.conj() if transpose and self._complex else H
         result = H @ mat
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -231,7 +231,7 @@ class DiagMat(BaseMat):
             diag = diag.conj()
         result = diag * vec
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -255,7 +255,7 @@ class DiagMat(BaseMat):
             diag = diag.conj()
         result = diag[:, None] * mat
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -364,7 +364,7 @@ class HadamardMat(BaseMat):
             H = H**2
         result = H * mat
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -509,7 +509,7 @@ class SparseMat(BaseMat):
             result[:N] += self.Hdiag * vec[:N]
 
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -559,7 +559,7 @@ class SparseMat(BaseMat):
             result[:N] += self.Hdiag[:, None] * mat[:N]
 
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -688,7 +688,7 @@ class ZeroMat(BaseMat):
         size = self.shape[0] if not transpose else self.shape[1]
         result = torch.zeros(size, device=self.device, dtype=self.dtype)
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -697,7 +697,7 @@ class ZeroMat(BaseMat):
         size = self.shape[0] if not transpose else self.shape[1]
         result = torch.zeros((size, mat.shape[1]), device=self.device, dtype=self.dtype)
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -775,7 +775,7 @@ class OneMat(BaseMat):
         vsum = vec.sum(0) * self.scalar
         result = torch.ones(self.shape[0], device=self.device, dtype=self.dtype) * vsum
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -784,7 +784,7 @@ class OneMat(BaseMat):
         msum = mat.sum(dim=0, keepdims=True) * self.scalar
         result = torch.ones(self.shape[0], mat.shape[1]) * msum
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -1073,7 +1073,7 @@ class PartitionedMat(BaseMat):
             result += matcol(vec[self.vec_idx[i]])
 
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -1261,7 +1261,7 @@ class SolveMat(BaseMat):
             result = torch.linalg.solve(A, vec)
 
         if out is not None:
-            out[:] = result
+            out[:] += result
             result = out
 
         return result
@@ -1360,7 +1360,7 @@ class MatColumn(BaseMat):
                 out = torch.cat(result, dim=0)
         else:
             if transpose:
-                out[:] = sum(result)
+                out[:] += sum(result)
 
         return out
 
@@ -1461,7 +1461,7 @@ class MatRow(BaseMat):
 
         else:
             if not transpose:
-                out[:] = sum(result)
+                out[:] += sum(result)
 
         return out
 
