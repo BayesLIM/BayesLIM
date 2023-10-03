@@ -401,13 +401,13 @@ class HMC(SamplerBase):
                         momentum = L.T @ momentum
                     elif isinstance(L, (hmat.HadamardMat, hmat.DiagMat)):
                         # direct matmul (diag mass)
-                        momentum = L(momentum, out=momentum)
+                        momentum = L(momentum, out=torch.zeros_like(momentum))
                     elif isinstance(L, (hmat.SolveMat, hmat.SolveHierMat)):
                         # solve Lm z = momentum (implicit solve)
-                        momentum = L(momentum, out=momentum)
+                        momentum = L(momentum, out=torch.zeros_like(momentum))
                     elif isinstance(L, hmat.BaseMat):
                         # direct matmul (dense mass)
-                        momentum = L(momentum, transpose=True, out=momentum)
+                        momentum = L(momentum, transpose=True, out=torch.zeros_like(momentum))
                 K += torch.sum(momentum**2 / 2)
 
         return K + self.logdetM
@@ -464,8 +464,16 @@ class HMC(SamplerBase):
             x = self.x[k]
             N = x.shape.numel()
             momentum = torch.randn(N, device=x.device)
-            if self.hess_L[k] is not None:
-                momentum = self.hess_L[k](momentum)
+            L = self.hess_L[k]
+            if L is not None:
+                if isinstance(L, torch.Tensor):
+                    if self.diag_mass[k]:
+                        momentum = L * momentum
+                    else:
+                        momentum = L @ momentum
+                else:
+                    momentum = L(momentum, out=torch.zeros_like(momentum))
+
             p[k] = momentum.reshape(x.shape)
 
         return ParamDict(p)
@@ -620,10 +628,10 @@ class HMC(SamplerBase):
                     cov = (invm * 1.42)**2
                 else:
                     cov = torch.tensor(np.var(c, axis=1), dtype=dtype, device=device)
-                cov_L[k] = cov.abs().sqrt()
+                cov_L[k] = hmat.DiagMat(len(cov), cov.abs().sqrt())
             else:
                 cov = torch.tensor(np.cov(c), dtype=dtype, device=device)
-                cov_L[k] = torch.linalg.cholesky(cov + torch.eye(len(cov)) * eps[k], upper=False)
+                cov_L[k] = hmat.DenseMat(torch.linalg.cholesky(cov + torch.eye(len(cov)) * eps[k], upper=False))
 
         self.set_chol(cov_L=cov_L, diag_mass=diag_mass)
 
@@ -1381,20 +1389,28 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
                 q += eps * p
             elif isinstance(cov_L, hmat.SolveMat):
                 # tell cov_L to perform forward then backward solves
-                q += eps * cov_L(p, chol=True)
+                dq = cov_L(p, chol=True, out=torch.zeros_like(p))
+                q += eps * dq
             elif isinstance(cov_L, hmat.SolveHierMat):
                 # do forward then backward solves
-                q += eps * cov_L.to_transpose()(cov_L(p))
+                dq = cov_L(p, out=torch.zeros_like(p))
+                dq = cov_L.to_transpose()(dq, out=torch.zeros_like(p))
+                q += eps * dq
             elif isinstance(cov_L, (hmat.HadamardMat, hmat.DiagMat)):
                 # this is diag_mass case
-                q += eps * cov_L(cov_L(p))
+                dq = cov_L(p, out=torch.zeros_like(p))
+                dq = cov_L(dq, out=torch.zeros_like(p))
+                q += eps * dq
             elif isinstance(cov_L, hmat.BaseMat):
                 # this is dense mass case
-                q += eps * cov_L(cov_L(p, transpose=True))
+                dq = cov_L(p, transpose=True, out=torch.zeros_like(p))
+                dq = cov_L(dq, out=torch.zeros_like(p))
+                q += eps * dq
             else:
                 if diag_mass:
                     q += eps * (cov_L**2 * p)
                 else:
+                    # treat cov_L as lower-tri
                     q += eps * (cov_L @ (cov_L.T @ p.ravel())).reshape(p.shape)
 
     # iterate over steps
