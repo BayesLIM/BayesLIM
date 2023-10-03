@@ -72,6 +72,8 @@ class DenseMat(BaseMat):
         H : tensor
             Dense 2D tensor
         """
+        if H.ndim == 1:
+            H = H[:, None]
         self._shape = H.shape
         self.H = H
         self._complex = torch.is_complex(H)
@@ -307,6 +309,112 @@ class DiagMat(BaseMat):
 
     def __rmul__(self, other):
         return DiagMat(self.size, other * self.diag)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
+
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
+
+class HadamardMat(BaseMat):
+    """
+    A dense, Ndim matrix that takes an element-wise product
+    (aka Hadamard product) with an incoming matrix
+    """
+    def __init__(self, H):
+        """
+        Parameters
+        ----------
+        H : tensor
+            Dense, ndim tensor
+        """
+        self._shape = H.shape
+        self.H = H
+        self._complex = torch.is_complex(H)
+        self.dtype = H.dtype
+        self.device = H.device
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
+        """
+        Technically this operation doesn't exist, but we will
+        assume vec is a matrix of the same shape as self
+        """
+        return self.mat_mat_mul(vec, transpose=transpose, out=out, **kwargs)
+
+    def mat_mat_mul(self, mat, transpose=False, out=None, square=False, **kwargs):
+        """
+        This is a hadamard product with mat, not a matrix multiplication
+
+        Parameters
+        ----------
+        mat : tensor
+            A matrix of the same shape as self.H
+        square : bool, optional
+            Square self before multiplying
+        """
+        H = self.H.T if transpose else self.H
+        H = H.conj() if transpose and self._complex else H
+        if square:
+            H = H**2
+        result = H * mat
+        if out is not None:
+            out[:] = result
+            result = out
+
+        return result
+
+    def to_dense(self, transpose=False):
+        """
+        Return a dense form of the matrix
+        """
+        H = self.H
+        H = H.T if transpose else H
+        H = H.conj() if transpose and self._complex else H
+        return H
+
+    def to_transpose(self):
+        return TransposedMat(self)
+
+    def __call__(self, mat, **kwargs):
+        return self.mat_mat_mul(mat, **kwargs)
+
+    def push(self, device):
+        """
+        Push object to a new device (or dtype)
+        """
+        self.H = utils.push(self.H, device)
+        self.device = self.H.device
+        self.dtype = self.H.dtype
+        self._complex = torch.is_complex(self.H)
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply a scalar into the matrix
+        inplace
+
+        Parameters
+        ----------
+        scalar : float
+        """
+        self.H *= scalar
+
+    def diagonal(self):
+        if self.H.ndim == 1:
+            return self.H
+        else:
+            return self.H.diagonal()
+
+    def __mul__(self, other):
+        return HadamardMat(self.H * other)
+
+    def __rmul__(self, other):
+        return HadamardMat(other * self.H)
 
     def __imul__(self, other):
         self.scalar_mul(other)
@@ -751,6 +859,8 @@ class TransposedMat(BaseMat):
             A DiagMat, DenseMat, ... object
             to transpose
         """
+        if isinstance(matobj, torch.Tensor):
+            matobj = DenseMat(matobj)
         self._matobj = matobj
         self.dtype = matobj.dtype
         self.device = matobj.device
@@ -1097,6 +1207,8 @@ class SolveMat(BaseMat):
             in which case we do forward and
             backward substitution to solve the system
         """
+        if isinstance(A, BaseMat):
+            A = A.to_dense()
         self.A = A
         self._shape = self.A.shape
         self.device = A.device
@@ -1110,7 +1222,7 @@ class SolveMat(BaseMat):
     def shape(self):
         return self._shape
 
-    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
+    def mat_vec_mul(self, vec, transpose=False, out=None, chol=None, **kwargs):
         """
         Parameters
         ----------
@@ -1120,22 +1232,26 @@ class SolveMat(BaseMat):
             If True, transpose self.A before solving system
         out : tensor, optional
             Put result into this tensor
+        chol : bool, optional
+            If passed, use this value of chol instead of self.chol.
+            Default is to use self.chol
 
         Returns
         -------
         tensor
         """
+        chol = chol if chol is not None else self.chol
         A = self.A if not transpose else self.A.T.conj()
         if self.tri:
             # A is triangular
             ndim = vec.ndim
             if ndim == 1: vec = vec[:, None]
-            
+
             # do forward sub
             result = torch.linalg.solve_triangular(A, vec, upper=not self.lower)
 
             # check if we need to do backward sub
-            if self.chol:
+            if chol:
                 result = torch.linalg.solve_triangular(A.T.conj(), result, upper=self.lower)
 
             if ndim == 1:
@@ -1760,6 +1876,7 @@ class SolveHierMat(HierMat):
             A11 = SolveMat(A11, tri=True, lower=lower, chol=False)
         super().__init__(A00, A11, A01, A10, sym=False)
         self.lower = lower
+        self._T = None
 
     def mat_vec_mul(self, vec, out=None, **kwargs):
         """
@@ -1806,10 +1923,15 @@ class SolveHierMat(HierMat):
         """
         Return a transposed version of self
         """
+        if self._T is not None:
+            return self._T
         A10t = None if self.A01 is None else self.A01.to_transpose() 
         A01t = None if self.A10 is None else self.A10.to_transpose()
         Ht = SolveHierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
                           A10=A10t, A01=A01t, lower=self.lower==False)
+        if self._T is None:
+            # cache this for repeated calls
+            self._T = Ht
 
         return Ht
 
@@ -1836,5 +1958,4 @@ def make_hodlr(mat, indices, trisolve=False, lower=True,
     (Solve)HierMat
     """
     raise NotImplementedError
-
 
