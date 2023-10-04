@@ -1672,7 +1672,7 @@ class HierMat:
     H[0] or H[(0, 0)] for the first block and
     H[(0, 1)] for the off-diagonals
     """
-    def __init__(self, A00, A11, A01=None, A10=None, sym=False):
+    def __init__(self, A00, A11, A01=None, A10=None, sym=False, scalar=None):
         """
         Initialize the 2x2 blocks of the matrix
 
@@ -1689,6 +1689,8 @@ class HierMat:
             will use A01 if sym==True and vice-versa
         sym : bool, optional
             Whether this matrix is symmetric
+        scalar : float, optional
+            A float to multiply output by
         """
         # wrap tensors with DenseMat if needed
         A00 = DenseMat(A00) if isinstance(A00, torch.Tensor) else A00
@@ -1719,6 +1721,7 @@ class HierMat:
         self.dtype = self.A00.dtype
         self.device = self.A00.device
         self.sym = sym
+        self.scalar = scalar
 
         self._shape0 = A00.shape
         self._shape1 = A11.shape
@@ -1760,6 +1763,13 @@ class HierMat:
         if return_tensor:
             diag = torch.cat(diag)
 
+        if self.scalar is not None:
+            if return_tensor:
+                diag *= scalar
+            else:
+                for d in diag:
+                    d *= scalar
+
         return diag
 
     def __getitem__(self, idx):
@@ -1773,6 +1783,7 @@ class HierMat:
             return self.A10
 
     def push(self, device):
+        self.scalar = utils.push(self.scalar, device)
         self.A00 = utils.push(self.A00, device)
         self.A11 = utils.push(self.A11, device)
         if self.A01 is not None:
@@ -1814,6 +1825,9 @@ class HierMat:
                 out11 += out10
             out = torch.cat([out00, out11])
 
+        if self.scalar is not None:
+            out *= self.scalar
+
         return out
 
     def to_transpose(self):
@@ -1823,9 +1837,17 @@ class HierMat:
         A10t = None if self.A01 is None else self.A01.to_transpose() 
         A01t = None if self.A10 is None else self.A10.to_transpose()
         Ht = HierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
-                            A10=A10t, A01=A01t, sym=self.sym)
+                            A10=A10t, A01=A01t, sym=self.sym, scalar=self.scalar)
 
         return Ht
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply matrix representation by a scalar
+        """
+        if self.scalar is None:
+            self.scalar = 1.0
+        self.scalar *= scalar
 
     def __call__(self, vec, **kwargs):
         return self.mat_vec_mul(vec, **kwargs)
@@ -1846,7 +1868,7 @@ class SolveHierMat(HierMat):
 
         L z = x
     """
-    def __init__(self, A00, A11, A01=None, A10=None, lower=True):
+    def __init__(self, A00, A11, A01=None, A10=None, lower=True, trans_solve=False, scalar=None):
         """
         Setup a hierarchical cholesky matrix where on-diagonal
         are cholesky factors and off-diagonal are tensors or any sparse
@@ -1865,6 +1887,13 @@ class SolveHierMat(HierMat):
             Lower off-diagonal. This can be a sparse tensor.
         lower : bool, optional
             If True, assume cholesky is lower triangular
+        trans_solve : bool, optional
+            If True, perform transpose solve after initial solve.
+            This is needed for solving A x = b for x given A = L L^T,
+            as opposed to just solving L x = b for x. 
+            This is equivalent to the chol=True kwarg of SolveMat
+        scalar : float, optional
+            A float to multiply output by
         """
         if isinstance(A00, BaseMat) and not isinstance(A00, SolveMat):
             A00 = A00.to_dense()
@@ -1874,17 +1903,22 @@ class SolveHierMat(HierMat):
             A00 = SolveMat(A00, tri=True, lower=lower, chol=False)
         if isinstance(A11, torch.Tensor):
             A11 = SolveMat(A11, tri=True, lower=lower, chol=False)
-        super().__init__(A00, A11, A01, A10, sym=False)
+        super().__init__(A00, A11, A01, A10, sym=False, scalar=scalar)
         self.lower = lower
+        self.trans_solve = trans_solve
         self._T = None
 
-    def mat_vec_mul(self, vec, out=None, **kwargs):
+    def mat_vec_mul(self, vec, out=None, trans_solve=None, **kwargs):
         """
         Matrix-vector product using linear solves
 
         Parameters
         ----------
         vec : tensor
+        out : tensor, optional
+            Add output to this tensor
+        trans_solve : bool, optional
+            Use this value of trans_solve as opposed to self.trans_solve
 
         Returns
         -------
@@ -1917,6 +1951,14 @@ class SolveHierMat(HierMat):
         if out is None:
             out = torch.cat([z_0, z_1])
 
+        if self.scalar is not None:
+            out *= self.scalar
+
+        # perform transpose solve if needed
+        trans_solve = trans_solve if trans_solve is not None else self.trans_solve
+        if trans_solve:
+            out = self.to_transpose()(out.clone(), out=out, trans_solve=False)
+
         return out
 
     def to_transpose(self):
@@ -1928,12 +1970,20 @@ class SolveHierMat(HierMat):
         A10t = None if self.A01 is None else self.A01.to_transpose() 
         A01t = None if self.A10 is None else self.A10.to_transpose()
         Ht = SolveHierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
-                          A10=A10t, A01=A01t, lower=self.lower==False)
+                          A10=A10t, A01=A01t, lower=self.lower==False, scalar=self.scalar)
         if self._T is None:
             # cache this for repeated calls
             self._T = Ht
 
         return Ht
+
+    def scalar_mul(self, scalar):
+        """
+        Multiply (inverse) matrix representation by a scalar
+        """
+        if self.scalar is None:
+            self.scalar = 1.0
+        self.scalar *= scalar
 
 
 def make_hodlr(mat, indices, trisolve=False, lower=True,

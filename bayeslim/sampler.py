@@ -401,13 +401,16 @@ class HMC(SamplerBase):
                         momentum = L.T @ momentum
                     elif isinstance(L, (hmat.HadamardMat, hmat.DiagMat)):
                         # direct matmul (diag mass)
-                        momentum = L(momentum, out=torch.zeros_like(momentum))
-                    elif isinstance(L, (hmat.SolveMat, hmat.SolveHierMat)):
+                        momentum = L(momentum)
+                    elif isinstance(L, hmat.SolveMat):
+                        # solve Lm z = momentum (implicit solve)
+                        momentum = L(momentum)
+                    elif isinstance(L, hmat.HierMat):
                         # solve Lm z = momentum (implicit solve)
                         momentum = L(momentum, out=torch.zeros_like(momentum))
                     elif isinstance(L, hmat.BaseMat):
                         # direct matmul (dense mass)
-                        momentum = L(momentum, transpose=True, out=torch.zeros_like(momentum))
+                        momentum = L(momentum, transpose=True)
                 K += torch.sum(momentum**2 / 2)
 
         return K + self.logdetM
@@ -472,7 +475,10 @@ class HMC(SamplerBase):
                     else:
                         momentum = L @ momentum
                 else:
-                    momentum = L(momentum, out=torch.zeros_like(momentum))
+                    if isinstance(L, hmat.HierMat):
+                        momentum = L(momentum, out=torch.zeros_like(momentum))
+                    else:
+                        momentum = L(momentum)
 
             p[k] = momentum.reshape(x.shape)
 
@@ -1389,22 +1395,21 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
                 q += eps * p
             elif isinstance(cov_L, hmat.SolveMat):
                 # tell cov_L to perform forward then backward solves
-                dq = cov_L(p, chol=True, out=torch.zeros_like(p))
+                dq = cov_L(p, chol=True)
                 q += eps * dq
             elif isinstance(cov_L, hmat.SolveHierMat):
                 # do forward then backward solves
-                dq = cov_L(p, out=torch.zeros_like(p))
-                dq = cov_L.to_transpose()(dq, out=torch.zeros_like(p))
+                dq = cov_L(p, out=torch.zeros_like(p), trans_solve=True)
                 q += eps * dq
             elif isinstance(cov_L, (hmat.HadamardMat, hmat.DiagMat)):
                 # this is diag_mass case
-                dq = cov_L(p, out=torch.zeros_like(p))
-                dq = cov_L(dq, out=torch.zeros_like(p))
+                dq = cov_L(p)
+                dq = cov_L(dq)
                 q += eps * dq
             elif isinstance(cov_L, hmat.BaseMat):
                 # this is dense mass case
-                dq = cov_L(p, transpose=True, out=torch.zeros_like(p))
-                dq = cov_L(dq, out=torch.zeros_like(p))
+                dq = cov_L(p, transpose=True)
+                dq = cov_L(dq)
                 q += eps * dq
             else:
                 if diag_mass:

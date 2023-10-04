@@ -549,8 +549,8 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
             r = H0 @ q
     elif isinstance(H0, hmat.BaseMat):
         r = H0(q)
-    else:
-        raise NameError
+    elif isinstance(H0, hmat.HierMat):
+        r = H0(q, out=torch.zeros_like(q))
 
     # second loop
     for i in range(N):
@@ -863,7 +863,7 @@ def factored_hvp(vec, H0, u, v):
         else:
             vec = H0 @ vec
     else:
-        vec = H0(vec)
+        vec = H0(vec, out=torch.zeros_like(vec))
 
     # traverse left-onion shell
     for u_k, v_k in zip(u, v):
@@ -915,7 +915,7 @@ def factored_lvp(vec, L0, u, v):
         else:
             vec = L0 @ vec
     else:
-        vec = L0(vec)
+        vec = L0(vec, out=torch.zeros_like(vec))
 
     # traverse left-onion shell
     for u_k, v_k in zip(u, v):
