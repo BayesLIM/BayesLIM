@@ -325,7 +325,7 @@ class HMC(SamplerBase):
             cov_L = {}
             for k, mat in hess_L.items():
                 if diag_mass[k]:
-                    # if diag, cov_L is trivial
+                    # if diag, cov_L = 1 / hess_L
                     if isinstance(mat, torch.Tensor):
                         cov_L[k] = hmat.HadamardMat(1 / mat)
                     elif isinstance(mat, hmat.DiagMat):
@@ -333,8 +333,15 @@ class HMC(SamplerBase):
                     elif isinstance(mat, hmat.HadamardMat):
                         cov_L[k] = hmat.HadamardMat(1 / mat.H)
                 else:
-                    # appropriate cov_L computed from linear solve with hess_L
-                    cov_L[k] = hmat.SolveMat(mat, tri=True, lower=True, chol=False)
+                    assert not isinstance(mat, (hmat.SolveMat, hmat.SolveHierMat,
+                                                hmat.DiagMat, hmat.HadamardMat,
+                                                hmat.SparseMat, hmat.PartitionedMat))
+                    # if dense, cov_L computed from linear solve with hess_L
+                    if isinstance(mat, (torch.Tensor, hmat.DenseMat)):
+                        cov_L[k] = hmat.SolveMat(mat, tri=True, lower=True, chol=False)
+                    elif isinstance(mat, hmat.HierMat):
+                        cov_L[k] = hmat.SolveHierMat(mat.A00, mat.A11, A10=mat.A10, A01=mat.A01,
+                                                     lower=True, trans_solve=False, scalar=mat.scalar)
             cov_L = ParamDict(cov_L)
 
         # default is unit mass
@@ -349,18 +356,18 @@ class HMC(SamplerBase):
         device = list(self.x.values())[0].device
         self.logdetM = torch.tensor(0., device=device)
         for k in self.x:
-            if hess_L[k] is not None and not isinstance(hess_L[k], hmat.SolveMat):
+            if hess_L[k] is not None and not isinstance(hess_L[k], (hmat.SolveMat, hmat.SolveHierMat)):
                 # only use if hess_L is not an implicit solve
                 if isinstance(hess_L[k], hmat.HadamardMat):
                     # this is diag_mass
                     L = hess_L[k].H
-                elif isinstance(hess_L[k], hmat.BaseMat):
-                    L = hess_L[k].diagonal()
                 elif isinstance(hess_L[k], torch.Tensor):
                     if diag_mass:
                         L = hess_L[k]
                     else:
                         L = hess_L[k].diagonal()
+                elif isinstance(hess_L[k], (hmat.BaseMat, hmat.HierMat)):
+                    L = hess_L[k].diagonal()
                 self.logdetM += 2 * sum(torch.log(L)).to(device)
 
     def K(self, p):

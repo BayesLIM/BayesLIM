@@ -1266,11 +1266,11 @@ class SolveMat(BaseMat):
 
         return result
 
-    def mat_mat_mul(self, mat, transpose=False, **kwargs):
+    def mat_mat_mul(self, mat, **kwargs):
         """
         Same as mat_vec_mul
         """
-        return self.mat_vec_mul(mat, transpose=transpose, **kwargs)
+        return self.mat_vec_mul(mat, **kwargs)
 
     def __call__(self, vec, **kwargs):
         return self.mat_vec_mul(vec, **kwargs)
@@ -1281,7 +1281,7 @@ class SolveMat(BaseMat):
             self.device = device
 
     def to_dense(self, **kwargs):
-        return self(torch.eye(self.shape[1], device=self.device))
+        return self(torch.eye(self.shape[1], device=self.device), **kwargs)
 
     def to_transpose(self):
         if self.tri:
@@ -1623,7 +1623,7 @@ class MatDict:
         """
         return paramdict.ParamDict({k: self.mats[k].to_dense(transpose=transpose) for k in self.keys()})
 
-    def mat_vec_mul(self, vec):
+    def mat_vec_mul(self, vec, **kwargs):
         """
         Perform matrix-vector product on a ParamDict vector object
         and return a ParamDict object
@@ -1765,10 +1765,10 @@ class HierMat:
 
         if self.scalar is not None:
             if return_tensor:
-                diag *= scalar
+                diag *= self.scalar
             else:
                 for d in diag:
-                    d *= scalar
+                    d *= self.scalar
 
         return diag
 
@@ -1841,6 +1841,38 @@ class HierMat:
 
         return Ht
 
+    def to_dense(self, transpose=False):
+        """
+        Note this is very inefficient because, unlike self.diagonal(),
+        we have to continually re-init tensors at every
+        nested level. not recommended for high performance cases.
+        """
+        # first get A00 and A11
+        A00 = self.A00.to_dense()
+        A11 = self.A11.to_dense()
+        if self.A01 is not None:
+            A01 = self.A01.to_dense()
+        else:
+            A01 = torch.zeros((A00.shape[0], A11.shape[1]), dtype=A00.dtype, device=A00.device)
+        if self.A10 is not None:
+            A10 = self.A10.to_dense()
+        else:
+            A10 = torch.zeros((A11.shape[0], A00.shape[1]), dtype=A00.dtype, device=A00.device)
+
+        # now combine
+        H = torch.cat([
+            torch.cat([A00, A01], dim=1),
+            torch.cat([A10, A11], dim=1),
+            ], dim=0)
+
+        if self.scalar is not None:
+            H *= self.scalar
+
+        if transpose:
+            H = H.T
+
+        return H
+
     def scalar_mul(self, scalar):
         """
         Multiply matrix representation by a scalar
@@ -1851,6 +1883,15 @@ class HierMat:
 
     def __call__(self, vec, **kwargs):
         return self.mat_vec_mul(vec, **kwargs)
+
+    def to_SolveHierMat(self, lower=True, trans_solve=False):
+        """
+        Convert self to a SolveHierMat and return (not inplace)
+        """
+        scalar = 1 / self.scalar if self.scalar is not None else None
+        H = SolveHierMat(self.A00, self.A11, A01=self.A01, A10=self.A10,
+                         lower=lower, trans_solve=trans_solve, scalar=scalar)
+        return H
 
     def __str__(self):
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
@@ -1895,6 +1936,10 @@ class SolveHierMat(HierMat):
         scalar : float, optional
             A float to multiply output by
         """
+        if A00.__class__ == HierMat:
+            A00 = A00.to_SolveHierMat(lower=lower, trans_solve=False)
+        if A11.__class__ == HierMat:
+            A11 = A11.to_SolveHierMat(lower=lower, trans_solve=False)
         if isinstance(A00, BaseMat) and not isinstance(A00, SolveMat):
             A00 = A00.to_dense()
         if isinstance(A11, BaseMat) and not isinstance(A11, SolveMat):
@@ -1928,25 +1973,25 @@ class SolveHierMat(HierMat):
         if self.lower:
             # first solve L_00 z_0 = v_0
             v_0 = vec[self._idx0[1]]
-            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]])
+            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]], trans_solve=False)
 
             # next solve L_11 z_1 = v_1 - L_10 z_0
             v_1 = vec[self._idx1[1]]
             if self[(1, 0)] is not None:
                 v_1 = v_1 - self[(1, 0)](z_0)
-            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]])
+            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]], trans_solve=False)
 
         # backward substitution
         else:
             # first solve L_11 z_1 = v_1
             v_1 = vec[self._idx1[1]]
-            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]])
+            z_1 = self[1](v_1, out=None if out is None else out[self._idx1[0]], trans_solve=False)
 
             # then solve L_00 z_0 = v_0 - L01 z_1
             v_0 = vec[self._idx0[1]]
             if self[(0, 1)] is not None:
                 v_0 = v_0 - self[(0, 1)](z_1)
-            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]])
+            z_0 = self[0](v_0, out=None if out is None else out[self._idx0[0]], trans_solve=False)
 
         if out is None:
             out = torch.cat([z_0, z_1])
@@ -1954,10 +1999,10 @@ class SolveHierMat(HierMat):
         if self.scalar is not None:
             out *= self.scalar
 
-        # perform transpose solve if needed
+        # perform transpose solve if needed (i.e. for solving L L^T x = b)
         trans_solve = trans_solve if trans_solve is not None else self.trans_solve
         if trans_solve:
-            out = self.to_transpose()(out.clone(), out=out, trans_solve=False)
+            out = self.to_transpose()(out, out=torch.zeros_like(out), trans_solve=False)
 
         return out
 
@@ -1970,7 +2015,8 @@ class SolveHierMat(HierMat):
         A10t = None if self.A01 is None else self.A01.to_transpose() 
         A01t = None if self.A10 is None else self.A10.to_transpose()
         Ht = SolveHierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
-                          A10=A10t, A01=A01t, lower=self.lower==False, scalar=self.scalar)
+                          A10=A10t, A01=A01t, lower=self.lower==False, scalar=self.scalar,
+                          trans_solve=self.trans_solve)
         if self._T is None:
             # cache this for repeated calls
             self._T = Ht
@@ -1984,6 +2030,8 @@ class SolveHierMat(HierMat):
         if self.scalar is None:
             self.scalar = 1.0
         self.scalar *= scalar
+        if self._T is not None:
+            self._T.scalar_mul(scalar)
 
 
 def make_hodlr(mat, indices, trisolve=False, lower=True,
