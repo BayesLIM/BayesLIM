@@ -1662,6 +1662,8 @@ def push(tensor, device, parameter=False):
         # this is not a tensor but an object with a push() method
         tensor.push(device)
         return tensor
+    if not isinstance(tensor, torch.Tensor):
+        return tensor
     dtype = isinstance(device, torch.dtype)
     if dtype and torch.is_complex(tensor) and not device.is_complex:
         if device == torch.float16: device = torch.complex32
