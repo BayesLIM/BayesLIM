@@ -60,6 +60,9 @@ class BaseMat(object):
     def __imul__(self, other):
         pass
 
+    def __str__(self):
+        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
 
 class DenseMat(BaseMat):
     """
@@ -192,9 +195,6 @@ class DenseMat(BaseMat):
         self.scalar_mul(other)
         return self
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
-
 
 class DiagMat(BaseMat):
     """
@@ -314,9 +314,6 @@ class DiagMat(BaseMat):
         self.scalar_mul(other)
         return self
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
-
 
 class HadamardMat(BaseMat):
     """
@@ -420,8 +417,121 @@ class HadamardMat(BaseMat):
         self.scalar_mul(other)
         return self
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
+
+class TriangMat(BaseMat):
+    """
+    A (square) triangular matrix representation. Note only
+    the lower or upper triangular is actually stored.
+    """
+    def __init__(self, L, lower=True):
+        """
+        Parameters
+        ----------
+        L : tensor
+            A 2D matrix with dense lower (upper)
+            components, or a 1D array indexed with
+            torch.tril(u)_indices()
+        lower : bool, optional
+            If True, L is represented as lower triangular,
+            otherwise upper triangular
+        """
+        self.device = L.device
+        if L.ndim == 1:
+            # triangular component is raveled
+            N = int(np.sqrt(8*b + 1) - 1) // 2
+            shape = (N, N)
+            if lower:
+                self.idx = torch.tril_indices(*shape, device=self.device)
+            else:
+                self.idx = torch.triu_indices(*shape, device=self.device)
+
+        else:
+            # passed as 2D matrix
+            shape = L.shape
+            if lower:
+                self.idx = torch.tril_indices(*shape, device=self.device)
+            else:
+                self.idx = torch.triu_indices(*shape, device=self.device)
+            L = L[self.idx[0], self.idx[1]]
+
+        self.L = L
+        self.dtype = L.dtype
+        self.lower = lower
+        self._shape = shape
+        self._diag_idx = torch.where(self.idx[0] == self.idx[1])[0]
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
+        """
+        Matrix-vector product
+
+        Parameters
+        ----------
+        vec : tensor
+
+        Returns
+        -------
+        tensor
+        """
+        # get dense representation
+        L = self.to_dense(transpose=transpose)
+
+        # peform matmul
+        result = L @ vec
+
+        # copy to out if needed
+        if out is not None:
+            out[:] += result
+            result = out
+
+        return result
+
+    def mat_mat_mul(self, vec, **kwargs):
+        return self.mat_vec_mul(vec, **kwargs)
+
+    def __call__(self, vec, **kwargs):
+        return self.mat_vec_mul(vec, **kwargs)
+
+    def to_dense(self, transpose=False):
+        """
+        Return dense 2D Tensor
+        """
+        H = torch.zeros(self.shape, device=self.device, dtype=self.dtype)
+        H[self.idx[0], self.idx[1]] = self.L
+        if transpose:
+            H = H.T.conj()
+
+        return H
+
+    def to_transpose(self):
+        return TransposedMat(self)
+
+    def push(self, device):
+        self.L = utils.push(self.L, device)
+        if not isinstance(device, torch.dtype):
+            self.idx = utils.push(self.idx, device)
+            self._diag_idx = utils.push(self._diag_idx, device)
+        self.dtype = self.L.dtype
+        self.device = self.L.device
+
+    def scalar_mul(self, scalar):
+        self.L *= scalar
+
+    def diagonal(self):
+        return self.L[self.diag_idx]
+
+    def __mul__(self, other):
+        return TriangMat(self.L * other, lower=self.lower)
+
+    def __rmul__(self, other):
+        return TriangMat(self.L * other, lower=self.lower)
+
+    def __imul__(self, other):
+        self.scalar_mul(other)
+        return self
 
 
 class SparseMat(BaseMat):
@@ -661,9 +771,6 @@ class SparseMat(BaseMat):
         self.scalar_mul(other)
         return self
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
-
 
 class ZeroMat(BaseMat):
     """
@@ -743,9 +850,6 @@ class ZeroMat(BaseMat):
 
     def __imul__(self, other):
         return self
-
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
 class OneMat(BaseMat):
@@ -840,9 +944,6 @@ class OneMat(BaseMat):
         else:
             return self * other
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
-
 
 class TransposedMat(BaseMat):
     """
@@ -933,9 +1034,6 @@ class TransposedMat(BaseMat):
     def __imul__(self, other):
         self.scalar_mul(other)
         return self
-
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
 class PartitionedMat(BaseMat):
@@ -1172,9 +1270,6 @@ class PartitionedMat(BaseMat):
         self.scalar_mul(other)
         return self
 
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
-
 
 class SolveMat(BaseMat):
     """
@@ -1305,9 +1400,6 @@ class SolveMat(BaseMat):
     def __imul__(self, other):
         self.scalar_mul(other)
         return self
-
-    def __str__(self):
-        return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
 
 class MatColumn(BaseMat):
