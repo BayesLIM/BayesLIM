@@ -2095,57 +2095,73 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         return cov
 
 
-def main_params_index(prob, main_index, subset_index):
+def main_params_index(prob, param, sub_index=None):
     """
     Take a LogProb object and its main_index dictionary
-    and index a subset of its elements.
+    and return an indexing of a subset of its prob.main_params.
 
     Parameters
     ----------
     prob : LobProb object
         A LogProb with set_main_params() activated
-    main_index : dict
-        The prob._main_index dictionary
-    subset_index : dict
-        Similar in structure to main_index, except
-        now values index the tensor params[main_index[param]]
+    param : str
+        The param name of prob._main_index to sub-index
+    sub_index : tuple, optional
+        Given p = prob[param][idx] where idx is
+        prob._main_index[param], select a further subset
+        of p[sub_index] if provided, otherwise use the full
+        shape of p. Note if idx is a list, then sub_index
+        must also be a list. Default is to use the full
+        parameter size.
 
     Returns
     -------
-    list
+    tensor
     """
-    def update(p, main_idx, subset_idx, start):
+    # assert has _main_index
+    assert prob._main_index is not None
+    assert prob._main_shapes is not None
+    assert param in prob._main_index
+
+    def select(prob, param, main_index, sub_index):
+        p = prob.model[param]
         if main_index is not None:
-            p = p[main_idx]
-        _idx = np.arange(p.numel()).reshape(p.shape) + start
-        start += _idx.max() + 1
-        if subset_idx is not None:
-            _idx = _idx[subset_idx]
-        else:
-            return start
-        if len(_idx) == 0:
-            return start
-        if isinstance(_idx, (int, np.integer)):
-            _idx = [_idx]
-        else:
-            _idx = _idx.ravel()
-        idx.extend(_idx)
-        return start
+            p = p[main_index]
 
-    idx = []
+        idx = torch.arange(p.numel(), device=prob.device)
+
+        if sub_index is not None:
+            idx = idx.reshape(p.shape)[sub_index].ravel()
+
+        return idx
+
+    # iterate over all sub-parameters
     start = 0
-    for k, v in main_index.items():
-        p = prob.model[k]
-        s_idx = subset_index[k] if k in subset_index else None
-        if isinstance(v, list):
-            # v holds multiple indexing tuple
-            for i, _v in enumerate(v):
-                start = update(p, _v, s_idx[i], start)
-        else:
-            # v is just a single indexing tuple
-            start = update(p, v, s_idx, start)
+    for k, v in prob._main_index.items():
+        if k == param:
+            # we are selecting this parameter
+            if isinstance(v, list):
+                idx = []
+                for i in range(len(v)):
+                    idx.extend(select(prob, param, v[i], sub_index[i] if sub_index is not None else None))
+                idx = torch.as_tensor(idx, device=prob.device)
 
-    idx = torch.as_tensor(idx, device=prob.device)
+            else:
+                idx = select(prob, param, v, sub_index)
+
+            idx += start
+
+            # don't need to iterate through main_index any further
+            break
+
+        else:
+            # not selecting this parameter, so
+            # push start forward by its size
+            if isinstance(v, list):
+                for i in range(len(v)):
+                    start += prob._main_shapes[k][i].numel()
+            else:
+                start += prob._main_shapes[k].numel()
 
     return idx
 
