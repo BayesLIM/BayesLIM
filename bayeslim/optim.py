@@ -495,20 +495,23 @@ class LogProb(utils.Module):
         Parameters
         ----------
         model_params : list, optional
-            List of submodules params tensors with "prob.model"
-            as base to collect and stack in main_params.
-            E.g. ['sky.params', 'cal.params']
+            List of submodules params tensors to collect and
+            stack in main_params, with "self.model" basename.
+            E.g. ['rime.sky.params', 'cal.params']
             If None, main_params is set as None.
             You can also index each params by passing
             a 2-tuple as (str, index), e.g.
             [
-            ('sky.params', (range(10), 0, 0)),
-            ('beam.params', [(0, [0, 1, 2]), (1, [1, 2])],
+            ('rime.sky.params', (range(10), 0, 0)),
+            ('rime.beam.params', [(0, [0, 1, 2]), (1, [1, 2])],
             ...,
             ]
             Note that you can also feed two indexing tuples
-            (must be wrapped in a list!) which will index the
+            (must be wrapped in a *list*!) which will index the
             params tensor multiple times in that order.
+            Note you can also end the tuple with an additional
+            string which will be the shorthand for the parameter.
+            E.g. ('rime.sky.params', None, 'sky') is called 'sky'.
         main_LM : LinearModel object or BaseMat subclass
             This is a linear model object that can act as a 
             preconditioner to main_params. It is an R^N -> R^N
@@ -537,6 +540,7 @@ class LogProb(utils.Module):
         self._main_shapes = None
         self._main_devices = None
         self._main_index = None
+        self._main_names = None
         if LM is not None and not utils.check_devices(LM.device, self.device):
             LM = copy.deepcopy(LM)
             LM.push(self.device)
@@ -550,16 +554,23 @@ class LogProb(utils.Module):
             self._main_shapes = {}
             self._main_devices = {}
             self._main_index = {}
+            self._main_names = {}
             for param in model_params:
                 # get (multi-)indexing if desired
                 if isinstance(param, str):
                     idx = None
+                    name = param
                 else:
-                    param, idx = param
+                    # assume param is a tuple
+                    if len(param) == 2:
+                        param, idx = param
+                        name = param
+                    else:
+                        param, idx, name = param
 
                 if idx is None or not isinstance(idx, list):
                     if idx is None:
-                        # no indexing,take the whole tensor
+                        # no indexing, take the whole tensor
                         p = self.model[param].detach()
                     else:
                         # ensure idx is tensor on param device
@@ -593,10 +604,11 @@ class LogProb(utils.Module):
                         N += numel
 
                 # append metadata
-                self._main_indices[param] = indices
-                self._main_shapes[param] = shape
-                self._main_devices[param] = device
-                self._main_index[param] = idx
+                self._main_indices[name] = indices
+                self._main_shapes[name] = shape
+                self._main_devices[name] = device
+                self._main_index[name] = idx
+                self._main_names[name] = param
 
             self._main_N = N
 
@@ -742,19 +754,21 @@ class LogProb(utils.Module):
             collect sub-params and return tensor.
         """
         if self._main_indices is not None and len(self._main_indices) > 0:
+            # TODO: relax float (cfloat?) assumption here...
             params = torch.zeros(self._main_N, dtype=utils._float(), device=self.device)
             for k in self._main_indices:
+                name = self._main_names[k]
                 idx, indices = self._main_index[k], self._main_indices[k]
                 if idx is None:
-                    params[indices] = self.model[k].detach().to(self.device).to(utils._float()).ravel()
+                    params[indices] = self.model[name].detach().to(self.device).to(utils._float()).ravel()
                 else:
                     if not isinstance(idx, list):
                         # single index
-                        params[indices] = self.model[k][idx].detach().to(self.device).to(utils._float()).ravel()
+                        params[indices] = self.model[name][idx].detach().to(self.device).to(utils._float()).ravel()
                     else:
                         for _idx, _inds in zip(idx, indices):
                             # multi-index
-                            params[_inds] = self.model[k][_idx].detach().to(self.device).to(utils._float()).ravel()
+                            params[_inds] = self.model[name][_idx].detach().to(self.device).to(utils._float()).ravel()
 
             if not inplace:
                 return params
@@ -822,7 +836,7 @@ class LogProb(utils.Module):
                 # otherwise use self.model
                 model = self.model
 
-            for pname in self._main_indices:
+            for name, pname in self._main_names.items():
                 if not inplace:
                     # create sub-objects for Obj class if needed
                     pname_list = pname.split('.')
@@ -836,10 +850,10 @@ class LogProb(utils.Module):
                             _model = getattr(_model, pn)
 
                 # get metadata
-                inds = self._main_indices[pname]
-                idx = self._main_index[pname]
-                shape = self._main_shapes[pname]
-                device = self._main_devices[pname]
+                inds = self._main_indices[name]
+                idx = self._main_index[name]
+                shape = self._main_shapes[name]
+                device = self._main_devices[name]
 
                 if not isinstance(inds, list):
                     # turn single or no indexing into multi-index form
@@ -1013,7 +1027,7 @@ class LogProb(utils.Module):
             self.send_main_params()
 
         # evaluate log prior
-        logprior = torch.as_tensor(0.0)
+        logprior = torch.as_tensor(0.0, device=self.device)
         if self.prior_dict is not None:
             # use prior_dict
             for p_key, p_obj in self.prior_dict.items():
@@ -1284,8 +1298,8 @@ class LogProb(utils.Module):
         Clear non-leaf tensors with requires_grad (i.e. ones that
         may be stale), specifically the end-result of send_main_params()
         """
-        for param in self._main_indices:
-            self.model[param] = self.model[param].detach()
+        for name, pname in self._main_names.items():
+            self.model[pname] = self.model[pname].detach()
 
 
 class DistributedLogProb(utils.Module):
@@ -1539,7 +1553,7 @@ class Trainer:
 
         else:
             if self.prob.main_params is not None:
-                for k in self.prob._main_indices:
+                for _, k in self.prob._main_names.items():
                     self.chain['model.' + k] = []
             else:
                 for k in self.prob.model.named_parameters():
