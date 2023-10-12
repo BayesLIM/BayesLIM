@@ -1715,6 +1715,12 @@ def parse_device(d):
     """
     if d is None:
         d = 'cpu'
+    if isinstance(d, torch.device):
+        if d.index is None and d.type == 'cuda':
+            d = torch.device('cuda:0')
+    elif d == 'cuda':
+        d = 'cuda:0'
+
     return torch.device(d)
 
 

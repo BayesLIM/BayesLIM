@@ -262,6 +262,50 @@ class MultiLM:
             LM.push(device)
 
 
+class DictLM:
+    """
+    A dictionary of linear models for different
+    parameter names, takes parameter name and tensor as
+    """
+    def __init__(self, LMs):
+        """
+        Parameters
+        ----------
+        LMs : dict
+            Keys are the parameter names, e.g. 'rime.sky.eor.params'
+            and values are LinearModel objects
+        """
+        self.LMs = LMs
+        self.device = list(self.LMs.values())[0].device
+
+    def __call__(self, name, params, **kwargs):
+        return self.forward(name, params, **kwargs)
+
+    def forward(self, name, params, **kwargs):
+        """
+        Parameters
+        ----------
+        name : str
+            Name of parameter in self.LMs
+        params : tensor
+
+        Returns
+        -------
+        tensor
+        """
+        assert name in self.LMs
+
+        return self.LMs[name](params, **kwargs)
+
+        def least_squares(self, name, y, **kwargs):
+            return self.LMs[name].least_squares(y, **kwargs)
+
+        def push(self, device):
+            for i, LM in self.LMs.items():
+                LM.push(device)
+            self.device = list(self.LMs.values())[0].device
+
+
 def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
                  whiten=True, x0=None, dx=None, Ndeg=None, basis='direct',
                  qr=False, device=None, dtype=None, fft_norm='ortho', **kwargs):

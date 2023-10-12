@@ -10,7 +10,7 @@ import pickle
 from collections.abc import Iterable
 import copy
 
-from . import utils, paramdict, linalg
+from . import utils, paramdict, linalg, linear_model
 from .dataset import VisData, MapData, TensorData
 
 
@@ -512,7 +512,7 @@ class LogProb(utils.Module):
             Note you can also end the tuple with an additional
             string which will be the shorthand for the parameter.
             E.g. ('rime.sky.params', None, 'sky') is called 'sky'.
-        main_LM : LinearModel object or BaseMat subclass
+        main_LM : LinearModel object or DictLM or BaseMat subclass
             This is a linear model object that can act as a 
             preconditioner to main_params. It is an R^N -> R^N
             mapping that maps main_params to its expected
@@ -520,7 +520,8 @@ class LogProb(utils.Module):
             This is acted upon in the self.send_main_params() call.
             In principle, this should be the lower Cholesky
             of the covariance matrix (i.e. inverse Hessian).
-            This is set as self._main_LM.
+            This is set as self._main_LM. If this is a DictLM object
+            then this acts on each reshaped sub-parameter.
         set_p0 : bool, optional
             If True, assign main_params values to main_p0 (non-parameter)
             and set main_params as zeros (parameter). In this case,
@@ -787,7 +788,7 @@ class LogProb(utils.Module):
                          fill=None, main_p0=None):
         """
         Take existing value of self.main_params and using
-        _main_indices, _main_shapes, _main_types,_main_index,
+        _main_indices, _main_shapes, _main_types, _main_index,
         send its values to the relevant submodule params.
 
         Parameters
@@ -813,14 +814,6 @@ class LogProb(utils.Module):
         main_p0 = main_p0 if main_p0 is not None else self.main_p0
 
         if main_params is not None:
-            # pass it through LM if desired
-            if self._main_LM is not None:
-                main_params = self._main_LM(main_params)
-
-            # sum with p0 if desired
-            if main_p0 is not None:
-                main_params = main_params + main_p0
-
             # setup holding container needed for inplace = False
             if not inplace:
                 # use a dummy Python3 class object to set params
@@ -835,6 +828,15 @@ class LogProb(utils.Module):
             else:
                 # otherwise use self.model
                 model = self.model
+
+            # pass it through LM if desired (note this doesn't apply to main_p0)
+            # if main_LM is a DictLM, wait until we reshape each parameter
+            if self._main_LM is not None and not isinstance(self._main_LM, linear_model.DictLM):
+                main_params = self._main_LM(main_params)
+
+            # sum with p0 if desired. if DictLM do this later
+            if main_p0 is not None not isinstance(self._main_LM, linear_model.DictLM):
+                main_params = main_params + main_p0
 
             for name, pname in self._main_names.items():
                 if not inplace:
@@ -860,9 +862,19 @@ class LogProb(utils.Module):
                     inds, idx, shape = [inds], [idx], [shape]
 
                 for i, (_inds, _idx, _shape) in enumerate(zip(inds, idx, shape)):
+                    # index main_params for this pname
                     value = main_params[_inds]
                     value = value.reshape(_shape)
-                    value = value.to(device)
+
+                    # pass through DictLM if needed
+                    if isinstance(self._main_LM, linear_model.DictLM):
+                        value = self._main_LM(name, value)
+                        # sum with main_p0 if needed
+                        if main_p0 is not None:
+                            value = value + main_p0[_inds].reshape(_shape)
+
+                    if not utils.check_devices(value.device, device):
+                        value = value.to(device)
 
                     # only fill if this is first index of this param
                     # only add if this isn't first index of this param
