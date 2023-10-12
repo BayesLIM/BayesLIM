@@ -835,7 +835,7 @@ class LogProb(utils.Module):
                 main_params = self._main_LM(main_params)
 
             # sum with p0 if desired. if DictLM do this later
-            if main_p0 is not None not isinstance(self._main_LM, linear_model.DictLM):
+            if main_p0 is not None and not isinstance(self._main_LM, linear_model.DictLM):
                 main_params = main_params + main_p0
 
             for name, pname in self._main_names.items():
