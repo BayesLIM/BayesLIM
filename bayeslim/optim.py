@@ -1039,7 +1039,7 @@ class LogProb(utils.Module):
             self.send_main_params()
 
         # evaluate log prior
-        logprior = torch.as_tensor(0.0, device=self.device)
+        logprior = torch.zeros(1, device=self.device)
         if self.prior_dict is not None:
             # use prior_dict
             for p_key, p_obj in self.prior_dict.items():
@@ -1058,7 +1058,7 @@ class LogProb(utils.Module):
 
             # add priors
             for k in self.prior_cache:
-                logprior = logprior + self.prior_cache[k]
+                logprior += self.prior_cache[k]
 
         # clear prior cache
         self.clear_prior_cache()
