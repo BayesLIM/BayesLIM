@@ -530,9 +530,9 @@ class LogProb(utils.Module):
             order of operations is main_LM(main_params) + main_p0.
         """
         # if main_params already exists, turn keys back into Parameters
-        if hasattr(self, "_main_indices") and self._main_indices is not None:
-            for param in self._main_indices:
-                self.model.set_param(param)
+        if hasattr(self, "_main_names") and self._main_names is not None:
+            for k, pname in self._main_names.items():
+                self.model.set_param(pname)
 
         # create blank main_params
         self.main_params = None
