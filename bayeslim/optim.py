@@ -2150,7 +2150,8 @@ def main_params_index(prob, param, sub_index=None):
     assert param in prob._main_index
 
     def select(prob, param, main_index, sub_index):
-        p = prob.model[param]
+        pname = prob._main_names[param]
+        p = prob.model[pname]
         if main_index is not None:
             p = p[main_index]
 
