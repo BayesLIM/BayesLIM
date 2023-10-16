@@ -2013,8 +2013,8 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
     return hess
 
 
-def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_fill=1e-15,
-                   rm_offdiag=False, rcond=1e-15, eps=None, hermitian=True, return_hess=False):
+def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=None, rm_fill=1e-15,
+                   rm_offdiag=False, rcond=1e-15, eps=None, hermitian=True):
     """
     Invert a Hessian (Fisher Information) matrix (H) to get a covariance
     matrix
@@ -2040,6 +2040,7 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         For diagonal elements of hess below this
         value, truncate these row/columns before inversion.
         If passing idx, rm_thresh operates after applying idx.
+        Default is not removal.
     rm_fill : float, optional
         For row/columns that are truncated by rm_thresh,
         this fills the diagonal of the output covariance
@@ -2052,9 +2053,7 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         Small value to add to diagonal of hessian (only if diag=False or rm_offdiag=False)
     hermitian : bool, optional
         Hermitian parameter for torch.pinverse
-    return_hess : bool, optional
-        If True, return downselected Hessian matrix
-    
+
     Returns
     -------
     tensor
@@ -2067,14 +2066,14 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
                                     rm_thresh=rm_thresh, rm_fill=rm_fill)
         return paramdict.ParamDict(cov)
 
+
+    rm_thresh = rm_thresh if rm_thresh is not None else -1e50
     if diag:
         # assume hessian holds diagonal, can be any shape
         cov = torch.ones_like(hess, device=hess.device, dtype=hess.dtype)
         s = hess > rm_thresh
         cov[s] = 1 / hess[s]
         cov[~s] = rm_fill
-        if return_hess:
-            cov = hess
 
         return cov
 
@@ -2089,13 +2088,9 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         if idx is None:
             idx = np.arange(len(H))
         elif isinstance(idx, slice):
-            start = idx.start if idx.start is not None else 0
-            stop = idx.stop if idx.stop is not None else len(H)
-            if stop < 0: stop = len(H)
-            step = idx.step if idx.step is not None else 1
-            idx = np.arange(start, stop, step)
-        elif isinstance(idx, (list, tuple)):
-            idx = np.asarray(idx)
+            idx = utils._slice2tensor(idx)
+        else:
+            idx = utils._idx2tensor(idx)
 
         # combine idx with rm_thresh
         good_idx = np.where(H.diagonal() > rm_thresh)[0]
@@ -2103,9 +2098,6 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
 
         # select out indices
         H = H[idx[:, None], idx[None, :]]
-
-        if return_hess:
-            return H
 
         # add eps if desired, do it not inplace here, as oppossed to in invert_matrix
         if eps is not None:
@@ -2119,6 +2111,76 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         cov[idx[:, None], idx[None, :]] = C
 
         return cov
+
+
+def mask_hessian(hess, thresh=1e0):
+    """
+    Given a hessian (or any square matrix), remove
+    rows and columns that have a diagonal value less than thresh.
+
+    Parameters
+    ----------
+    hess : tensor
+        Matrix to mask
+    thresh : float, optional
+        Threshold for diagonal values, below which
+        the rows/cols are truncated
+
+    Returns
+    -------
+    masked_hess : tensor
+        New masked tensor
+    mask : tensor
+        True where unmasked, False where masked
+    """
+    mask = hess.diagonal() >= thresh
+    masked_hess = hess[mask, :][:, mask]
+
+    return masked_hess, mask
+
+
+def unmask_hessian(hess, mask, val=1e0):
+    """
+    Given a masked hessian and the mask, reconstruct
+    the initial matrix with identity rows/cols along
+    the masked regions, with diagonal = val.
+    Output is not a view of input.
+
+    Parameters
+    ----------
+    hess : tensor
+        Masked matrix
+    mask : tensor
+        Boolean mask, True where unmasked, see mask_hessian()
+    val : float, optional
+        Value to insert along diagonal of masked rows/cols
+
+    Returns
+    -------
+    hess : tensor
+    """
+    # get indexing vector
+    mask = torch.as_tensor(mask)
+    idx = torch.arange(len(mask))
+    for i in torch.where(~mask)[0]:
+        idx[i] = -1
+        idx[i+1:] -= 1
+    idx += 1
+
+    # zeropad
+    I = torch.zeros(hess.shape[0], 1, device=hess.device, dtype=hess.dtype)
+    hess = torch.cat([I, hess], dim=1)
+    I = torch.zeros(1, hess.shape[1], device=hess.device, dtype=hess.dtype)
+    hess = torch.cat([I, hess], dim=0)
+
+    # index reshape
+    hess = hess[idx, :][:, idx]
+
+    # insert val along masked diagonal
+    idx = torch.where(~mask)[0]
+    hess[idx, idx] = val
+    
+    return hess
 
 
 def main_params_index(prob, param, sub_index=None, params=None):
