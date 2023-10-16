@@ -2121,7 +2121,7 @@ def invert_hessian(hess, inv='pinv', diag=False, idx=None, rm_thresh=1e-15, rm_f
         return cov
 
 
-def main_params_index(prob, param, sub_index=None):
+def main_params_index(prob, param, sub_index=None, params=None):
     """
     Take a LogProb object and its main_index dictionary
     and return an indexing of a subset of its prob.main_params.
@@ -2139,6 +2139,12 @@ def main_params_index(prob, param, sub_index=None):
         shape of p. Note if idx is a list, then sub_index
         must also be a list. Default is to use the full
         parameter size.
+    params : list, optional
+        List of parameter names to iterate over when creating
+        the indexing tensor. Default is to iterate over all
+        in the order of prob._main_index. If e.g. you want to
+        get indexing tensors for a subset of these, or in
+        a different order, then use this kwarg.
 
     Returns
     -------
@@ -2148,6 +2154,7 @@ def main_params_index(prob, param, sub_index=None):
     assert prob._main_index is not None
     assert prob._main_shapes is not None
     assert param in prob._main_index
+    params = params if params is not None else list(prob._main_index.keys())
 
     def select(prob, param, main_index, sub_index):
         pname = prob._main_names[param]
@@ -2164,7 +2171,8 @@ def main_params_index(prob, param, sub_index=None):
 
     # iterate over all sub-parameters
     start = 0
-    for k, v in prob._main_index.items():
+    for k in params:
+        v = prob._main_index[k]
         if k == param:
             # we are selecting this parameter
             if isinstance(v, list):
