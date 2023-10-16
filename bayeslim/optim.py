@@ -2139,7 +2139,7 @@ def mask_hessian(hess, thresh=1e0):
     return masked_hess, mask
 
 
-def unmask_hessian(hess, mask, val=1e0):
+def unmask_hessian(hess, mask, val=1e0, maskleft=False):
     """
     Given a masked hessian and the mask, reconstruct
     the initial matrix with identity rows/cols along
@@ -2154,6 +2154,9 @@ def unmask_hessian(hess, mask, val=1e0):
         Boolean mask, True where unmasked, see mask_hessian()
     val : float, optional
         Value to insert along diagonal of masked rows/cols
+    maskleft : bool, optional
+        If True, only unmask the left side of hess. Default
+        is to unmask both sides. If True, val is not used.
 
     Returns
     -------
@@ -2174,11 +2177,14 @@ def unmask_hessian(hess, mask, val=1e0):
     hess = torch.cat([I, hess], dim=0)
 
     # index reshape
-    hess = hess[idx, :][:, idx]
+    if maskleft:
+        hess = hess[idx]
+    else:
+        hess = hess[idx, :][:, idx]
 
-    # insert val along masked diagonal
-    idx = torch.where(~mask)[0]
-    hess[idx, idx] = val
+        # insert val along masked diagonal
+        idx = torch.where(~mask)[0]
+        hess[idx, idx] = val
     
     return hess
 
