@@ -1404,11 +1404,14 @@ class DistributedLogProb(utils.Module):
     def send_main_params(self, main_params=None, **kwargs):
         """
         Copy self.main_params to each object in self.prob.
-        Note this does not also call self.probs[i].send_main_params()
+        Note this does not also call self.probs[i].send_main_params().
+        Note this does not preserve graph from self.main_params, each
+        self.probs[i].main_params is itself a torch.nn.Parameter object
         """
-        main_params = main_params if main_params is not None else self.main_params
-        for prob, device in zip(self.probs, self.devices):
-            prob.main_params.data = main_params.data.to(device)
+        with torch.no_grad():
+            main_params = main_params if main_params is not None else self.main_params
+            for prob, device in zip(self.probs, self.devices):
+                prob.main_params = torch.nn.Parameter(main_params.to(device))
 
     def get_main_params(self, add_p0=False):
         """
