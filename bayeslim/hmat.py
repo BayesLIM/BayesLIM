@@ -1095,6 +1095,14 @@ class PartitionedMat(BaseMat):
             If False, you should provide all off-diagonal components,
             otherwise missing ones are assumed ZeroMat.
         """
+        # type check
+        for k, v in blocks.items():
+            if isinstance(v, torch.Tensor):
+                if v.ndim == 1:
+                    blocks[k] = DiagMat(len(v), v)
+                else:
+                    blocks[k] = DenseMat(v)
+
         # get all the on-diagonal matrices
         ondiag_keys = sorted([k for k in blocks if len(set(k)) == 1])
 
