@@ -1960,19 +1960,11 @@ def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False)
         Hessian of prob
     """
     if isinstance(prob, DistributedLogProb):
-        # run hessian for each submodule in multiproc
-        import multiprocess as mp
-        if mp.get_start_method(True) is None:
-            mp.set_start_method('spawn')
-        Nproc = len(prob.probs)
-        kwgs = dict(rm_offdiag=rm_offdiag, Npdict=Npdict, vectorize=vectorize)
-        iterable = []
+        # run hessian for each prob object
+        hess = []
         for p in prob.probs:
-            pd = pdict.clone()
-            pd.push(p.device)
-            iterable.append(((p, pd), kwgs))
-        with mp.Pool(Nproc) as pool:
-            hess = pool.map(_pool_hessian, iterable)
+            pd = pdict.push(p.device, inplace=False)
+            hess.append(compute_hessian(p, pd, rm_offdiag=rm_offdiag, Npdict=Npdict, vectorize=vectorize))
 
         return hess
 

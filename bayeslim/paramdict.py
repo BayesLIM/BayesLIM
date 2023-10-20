@@ -32,19 +32,28 @@ class ParamDict:
     def items(self):
         return list(self.params.items())
 
-    def push(self, device):
+    def push(self, device, inplace=True):
         """
         Push params to device. Can feed
         device as a dictionary which will push
-        params to different devices
+        params to different devices. If not inplace,
+        make a copy and return
         """
+        if inplace:
+            obj = self
+        else:
+            obj = self.clone()
+
         if isinstance(device, dict):
             for k in device:
-                self.params[k] = self.params[k].to(device[k])
+                obj.params[k] = obj.params[k].to(device[k])
         else:
             for k in self.params:
-                self.params[k] = self.params[k].to(device)
-        self._setup()
+                obj.params[k] = obj.params[k].to(device)
+        obj._setup()
+
+        if not inplace:
+            return obj
 
     def __mul__(self, other):
         if isinstance(other, ParamDict):
