@@ -936,7 +936,7 @@ class LogProb(utils.Module):
 
         return target, inp
 
-    def forward_chisq(self, idx=None, sum_chisq=True):
+    def forward_chisq(self, idx=None,  main_params=None, sum_chisq=True, **kwargs):
         """
         Compute and return chisquare
         by evaluating the forward model and comparing
@@ -949,6 +949,9 @@ class LogProb(utils.Module):
             is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
+        main_params : tensor, optional
+            If passed, use this main_params instead of self.main_params,
+            if self.set_main_params() has been run.
         sum_chisq : bool, optional
             If True, sum the chisquare over
             the target data axes and return a scalar,
@@ -967,8 +970,9 @@ class LogProb(utils.Module):
         target, inp = self.get_batch_data(idx)
 
         # copy over main_params if needed
-        if self.main_params is not None:
-            self.send_main_params()
+        main_params = main_params if main_params is not None else self.main_params
+        if main_params is not None:
+            self.send_main_params(main_params=main_params)
 
         # forward pass model
         out = self.model(inp, prior_cache=self.prior_cache)
@@ -996,7 +1000,7 @@ class LogProb(utils.Module):
 
         return chisq, res
 
-    def forward_like(self, idx=None, **kwargs):
+    def forward_like(self, idx=None, main_params=None, **kwargs):
         """
         Compute log (Gaussian) likelihood
         by evaluating the chisquare of the forward model
@@ -1009,9 +1013,12 @@ class LogProb(utils.Module):
             is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
+        main_params : tensor, optional
+            If passed, use this main_params instead of self.main_params,
+            if self.set_main_params() has been run.
         """
         # evaluate chisq for this batch index
-        chisq, res = self.forward_chisq(idx)
+        chisq, res = self.forward_chisq(idx, main_params=main_params)
 
         # get target and inp data for this batch index
         target, inp = self.get_batch_data(idx)
@@ -1030,13 +1037,20 @@ class LogProb(utils.Module):
         else:
             return loglike
 
-    def forward_prior(self, **kwargs):
+    def forward_prior(self, main_params=None, **kwargs):
         """
         Compute log prior given state of params tensors
+
+        Parameters
+        ----------
+        main_params : tensor, optional
+            If passed, use this main_params instead of self.main_params,
+            if self.set_main_params() has been run.
         """
+        main_params = main_params if main_params is not None else self.main_params
         # send over main_params if compute = 'prior'
-        if self.compute == 'prior' and self.main_params is not None:
-            self.send_main_params()
+        if self.compute == 'prior' and main_params is not None:
+            self.send_main_params(main_params=main_params)
 
         # evaluate log prior
         logprior = torch.zeros(1, device=self.device)
