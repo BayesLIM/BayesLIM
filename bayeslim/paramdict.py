@@ -32,28 +32,160 @@ class ParamDict:
     def items(self):
         return list(self.params.items())
 
-    def push(self, device, inplace=True):
+    def push(self, device, inplace=True, copy=True):
         """
         Push params to device. Can feed
         device as a dictionary which will push
         params to different devices. If not inplace,
         make a copy and return
+
+        Parameters
+        ----------
+        device : str
+            Device to push all keys
+        inplace : bool, optional
+            If True (default) perform inplace, otherwise
+            make a clone/copy and return
+        copy : bool, optional
+            Only used if inplace=False.
+            If True, make a copy (detach and clone), otherwise
+            just clone, which keeps it in graph but eliminates
+            upstream mutability. If True and if key is a Parameter,
+            new tensor is also a Parameter, otherwise new tensor
+            is a leaf.
         """
         if inplace:
             obj = self
         else:
-            obj = self.clone()
+            if copy:
+                obj = self.copy()
+            else:
+                obj = self.clone()
 
-        if isinstance(device, dict):
-            for k in device:
-                obj.params[k] = obj.params[k].to(device[k])
-        else:
-            for k in self.params:
-                obj.params[k] = obj.params[k].to(device)
+        for k in obj.params:
+            d = device if not isinstance(device, dict) else device[k]
+            obj.params[k] = utils.push(obj.params[k], d)
+
         obj._setup()
 
         if not inplace:
             return obj
+
+    def clone(self, **kwargs):
+        """clone object params"""
+        return ParamDict({k: self.params[k].clone(**kwargs) for k in self.keys()})
+
+    def copy(self):
+        """copy (detach and clone) object. preserves requires_grad"""
+        out = ParamDict({})
+        for k in self.keys():
+            p = self.params[k]
+            if p.requires_grad:
+                out[k] = torch.nn.Parameter(p.detach().clone())
+            else:
+                out[k] = p.detach().clone()
+        return out
+
+    def detach(self):
+        """detach object (don't clone)"""
+        return ParamDict({k: self.params[k].detach() for k in self.keys()})
+
+    def ones(self):
+        """Return a cloned object filled with ones"""
+        pdict = self.clone()
+        for k in pdict:
+            pdict[k][:] = 1.0
+        return pdict
+
+    def update(self, other):
+        for key in other:
+            self.__setitem__(key, other[key])
+        self._setup()
+
+    def __getitem__(self, key):
+        return self.params[key]
+
+    def __setitem__(self, key, val):
+        self.params[key] = val
+
+    def write_pkl(self, fname, overwrite=False):
+        """
+        Write ParamDict to .pkl file
+
+        Parameters
+        ----------
+        fname : str
+            Path to output .pkl filename
+        overwrite : bool, optional
+            If True overwrite fname if it exists
+        """
+        from bayeslim import io
+        io.write_pkl(fname, self.clone(), overwrite=overwrite)
+
+    @staticmethod
+    def read_pkl(fname, force_cpu=False):
+        """
+        Load .pkl file and return ParamDict object
+
+        Parameters
+        ----------
+        fname : str
+            .pkl file to load as ParamDict
+        force_cpu : bool, optional
+            Force tensors onto CPU, even if they were
+            written from a GPU
+
+        Returns
+        -------
+        ParamDict object
+        """
+        from bayeslim import io
+        pd = io.read_pkl(fname)
+        if force_cpu:
+            for k in pd.keys():
+                pd.params[k] = pd.params[k].cpu()
+        pd._setup()
+
+        return pd
+
+    def operator(self, func, args=(), inplace=False):
+        """
+        Apply a function to each tensor value in self
+        and return the ParamDict object
+        e.g. 
+            ParamDict.operator(torch.log)
+            ParamDict.operator(lambda x: torch.mean(x, dim=0))
+
+        One can also feed additional arguments that are passed
+        to the func, including other ParamDict objects
+        which are iterated with the same keys as self.
+        func kwargs can be handled using lambda as shown above.
+
+        Parameters
+        ----------
+        func : callable
+            Function to call on each tensor in self
+        args : iteratble, optional
+            Additional arguments to pass to func, note
+            that self is treated as first argument.
+        inplace : bool, optional
+            Apply operation inplace and return None
+
+        Returns
+        -------
+        ParamDict object
+        """
+        if inplace:
+            for k in self.keys():
+                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
+                self[k] = func(self[k], *_args)
+        else:
+            out = {}
+            for k in self.keys():
+                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
+                out[k] = func(self[k], *_args)
+
+            return ParamDict(out)
 
     def __mul__(self, other):
         if isinstance(other, ParamDict):
@@ -172,122 +304,6 @@ class ParamDict:
 
     def __iter__(self):
         return (p for p in self.params)
-
-    def clone(self, **kwargs):
-        """detach and clone object"""
-        return ParamDict({k: self.params[k].detach().clone(**kwargs) for k in self.keys()})
-
-    def copy(self):
-        """copy object. preserves requires_grad"""
-        out = ParamDict({})
-        for k in self.keys():
-            p = self.params[k]
-            if p.requires_grad:
-                out[k] = torch.nn.Parameter(p.detach().clone())
-            else:
-                out[k] = p.detach().clone()
-        return out
-
-    def detach(self):
-        """detach object (don't clone)"""
-        return ParamDict({k: self.params[k].detach() for k in self.keys()})
-
-    def ones(self):
-        """Return a cloned object filled with ones"""
-        pdict = self.clone()
-        for k in pdict:
-            pdict[k][:] = 1.0
-        return pdict
-
-    def update(self, other):
-        for key in other:
-            self.__setitem__(key, other[key])
-        self._setup()
-
-    def __getitem__(self, key):
-        return self.params[key]
-
-    def __setitem__(self, key, val):
-        self.params[key] = val
-
-    def write_pkl(self, fname, overwrite=False):
-        """
-        Write ParamDict to .pkl file
-
-        Parameters
-        ----------
-        fname : str
-            Path to output .pkl filename
-        overwrite : bool, optional
-            If True overwrite fname if it exists
-        """
-        from bayeslim import io
-        io.write_pkl(fname, self.clone(), overwrite=overwrite)
-
-    @staticmethod
-    def read_pkl(fname, force_cpu=False):
-        """
-        Load .pkl file and return ParamDict object
-
-        Parameters
-        ----------
-        fname : str
-            .pkl file to load as ParamDict
-        force_cpu : bool, optional
-            Force tensors onto CPU, even if they were
-            written from a GPU
-
-        Returns
-        -------
-        ParamDict object
-        """
-        from bayeslim import io
-        pd = io.read_pkl(fname)
-        if force_cpu:
-            for k in pd.keys():
-                pd.params[k] = pd.params[k].cpu()
-        pd._setup()
-
-        return pd
-
-    def operator(self, func, args=(), inplace=False):
-        """
-        Apply a function to each tensor value in self
-        and return the ParamDict object
-        e.g. 
-            ParamDict.operator(torch.log)
-            ParamDict.operator(lambda x: torch.mean(x, dim=0))
-
-        One can also feed additional arguments that are passed
-        to the func, including other ParamDict objects
-        which are iterated with the same keys as self.
-        func kwargs can be handled using lambda as shown above.
-
-        Parameters
-        ----------
-        func : callable
-            Function to call on each tensor in self
-        args : iteratble, optional
-            Additional arguments to pass to func, note
-            that self is treated as first argument.
-        inplace : bool, optional
-            Apply operation inplace and return None
-
-        Returns
-        -------
-        ParamDict object
-        """
-        if inplace:
-            for k in self.keys():
-                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
-                self[k] = func(self[k], *_args)
-        else:
-            out = {}
-            for k in self.keys():
-                _args = (a if not isinstance(a, (dict, ParamDict)) else a[k] for a in args)
-                out[k] = func(self[k], *_args)
-
-            return ParamDict(out)
 
 
 def model2pdict(model, parameters=True, clone=False, prefix=None):
