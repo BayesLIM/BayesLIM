@@ -2049,10 +2049,10 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
             # now vstack and insert into hess
             for j, prob in enumerate(probs):
                 if i == 0:
-                    hess[j][param] = torch.vstack(_hess)
+                    hess[j][param] = torch.vstack(_hess[j])
 
                 else:
-                    hess[j][param] += torch.vstack(_hess)
+                    hess[j][param] += torch.vstack(_hess[j])
 
     # reshape if rm_offdiag
     if rm_offdiag:
