@@ -1987,6 +1987,10 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
     else:
         raise ValueError
 
+    # check if computing prior, in which case only keep one prob
+    if probs[0].compute == 'prior':
+        probs = probs[:1]
+
     # type check params
     if isinstance(params, (str, np.str_)):
         params = [params]
