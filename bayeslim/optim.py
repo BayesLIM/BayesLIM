@@ -936,7 +936,7 @@ class LogProb(utils.Module):
 
         return target, inp
 
-    def forward_chisq(self, idx=None,  main_params=None, sum_chisq=True, **kwargs):
+    def forward_chisq(self, idx=None, main_params=None, sum_chisq=True, **kwargs):
         """
         Compute and return chisquare
         by evaluating the forward model and comparing
@@ -968,6 +968,10 @@ class LogProb(utils.Module):
 
         # get batch data
         target, inp = self.get_batch_data(idx)
+
+        # if batch_idx == 0, clear prior cache
+        if self.batch_idx == 0:
+            self.clear_prior_cache()
 
         # copy over main_params if needed
         main_params = main_params if main_params is not None else self.main_params
@@ -1039,7 +1043,10 @@ class LogProb(utils.Module):
 
     def forward_prior(self, main_params=None, **kwargs):
         """
-        Compute log prior given state of params tensors
+        Compute log prior given state of params tensors.
+        Note that we assume that the prior is the same
+        for all batch indices, so we only evaluate and return
+        it when batch_idx == 0 to avoid double counting it.
 
         Parameters
         ----------
@@ -1051,6 +1058,10 @@ class LogProb(utils.Module):
         # send over main_params if compute = 'prior'
         if self.compute == 'prior' and main_params is not None:
             self.send_main_params(main_params=main_params)
+
+        # clear existing prior if batch_idx == 0 and compute == 'prior'
+        if self.compute == 'prior' and self.batch_idx == 0:
+            self.clear_prior_cache()
 
         # evaluate log prior
         logprior = torch.zeros(1, device=self.device)
@@ -1074,9 +1085,6 @@ class LogProb(utils.Module):
             for k in self.prior_cache:
                 logprior += self.prior_cache[k]
 
-        # clear prior cache
-        self.clear_prior_cache()
-
         # return log prior
         if self.negate:
             return -logprior
@@ -1098,14 +1106,15 @@ class LogProb(utils.Module):
             If passed also sets self.batch_idx.
         """
         assert self.compute in ['post', 'like', 'prior']
-        prob = None
+        prob = torch.zeros(1, device=self.device)
 
         # evaluate and add likelihood
         if self.compute in ['post', 'like']:
             prob = self.forward_like(idx, **kwargs)
 
         # evalute and add prior
-        if self.compute in ['post', 'prior']:
+        if self.compute in ['post', 'prior'] and self.batch_idx == 0:
+            # only evaluate prior for batch_idx=0 to avoid double counting
             if self.compute == 'prior':
                 # if compute is prior, clear any attached graph tensors
                 # in all modules such they are regenerated during this
@@ -1117,8 +1126,6 @@ class LogProb(utils.Module):
             # evaluate prior
             pr = self.forward_prior(**kwargs)
             prob = pr if prob is None else prob + pr
-
-        self.clear_prior_cache()
 
         return prob
 
@@ -1166,6 +1173,9 @@ class LogProb(utils.Module):
 
         # modify gradients if desired
         self.grad_modify()
+
+        # clear prior cache
+        self.clear_prior_cache()
 
         return loss
 
@@ -1324,8 +1334,9 @@ class LogProb(utils.Module):
         Clear non-leaf tensors with requires_grad (i.e. ones that
         may be stale), specifically the end-result of send_main_params()
         """
-        for name, pname in self._main_names.items():
-            self.model[pname] = self.model[pname].detach()
+        if self._main_names is not None:
+            for name, pname in self._main_names.items():
+                self.model[pname] = self.model[pname].detach()
 
 
 class DistributedLogProb(utils.Module):
