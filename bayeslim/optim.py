@@ -1014,8 +1014,7 @@ class LogProb(utils.Module):
         ----------
         idx : int, optional
             The minibatch index to run, if self.prob
-            is batched. Default is self.batch_idx.
-            Otherwise just evaluate prob.
+            is batched. Default is to run self.batch_idx.
             If passed also sets self.batch_idx.
         main_params : tensor, optional
             If passed, use this main_params instead of self.main_params,
@@ -1025,7 +1024,7 @@ class LogProb(utils.Module):
         chisq, res = self.forward_chisq(idx, main_params=main_params)
 
         # get target and inp data for this batch index
-        target, inp = self.get_batch_data(idx)
+        target, inp = self.get_batch_data()
 
         # use it to get log likelihood normalization
         if hasattr(target, 'icov') and target.icov is not None:
@@ -1041,7 +1040,7 @@ class LogProb(utils.Module):
         else:
             return loglike
 
-    def forward_prior(self, main_params=None, **kwargs):
+    def forward_prior(self, idx=None, main_params=None, **kwargs):
         """
         Compute log prior given state of params tensors.
         Note that we assume that the prior is the same
@@ -1050,10 +1049,17 @@ class LogProb(utils.Module):
 
         Parameters
         ----------
+        idx : int, optional
+            The minibatch index to run, if self.prob
+            is batched. Default is to run self.batch_idx.
+            If passed also sets self.batch_idx.
         main_params : tensor, optional
             If passed, use this main_params instead of self.main_params,
             if self.set_main_params() has been run.
         """
+        if idx is not None:
+            self.batch_idx = idx
+
         main_params = main_params if main_params is not None else self.main_params
         # send over main_params if compute = 'prior'
         if self.compute == 'prior' and main_params is not None:
@@ -1106,11 +1112,14 @@ class LogProb(utils.Module):
             If passed also sets self.batch_idx.
         """
         assert self.compute in ['post', 'like', 'prior']
+        if idx is not None:
+            self.batch_idx = idx
+
         prob = torch.zeros(1, device=self.device)
 
         # evaluate and add likelihood
         if self.compute in ['post', 'like']:
-            prob = self.forward_like(idx, **kwargs)
+            prob = self.forward_like(**kwargs)
 
         # evalute and add prior
         if self.compute in ['post', 'prior'] and self.batch_idx == 0:
@@ -1143,7 +1152,7 @@ class LogProb(utils.Module):
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
         """
-        return self.forward(idx, **kwargs)
+        return self.forward(idx=idx, **kwargs)
 
     def closure(self):
         """
@@ -1158,11 +1167,13 @@ class LogProb(utils.Module):
         if self.grad_type == 'accumulate':
             loss = 0
             for i in range(self.Nbatch):
-                out = self(i)
+                self.batch_idx = i
+                out = self()
                 if out.requires_grad:
                     out.backward()
                 loss = loss + out.detach()
             loss = loss / self.Nbatch
+            self.batch_idx = 0
 
         # if stochastic, just run current batch, then backprop
         elif self.grad_type == 'stochastic':
@@ -1351,6 +1362,11 @@ class DistributedLogProb(utils.Module):
     Note: this assumes all devices are on the same
     node (i.e. devices can pass information to each other directly).
     For multi-node distributed training see pytorch DDP.
+
+    Note: assumes GPU parallelism is across data not parameters,
+    thus when evaluating the prior, we only compute it
+    for one GPU (the zeroth), and the other GPUs we
+    only compute the likelihood
     """
     def __init__(self, probs, device=None, check=True):
         """
@@ -1368,6 +1384,11 @@ class DistributedLogProb(utils.Module):
             self.check()
         self.device = device if device is not None else probs[0].device
         self.collect_main_params()
+
+        # make sure we aren't double counting the prior
+        if self.probs[0].compute == 'post':
+            for prob in self.probs[1:]:
+                prob.compute = 'like'
 
     def check(self):
         """
@@ -1466,14 +1487,13 @@ class DistributedLogProb(utils.Module):
 
         # evaluate closures in parallel
         loss = []
-        for prob in self.probs:
+        for i, prob in enumerate(self.probs):
+            if self.compute == 'prior' and i > 0: continue  # don't double count prior
             loss.append(prob.closure())
-
-        # synchronize
-        torch.cuda.synchronize(self.devices)
 
         # collect gradients
         for i, prob in enumerate(self.probs):
+            if self.compute == 'prior' and i > 0: continue  # don't double count prior
             if i == 0:
                 self.main_params.grad = prob.main_params.grad.to(self.device)
             else:
@@ -1507,7 +1527,9 @@ class DistributedLogProb(utils.Module):
 
     @compute.setter
     def compute(self, val):
-        for prob in self.probs:
+        for i, prob in enumerate(self.probs):
+            if val == 'post' and i > 0:
+                val = 'like'
             prob.compute = val
 
     @property
@@ -1920,123 +1942,130 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     return icov
 
 
-def _hessian(func, inputs, vectorize=False, N=None):
+def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
     """
-    A close copy of torch.autograd.functional.hessian but
-    with some added functionality
-    
+    Compute the hessian for a LogProb object. Note this
+    purposely avoids torch.autograd.functional.hessian
+    because it doesn't seem to parallelize well with
+    how DistributedLogProb handles multi-GPU case.
+
+    Returns a ParamDict object or a list of such
+    with str keys and tensor values.
+
     Parameters
     ----------
-    func : callable
-        A function that takes inputs and returns a scalar
-    inputs : tensor
-        Inputs to func, over which to compute hessian
+    prob : LogProb, DistributedLogProb, list
+        LogProb forward model for computing hessian
+        with respect to. Can be a list of independent
+        LogProb objects on different devices
+    params : str or list
+        Name of parameters with prob as root
+        (e.g. model.rime.beam.params or main_params)
+        to compute hessian for. Can also be a list of
+        parameter names.
+    N : ParamDict, int, optional
+        Compute hessian for first N elements in pdict.
     vectorize : bool, optional
-        Kwarg to torchautograd.functional.hessian()
-    N : int, optional
-        If provided, only compute hessian[:N, :] component
-        of the hessian, such that output is non-square.
-
-    Returns
-    -------
-    tensor
-    """
-    def jac_func(*inputs, N=N):
-        jac = torch.autograd.functional.jacobian(func, inputs, create_graph=True)
-        if N is not None:
-            jac = (jac[0][:N],)
-        return jac
-
-    res = torch.autograd.functional.jacobian(jac_func, inputs, vectorize=vectorize)
-    return res[0]
-
-
-def _pool_hessian(inp):
-    """
-    takes (args, kwargs) as input and passes to compute_hessian()
-    """
-    args, kwargs = inp
-    return compute_hessian(*args, **kwargs)
-
-
-def compute_hessian(prob, pdict, rm_offdiag=False, Npdict=None, vectorize=False):
-    """
-    Compute Hessian of prob with respect to params.
-    Note that this edits params in prob inplace!
-
-    Parameters
-    ----------
-    prob : optim.LogProb object
-        Log posterior object
-    pdict : ParamDict object
-        Holding parameters of prob for which to compute hessian,
-        and the values at which to compute it
+        Not implemented yet. See torch.autograd.grad()
     rm_offdiag : bool, optional
-        If True, only keep the diagonal of the Hessian and
-        reshape to match input params shape.
-    Npdict : dict, optional
-        N parameter, see optim._hessian(), for each key in pdict
-    vectorize : bool, optional
-        kwarg for torch.autograd.functional.hessian
+        Get rid of off diagonal components when computing
+        the hessian. Note that due to autograd limitations,
+        we still have to compute the off diagonal, but
+        we just truncate them afterwards to save space.
 
     Returns
     -------
-    ParamDict object
-        Hessian of prob
+    ParamDict or list
     """
-    if isinstance(prob, DistributedLogProb):
-        # run hessian for each submodule in multiproc
-        import multiprocess as mp
-        if mp.get_start_method(True) is None:
-            mp.set_start_method('spawn')
-        Nproc = len(prob.probs)
-        kwgs = dict(rm_offdiag=rm_offdiag, Npdict=Npdict, vectorize=vectorize)
-        iterable = []
-        for p in prob.probs:
-            pd = pdict.clone()
-            pd.push(p.device)
-            iterable.append(((p, pd), kwgs))
-        with mp.Pool(Nproc) as pool:
-            hess = pool.map(_pool_hessian, iterable)
+    # type check prob
+    if isinstance(prob, LogProb):
+        probs = [prob]
+    elif isinstance(prob, DistributedLogProb):
+        probs = prob.probs
+    elif isinstance(prob, list):
+        probs = prob
+    else:
+        raise ValueError
 
-        return hess
+    # type check params
+    if isinstance(params, (str, np.str_)):
+        params = [params]
 
-    # get all leaf variables on prob
-    named_params = prob.named_params
+    # type check N
+    if isinstance(N, (int, np.integer)):
+        N = {k: N for k in params}
 
-    # unset all named params
-    prob.unset_param(named_params)
+    # generate list of pdict for each LogProb
+    pdict = [paramdict.ParamDict({p: prob[p] for p in params}) for prob in probs]
 
-    # iterate over keys in pdict
-    hess = paramdict.ParamDict({})
-    for param in pdict:
-        # setup func
-        inp = pdict[param]
-        shape = inp.shape
-        _N = None if Npdict is None else Npdict[param]
-        N2 = shape.numel()
-        N1 = _N if _N is not None else N2
-        def func(x):
-            utils.set_model_attr(prob, param, x, clobber_param=True)
-            return prob()
-        # iterate over batches
-        for i in range(prob.Nbatch):
-            prob.batch_idx = i
-            h = _hessian(func, inp, N=_N, vectorize=vectorize).reshape(N1, N2)
-            if rm_offdiag:
-                h = h.diag().reshape(shape)
-            if i == 0:
-                H = h
-            else:
-                H += h
+    ## TODO: see torch.autograd.functional.jacobian for how to implement
+    ## vectorize=True using autograd.grad(..., is_grad_batched=True)
+    if vectorize:
+        raise NotImplementedError
 
-        hess[param] = H
+    hess = [paramdict.ParamDict({}) for i in range(len(probs))]
 
-        # unset param
-        prob.unset_param(param)
+    # get max Nbatch across all probs
+    Nbatch = max([prob.Nbatch for prob in probs])
 
-    # make every key in named_params a leaf variable again
-    prob.set_param(named_params)
+    # iterate over params (move up to innermost loop? will this increase memory too much?)
+    for param in params:
+        # get number of elements in this parameter
+        n = N[param] if N is not None else pdict[0][param].numel()
+
+        # iterate over Nbatch
+        for i in range(Nbatch):
+
+            # iterate over LogProb objects and get gradients of output
+            grads = {j: None for j in range(len(probs))}
+            for j, prob in enumerate(probs):
+                # perform forward pass for each LogProb if this batch_idx exists
+                if i < prob.Nbatch:
+                    prob.batch_idx = i
+                    out = prob()
+
+                    # get flat gradient
+                    grads[j] = torch.autograd.grad(out, pdict[j][param], create_graph=True, allow_unused=True)[0].flatten()
+
+            # now setup hessian (grad of grad)
+            _hess = [[] for prob in probs]
+
+            # get the first n rows of the hessian: this is where vectorize=True would go...
+            # note that this particular FOR loop ordering (first n, then probs) is what makes
+            # this parallelize well over multiple probs, not sure why...
+            for k in range(n):
+                for j, prob in enumerate(probs):
+                    # skip if no gradient computed
+                    if grads[j] is None: continue
+
+                    # compute a row of the hessian
+                    h = torch.autograd.grad(grads[j][k], pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
+
+                    if rm_offdiag:
+                        h = h[k]
+
+                    _hess[j].append(h)
+
+            # now vstack and insert into hess
+            for j, prob in enumerate(probs):
+                if i == 0:
+                    hess[j][param] = torch.vstack(_hess)
+
+                else:
+                    hess[j][param] += torch.vstack(_hess)
+
+    # reshape if rm_offdiag
+    if rm_offdiag:
+        for j, h in enumerate(hess):
+            for param in h:
+                if N is None:
+                    h[param] = h[param].reshape(pdict[j][param].shape)
+                else:
+                    h[param] = h[param].flatten()
+
+    if len(probs) == 1:
+        # just a single logprob
+        hess = hess[0]
 
     return hess
 
