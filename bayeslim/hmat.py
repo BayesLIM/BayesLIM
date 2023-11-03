@@ -108,7 +108,10 @@ class DenseMat(BaseMat):
         """
         H = self.H.T if transpose else self.H
         H = H.conj() if transpose and self._complex else H
-        result = H @ vec
+        if not self._complex and torch.is_complex(vec):
+            result = torch.complex(H @ vec.real, H @ vec.imag)
+        else:
+            result = H @ vec
         if out is not None:
             out[:] += result
             result = out
@@ -137,7 +140,10 @@ class DenseMat(BaseMat):
         """
         H = self.H.T if transpose else self.H
         H = H.conj() if transpose and self._complex else H
-        result = H @ mat
+        if not self._complex and torch.is_complex(mat):
+            result = torch.complex(H @ mat.real, H @ mat.imag)
+        else:
+            result = H @ mat
         if out is not None:
             out[:] += result
             result = out
@@ -430,7 +436,7 @@ class TriangMat(BaseMat):
         L : tensor
             A 2D matrix with dense lower (upper)
             components, or a 1D array indexed with
-            torch.tril(u)_indices()
+            torch.tril_indices()
         lower : bool, optional
             If True, L is represented as lower triangular,
             otherwise upper triangular
@@ -459,6 +465,7 @@ class TriangMat(BaseMat):
         self.lower = lower
         self._shape = shape
         self._diag_idx = torch.where(self.idx[0] == self.idx[1])[0]
+        self._complex = torch.is_complex(L)
 
     @property
     def shape(self):
@@ -480,7 +487,10 @@ class TriangMat(BaseMat):
         L = self.to_dense(transpose=transpose)
 
         # peform matmul
-        result = L @ vec
+        if not self._complex and torch.is_complex(vec):
+            result = torch.complex(L @ vec.real, L @ vec.imag)
+        else:
+            result = L @ vec
 
         # copy to out if needed
         if out is not None:
@@ -612,7 +622,10 @@ class SparseMat(BaseMat):
 
         # multiply by left-hand and right-hand modes
         assert V is not None
-        result = U @ (V @ vec)
+        if not self._complex and torch.is_complex(vec):
+            result = torch.complex(U @ (V @ vec.real), U @ (V @ vec.imag))
+        else:
+            result = U @ (V @ vec)
 
         if self.Hdiag is not None:
             N = len(self.Hdiag)
@@ -662,7 +675,10 @@ class SparseMat(BaseMat):
 
         # multiply by left-hand and right-hand modes
         assert V is not None
-        result = U @ (V @ mat)
+        if not self._complex and torch.is_complex(mat):
+            result = torch.complex(U @ (V @ mat.real), U @ (V @ mat.imag))
+        else:
+            result = U @ (V @ mat)
 
         if self.Hdiag is not None:
             N = len(self.Hdiag)
@@ -793,7 +809,7 @@ class ZeroMat(BaseMat):
 
     def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         size = self.shape[0] if not transpose else self.shape[1]
-        result = torch.zeros(size, device=self.device, dtype=self.dtype)
+        result = torch.zeros(size, device=self.device, dtype=vec.dtype)
         if out is not None:
             out[:] += result
             result = out
@@ -802,7 +818,7 @@ class ZeroMat(BaseMat):
 
     def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         size = self.shape[0] if not transpose else self.shape[1]
-        result = torch.zeros((size, mat.shape[1]), device=self.device, dtype=self.dtype)
+        result = torch.zeros((size, mat.shape[1]), device=self.device, dtype=mat.dtype)
         if out is not None:
             out[:] += result
             result = out
@@ -877,7 +893,7 @@ class OneMat(BaseMat):
 
     def mat_vec_mul(self, vec, transpose=False, out=None, **kwargs):
         vsum = vec.sum(0) * self.scalar
-        result = torch.ones(self.shape[0], device=self.device, dtype=self.dtype) * vsum
+        result = torch.ones(self.shape[0], device=self.device, dtype=vec.dtype) * vsum
         if out is not None:
             out[:] += result
             result = out
@@ -886,7 +902,7 @@ class OneMat(BaseMat):
 
     def mat_mat_mul(self, mat, transpose=False, out=None, **kwargs):
         msum = mat.sum(dim=0, keepdims=True) * self.scalar
-        result = torch.ones(self.shape[0], mat.shape[1]) * msum
+        result = torch.ones(self.shape[0], mat.shape[1], device=self.device, dtype=mat.dtype) * msum
         if out is not None:
             out[:] += result
             result = out
@@ -1351,23 +1367,57 @@ class SolveMat(BaseMat):
             if ndim == 1: vec = vec[:, None]
 
             # do forward sub
-            result = torch.linalg.solve_triangular(A, vec, upper=not self.lower)
+            result = self._solve_tri(A, vec, upper=not self.lower)
 
             # check if we need to do backward sub
             if chol:
-                result = torch.linalg.solve_triangular(A.T.conj(), result, upper=self.lower)
+                result = self._solve_tri(A.T.conj(), result, upper=self.lower)
 
             if ndim == 1:
                 result = result.squeeze()
         else:
             # generic solve
-            result = torch.linalg.solve(A, vec)
+            result = self._solve(A, vec)
 
         if out is not None:
             out[:] += result
             result = out
 
         return result
+
+    def _solve_tri(self, A, B, upper=False, **kwargs):
+        """
+        shallow wrapper around torch.linalg.solve_triangular
+        handling complex inputs
+        """
+        if torch.is_complex(B) and not torch.is_complex(A):
+            # handle complex input
+            rB = B[:, None] if B.ndim == 1 else B
+            rB = torch.cat([rB.real, rB.imag], dim=-1)
+            out = torch.linalg.solve_triangular(A, rB, upper=upper, **kwargs)
+            out = torch.complex(out[:, out.shape[1]//2:], out[:, :out.shape[1]//2])
+            if B.ndim == 1:
+                out = out[:, 0]
+            return out
+        else:
+            return torch.linalg.solve_triangular(A, B, upper=upper, **kwargs)
+
+    def _solve(self, A, B, **kwargs):
+        """
+        shallow wrapper around torch.linalg.solve
+        handling complex inputs
+        """
+        if torch.is_complex(B) and not torch.is_complex(A):
+            # handle complex input
+            rB = B[:, None] if B.ndim == 1 else B
+            rB = torch.cat([rB.real, rB.imag], dim=-1)
+            out = torch.linalg.solve(A, rB, **kwargs)
+            out = torch.complex(out[:, out.shape[1]//2:], out[:, :out.shape[1]//2])
+            if B.ndim == 1:
+                out = out[:, 0]
+            return out
+        else:
+            return torch.linalg.solve(A, B, **kwargs)
 
     def mat_mat_mul(self, mat, **kwargs):
         """
@@ -1384,7 +1434,7 @@ class SolveMat(BaseMat):
             self.device = device
 
     def to_dense(self, **kwargs):
-        return self(torch.eye(self.shape[1], device=self.device), **kwargs)
+        return self(torch.eye(self.shape[1], device=self.device, dtype=self.dtype), **kwargs)
 
     def to_transpose(self):
         if self.tri:
