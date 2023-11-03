@@ -490,8 +490,6 @@ class LogProb(utils.Module):
         For any call to self, the values from self.main_params are
         copied over to submodules before forward model evaluation.
 
-        Note: assumes all params are of utils._float() dtype.
-
         Parameters
         ----------
         model_params : list, optional
@@ -542,6 +540,8 @@ class LogProb(utils.Module):
         self._main_devices = None
         self._main_index = None
         self._main_names = None
+        self._main_dtypes = None
+        self._main_dtype = None
         if LM is not None and not utils.check_devices(LM.device, self.device):
             LM = copy.deepcopy(LM)
             LM.push(self.device)
@@ -556,6 +556,7 @@ class LogProb(utils.Module):
             self._main_devices = {}
             self._main_index = {}
             self._main_names = {}
+            self._main_dtypes = {}
             for param in model_params:
                 # get (multi-)indexing if desired
                 if isinstance(param, str):
@@ -610,8 +611,17 @@ class LogProb(utils.Module):
                 self._main_devices[name] = device
                 self._main_index[name] = idx
                 self._main_names[name] = param
+                self._main_dtypes[name] = p.dtype
 
             self._main_N = N
+
+            # determine main_dtype: this should be highest resolution dtype of all dtypes
+            for i, dtype in enumerate(self._main_dtypes.values()):
+                if i == 0:
+                    self._main_dtype = dtype
+                else:
+                    if torch.finfo(dtype).resolution < torch.finfo(self._main_dtype).resolution:
+                        self._main_dtype = dtype
 
             # collect values from leaf tensors and insert to main_params
             self.collect_main_params()
@@ -755,21 +765,20 @@ class LogProb(utils.Module):
             collect sub-params and return tensor.
         """
         if self._main_indices is not None and len(self._main_indices) > 0:
-            # TODO: relax float (cfloat?) assumption here...
-            params = torch.zeros(self._main_N, dtype=utils._float(), device=self.device)
+            params = torch.zeros(self._main_N, dtype=self._main_dtype, device=self.device)
             for k in self._main_indices:
                 name = self._main_names[k]
                 idx, indices = self._main_index[k], self._main_indices[k]
                 if idx is None:
-                    params[indices] = self.model[name].detach().to(self.device).to(utils._float()).ravel()
+                    params[indices] = self.model[name].detach().to(self.device).to(self._main_dtype).flatten()
                 else:
                     if not isinstance(idx, list):
                         # single index
-                        params[indices] = self.model[name][idx].detach().to(self.device).to(utils._float()).ravel()
+                        params[indices] = self.model[name][idx].detach().to(self.device).to(self._main_dtype).flatten()
                     else:
                         for _idx, _inds in zip(idx, indices):
                             # multi-index
-                            params[_inds] = self.model[name][_idx].detach().to(self.device).to(utils._float()).ravel()
+                            params[_inds] = self.model[name][_idx].detach().to(self.device).to(self._main_dtype).flatten()
 
             if not inplace:
                 return params
@@ -856,6 +865,7 @@ class LogProb(utils.Module):
                 idx = self._main_index[name]
                 shape = self._main_shapes[name]
                 device = self._main_devices[name]
+                dtype = self._main_dtypes[name]
 
                 if not isinstance(inds, list):
                     # turn single or no indexing into multi-index form
@@ -875,6 +885,9 @@ class LogProb(utils.Module):
 
                     if not utils.check_devices(value.device, device):
                         value = value.to(device)
+
+                    if value.dtype != dtype:
+                        value = value.to(dtype)
 
                     # only fill if this is first index of this param
                     # only add if this isn't first index of this param
