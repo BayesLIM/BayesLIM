@@ -175,24 +175,23 @@ class BFGS:
         if self.H is None:
             # if H is not defined this is the first iteration
             # so we use Eqn 6.20 from [1]
-            a = (y @ s) / (y @ y)
-            self.H = a * torch.eye(self._numel(), dtype=s.dtype, device=s.device)
+            a = (y.conj() @ s).real / (y.conj() @ y).real
+            self.H = a * torch.eye(self._numel(), dtype=self.H.dtype, device=self.H.device)
 
-        rho = 1. / (y @ s)
+        rho = 1. / (y.conj() @ s).real
 
         # apply H update: requires sufficient curvature
         if (1. / rho) > 1e-10:
             # perform BFGS update
             # V = (I - rho y @ s^T)
-            V = -rho * torch.outer(y, s)
+            V = -rho * torch.outer(y.conj(), s).real
             V.diagonal().add_(1.)
 
             # H update
             self.H = V.T @ self.H @ V
 
-            # re-use allocated V for bias update
-            torch.outer(rho * s, s, out=V)
-            self.H += V
+            # bias update
+            self.H += torch.outer(rho * s.conj(), s).real
 
             # cache these for debugging, generally of negligible size
             self._s, self._y, self._rho, self._alpha = s, y, rho, alpha
@@ -221,7 +220,11 @@ class BFGS:
         if self.H.ndim == 1:
             return self.H * vec
         else:
-            return self.H @ vec
+            # catch case where H is stored as real but vec is complex
+            if torch.is_complex(vec):
+                return torch.complex(self.H @ vec.real, self.H @ vec.imag)
+            else:
+                return self.H @ vec
 
     @torch.no_grad()
     def step(self, closure):
@@ -274,7 +277,7 @@ class BFGS:
                 alpha = self.lr
 
             # directional derivative
-            gp = flat_grad @ p
+            gp = (flat_grad.conj() @ p).real
 
             # check if directional derivative is below tolerance
             if gp > -self.tolerance_change:
@@ -425,9 +428,9 @@ class LBFGS(BFGS):
 
         # compute starting Hdiag
         if self.H is None:
-            self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=self.params[0].dtype)
+            self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=utils._float())
         else:
-            self._Hdiag = torch.median(self.H.diagonal())
+            self._Hdiag = torch.median(self.H.diagonal().real)
 
 
     def update_hessian(self, s, y, alpha=None):
@@ -445,7 +448,7 @@ class LBFGS(BFGS):
             Only provided to cache along with s, y, and rho
         """
         # compute rho
-        rho = 1 / (y @ s)
+        rho = 1 / (y.conj() @ s).real
 
         # check if starting Hessian needs defining
         if self.H is None:
@@ -453,7 +456,7 @@ class LBFGS(BFGS):
             self.H = hmat.DiagMat(self._numel(),
                                   torch.tensor([1.],
                                   device=self.params[0].device,
-                                  dtype=self.params[0].dtype))
+                                  dtype=utils._float()))
 
         # only update if sufficient curvature
         if (1. / rho) > 1e-10:
@@ -481,7 +484,7 @@ class LBFGS(BFGS):
 
             # check if we should update diagonal
             if self.update_Hdiag:
-                new_Hdiag = 1. / (rho * (y @ y))
+                new_Hdiag = 1. / (rho * (y.conj() @ y).real)
                 prev_Hdiag = 1. if self._Hdiag is None else self._Hdiag
                 self.H.scalar_mul(new_Hdiag / prev_Hdiag)
                 self._Hdiag = new_Hdiag
@@ -532,13 +535,13 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
     """
     N = len(s)
     if H0 is None:
-        H0 = torch.tensor(1., dtype=vec.dtype, device=vec.device)
+        H0 = torch.tensor(1., dtype=utils._float(), device=vec.device)
 
     # first loop: iterate backwards from end of queue
     q = vec
     alpha = [None] * N
     for i in reversed(range(N)):
-        alpha[i] = rho[i] * (s[i] @ q)
+        alpha[i] = rho[i] * (s[i].conj() @ q).real
         q = q - alpha[i] * y[i]
 
     # dot q into starting H and then do second loop
@@ -546,7 +549,10 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
         if H0.ndim < 2:
             r = H0 * q
         else:
-            r = H0 @ q
+            if torch.is_complex(q) and not torch.is_complex(H0):
+                r = torch.complex(H0 @ q.real, H0 @ q.imag)
+            else:
+                r = H0 @ q
     elif isinstance(H0, hmat.BaseMat):
         r = H0(q)
     elif isinstance(H0, hmat.HierMat):
@@ -554,7 +560,7 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
 
     # second loop
     for i in range(N):
-        beta = rho[i] * (y[i] @ r)
+        beta = rho[i] * (y[i].conj() @ r).real
         r = r + s[i] * (alpha[i] - beta)
 
     return r
@@ -591,7 +597,7 @@ def implicit_to_dense(H0, s, y):
             if len(H0) == len(s[0]):
                 H0 = torch.diag(H0)
             else:
-                H0 = torch.eye(N, dtype=s[0].dtype, device=s[0].device) * H0
+                H0 = torch.eye(N, dtype=H0.dtype, device=s[0].device) * H0
 
     # setup BFGS class object w/ dummy parameters
     B = BFGS((s[0],), H0=H0)
@@ -1058,7 +1064,7 @@ def strong_wolfe(obj_func, x, alpha, p, f, g, gp,
     # evaluate objective and gradient using initial step
     f_new, g_new = obj_func(x, alpha, p)
     ls_func_evals = 1
-    gp_new = g_new.dot(p)
+    gp_new = g_new.dot(p.conj()).real
 
     # bracket an interval containing a point satisfying the Wolfe criteria
     alpha_prev, f_prev, g_prev, gp_prev = 0, f, g, gp
@@ -1104,7 +1110,7 @@ def strong_wolfe(obj_func, x, alpha, p, f, g, gp,
         gp_prev = gp_new
         f_new, g_new = obj_func(x, alpha, p)
         ls_func_evals += 1
-        gp_new = g_new.dot(p)
+        gp_new = g_new.dot(p.conj()).real
         ls_iter += 1
 
     # reached max number of iterations?
@@ -1154,7 +1160,7 @@ def strong_wolfe(obj_func, x, alpha, p, f, g, gp,
         # Evaluate new point
         f_new, g_new = obj_func(x, alpha, p)
         ls_func_evals += 1
-        gp_new = g_new.dot(p)
+        gp_new = g_new.dot(p.conj()).real
         ls_iter += 1
 
         if f_new > (f + c1 * alpha * gp) or f_new >= bracket_f[low_pos]:

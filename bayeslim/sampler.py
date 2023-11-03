@@ -312,9 +312,9 @@ class HMC(SamplerBase):
                 if diag_mass[k]:
                     # if diag, hess_L is trivially computed
                     if isinstance(mat, torch.Tensor):
-                        hess_L[k] = hmat.HadamardMat(1 / mat)
+                        hess_L[k] = hmat.HadamardMat(torch.true_divide(1, mat))
                     elif isinstance(mat, hmat.BaseMat):                        
-                        hess_L[k] = hmat.HadamardMat(1 / mat.diagonal())
+                        hess_L[k] = hmat.HadamardMat(torch.true_divide(1, mat.diagonal()))
                 else:
                     # appropriate hess_L computed from linear solve with cov_L.T
                     hess_L[k] = hmat.SolveMat(hmat.TransposedMat(mat), tri=True, lower=False, chol=False)
@@ -327,11 +327,11 @@ class HMC(SamplerBase):
                 if diag_mass[k]:
                     # if diag, cov_L = 1 / hess_L
                     if isinstance(mat, torch.Tensor):
-                        cov_L[k] = hmat.HadamardMat(1 / mat)
+                        cov_L[k] = hmat.HadamardMat(torch.true_divide(1, mat))
                     elif isinstance(mat, hmat.DiagMat):
-                        cov_L[k] = hmat.HadamardMat(1 / mat.diagonal())
+                        cov_L[k] = hmat.HadamardMat(torch.true_divide(1, mat.diagonal()))
                     elif isinstance(mat, hmat.HadamardMat):
-                        cov_L[k] = hmat.HadamardMat(1 / mat.H)
+                        cov_L[k] = hmat.HadamardMat(torch.true_divide(1, mat.H))
                 else:
                     assert not isinstance(mat, (hmat.SolveMat, hmat.SolveHierMat,
                                                 hmat.DiagMat, hmat.HadamardMat,
@@ -368,7 +368,7 @@ class HMC(SamplerBase):
                         L = hess_L[k].diagonal()
                 elif isinstance(hess_L[k], (hmat.BaseMat, hmat.HierMat)):
                     L = hess_L[k].diagonal()
-                self.logdetM += 2 * sum(torch.log(L)).to(device)
+                self.logdetM += 2 * torch.sum(torch.log(L.real)).to(device)
 
     def K(self, p):
         """
@@ -397,6 +397,8 @@ class HMC(SamplerBase):
             kinetic energy
         """
         if isinstance(p, torch.Tensor):
+            if torch.is_complex(p):
+                p = p.abs()
             K = torch.sum(p**2 / 2)
         else:
             K = 0
@@ -418,6 +420,8 @@ class HMC(SamplerBase):
                     elif isinstance(L, hmat.BaseMat):
                         # direct matmul (dense mass)
                         momentum = L(momentum, transpose=True)
+                if torch.is_complex(momentum):
+                    momentum = momentum.abs()
                 K += torch.sum(momentum**2 / 2)
 
         return K + self.logdetM
@@ -473,21 +477,29 @@ class HMC(SamplerBase):
         for k in self.x:
             x = self.x[k]
             N = x.shape.numel()
-            momentum = torch.randn(N, device=x.device)
+            momentum = torch.randn(N, device=x.device, dtype=x.dtype)
+            if self.diag_mass[k] and momentum.shape != x.shape:
+                momentum = momentum.reshape(x.shape)
             L = self.hess_L[k]
             if L is not None:
                 if isinstance(L, torch.Tensor):
                     if self.diag_mass[k]:
                         momentum = L * momentum
                     else:
-                        momentum = L @ momentum
+                        if torch.is_complex(momentum) and not torch.is_complex(L):
+                            momentum = torch.complex(L @ momentum.real, L @ momentum.imag)
+                        else:
+                            momentum = L @ momentum
                 else:
                     if isinstance(L, hmat.HierMat):
                         momentum = L(momentum, out=torch.zeros_like(momentum))
                     else:
                         momentum = L(momentum)
 
-            p[k] = momentum.reshape(x.shape)
+            if not self.diag_mass[k]:
+                momentum = momentum.reshape(x.shape)
+
+            p[k] = momentum
 
         return ParamDict(p)
 
@@ -1295,8 +1307,8 @@ def hoffman_uturn(q_minus, q_plus, p_minus, p_plus):
     minus_angle = 0
     plus_angle = 0
     for key in q_minus:
-        minus_angle += (q_plus[key] - q_minus[key]).ravel() @ p_minus[key].ravel()
-        plus_angle += (q_plus[key] - q_minus[key]).ravel() @ p_plus[key].ravel()
+        minus_angle += ((q_plus[key] - q_minus[key]).conj().ravel() @ p_minus[key].ravel()).real
+        plus_angle += ((q_plus[key] - q_minus[key]).conj().ravel() @ p_plus[key].ravel()).real
 
     return (minus_angle < 0) or (plus_angle < 0)
 
@@ -1423,7 +1435,7 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
                     q += eps * (cov_L**2 * p)
                 else:
                     # treat cov_L as lower-tri
-                    q += eps * (cov_L @ (cov_L.T @ p.ravel())).reshape(p.shape)
+                    q += eps * (cov_L @ (cov_L.T @ p.flatten())).reshape(p.shape)
 
     # iterate over steps
     for i in range(N):
