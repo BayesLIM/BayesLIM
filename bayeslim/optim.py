@@ -616,11 +616,12 @@ class LogProb(utils.Module):
             self._main_N = N
 
             # determine main_dtype: this should be highest resolution dtype of all dtypes
+            # i.e. complex128 > float64, float64 > float32
             for i, dtype in enumerate(self._main_dtypes.values()):
                 if i == 0:
                     self._main_dtype = dtype
                 else:
-                    if torch.finfo(dtype).resolution < torch.finfo(self._main_dtype).resolution:
+                    if utils._float_resol[dtype] > utils._float_resol[self._main_dtype]:
                         self._main_dtype = dtype
 
             # collect values from leaf tensors and insert to main_params

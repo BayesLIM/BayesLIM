@@ -85,6 +85,16 @@ def _cfloat(numpy=False):
             return np.complex32
 
 
+_float_resol = {
+    torch.float16: 0,
+    torch.complex16: 1,
+    torch.float32 : 2,
+    torch.complex64: 3,
+    torch.float64: 4,
+    torch.complex128: 5,
+}
+
+
 ######################################
 ######### Sky Modeling Tools #########
 ######################################
