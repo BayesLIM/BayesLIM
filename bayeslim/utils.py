@@ -87,7 +87,7 @@ def _cfloat(numpy=False):
 
 _float_resol = {
     torch.float16: 0,
-    torch.complex16: 1,
+    torch.complex32: 1,
     torch.float32 : 2,
     torch.complex64: 3,
     torch.float64: 4,
