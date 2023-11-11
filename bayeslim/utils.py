@@ -2000,8 +2000,8 @@ def flatten(arr, Nelem=None):
 
 
 def _list2slice(inds):
-    """convert list/tuple indexing to slice if possible"""
-    if isinstance(inds, (list, tuple)):
+    """convert list/tuple/tensor indexing to slice if possible"""
+    if isinstance(inds, (list, tuple, torch.Tensor, np.ndarray)):
         if len(inds) == 0:
             return inds
         diff = list(set(np.diff(inds)))

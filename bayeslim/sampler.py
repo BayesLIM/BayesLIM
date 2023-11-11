@@ -414,7 +414,7 @@ class HMC(SamplerBase):
                     elif isinstance(L, hmat.SolveMat):
                         # solve Lm z = momentum (implicit solve)
                         momentum = L(momentum)
-                    elif isinstance(L, hmat.HierMat):
+                    elif isinstance(L, hmat.SolveHierMat):
                         # solve Lm z = momentum (implicit solve)
                         momentum = L(momentum, out=torch.zeros_like(momentum))
                     elif isinstance(L, hmat.BaseMat):
