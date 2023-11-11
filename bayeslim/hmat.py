@@ -1395,7 +1395,7 @@ class SolveMat(BaseMat):
             rB = B[:, None] if B.ndim == 1 else B
             rB = torch.cat([rB.real, rB.imag], dim=-1)
             out = torch.linalg.solve_triangular(A, rB, upper=upper, **kwargs)
-            out = torch.complex(out[:, out.shape[1]//2:], out[:, :out.shape[1]//2])
+            out = torch.complex(out[:, :out.shape[1]//2], out[:, out.shape[1]//2:])
             if B.ndim == 1:
                 out = out[:, 0]
             return out
@@ -1412,7 +1412,7 @@ class SolveMat(BaseMat):
             rB = B[:, None] if B.ndim == 1 else B
             rB = torch.cat([rB.real, rB.imag], dim=-1)
             out = torch.linalg.solve(A, rB, **kwargs)
-            out = torch.complex(out[:, out.shape[1]//2:], out[:, :out.shape[1]//2])
+            out = torch.complex(out[:, :out.shape[1]//2], out[:, out.shape[1]//2:])
             if B.ndim == 1:
                 out = out[:, 0]
             return out
