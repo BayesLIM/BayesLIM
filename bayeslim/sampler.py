@@ -565,7 +565,7 @@ class HMC(SamplerBase):
 
         # evaluate metropolis acceptance
         prob = min([torch.exp(H_start - H_end), torch.tensor(1.)])
-        accept = np.random.rand() < prob
+        accept = torch.isfinite(H_end) and (np.random.rand() < prob)
 
         if accept:
             self.x = q
