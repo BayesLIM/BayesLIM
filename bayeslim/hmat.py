@@ -1356,7 +1356,7 @@ class SolveMat(BaseMat):
         """
         chol = chol if chol is not None else self.chol
         A = self.A if not transpose else self.A.T.conj()
-        lower = lower if not transpose else not lower
+        lower = self.lower if not transpose else not self.lower
         if self.tri:
             # A is triangular
             ndim = vec.ndim
