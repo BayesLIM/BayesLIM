@@ -106,8 +106,7 @@ class DenseMat(BaseMat):
         -------
         tensor
         """
-        H = self.H.T if transpose else self.H
-        H = H.conj() if transpose and self._complex else H
+        H = self.H.T.conj() if transpose else self.H
         if not self._complex and torch.is_complex(vec):
             result = torch.complex(H @ vec.real, H @ vec.imag)
         else:
@@ -138,8 +137,7 @@ class DenseMat(BaseMat):
         -------
         tensor
         """
-        H = self.H.T if transpose else self.H
-        H = H.conj() if transpose and self._complex else H
+        H = self.H.T.conj() if transpose else self.H
         if not self._complex and torch.is_complex(mat):
             result = torch.complex(H @ mat.real, H @ mat.imag)
         else:
@@ -155,8 +153,7 @@ class DenseMat(BaseMat):
         Return a dense form of the matrix
         """
         H = self.H
-        H = H.T if transpose else H
-        H = H.conj() if transpose and self._complex else H
+        H = H.T.conj() if transpose else H
         return H
 
     def to_transpose(self):
@@ -361,8 +358,7 @@ class HadamardMat(BaseMat):
         square : bool, optional
             Square self before multiplying
         """
-        H = self.H.T if transpose else self.H
-        H = H.conj() if transpose and self._complex else H
+        H = self.H.T.conj() if transpose else self.H
         if square:
             H = H**2
         result = H * mat
@@ -377,8 +373,7 @@ class HadamardMat(BaseMat):
         Return a dense form of the matrix
         """
         H = self.H
-        H = H.T if transpose else H
-        H = H.conj() if transpose and self._complex else H
+        H = H.T.conj() if transpose else H
         return H
 
     def to_transpose(self):
@@ -990,13 +985,13 @@ class TransposedMat(BaseMat):
         """
         Matrix-vector multiplication
         """
-        return self._matobj.mat_vec_mul(vec, transpose=transpose==False, **kwargs)
+        return self._matobj.mat_vec_mul(vec, transpose=not transpose, **kwargs)
 
     def mat_mat_mul(self, mat, transpose=False, **kwargs):
         """
         Matrix-matrix multiplication
         """
-        return self._matobj.mat_mat_mul(mat, transpose=transpose==False, **kwargs)
+        return self._matobj.mat_mat_mul(mat, transpose=not transpose, **kwargs)
 
     def __call__(self, vec, **kwargs):
         if vec.ndim == 1:
@@ -1008,7 +1003,7 @@ class TransposedMat(BaseMat):
         """
         Return a dense representation of the matrix
         """
-        return self._matobj.to_dense(transpose=transpose==False)
+        return self._matobj.to_dense(transpose=not transpose)
 
     def to_transpose(self):
         return TransposedMat(self)
@@ -1361,17 +1356,18 @@ class SolveMat(BaseMat):
         """
         chol = chol if chol is not None else self.chol
         A = self.A if not transpose else self.A.T.conj()
+        lower = lower if not transpose else not lower
         if self.tri:
             # A is triangular
             ndim = vec.ndim
             if ndim == 1: vec = vec[:, None]
 
             # do forward sub
-            result = self._solve_tri(A, vec, upper=not self.lower)
+            result = self._solve_tri(A, vec, upper=not lower)
 
             # check if we need to do backward sub
             if chol:
-                result = self._solve_tri(A.T.conj(), result, upper=self.lower)
+                result = self._solve_tri(A.T.conj(), result, upper=lower)
 
             if ndim == 1:
                 result = result.squeeze()
@@ -1439,7 +1435,7 @@ class SolveMat(BaseMat):
     def to_transpose(self):
         if self.tri:
             # if triangular, need to change self.lower arg
-            return SolveMat(self.A.T.conj(), tri=self.tri, lower=self.lower==False, chol=self.chol)
+            return SolveMat(self.A.T.conj(), tri=self.tri, lower=not self.lower, chol=self.chol)
         else:
             return TransposedMat(self)
 
@@ -2165,7 +2161,7 @@ class SolveHierMat(HierMat):
         A10t = None if self.A01 is None else self.A01.to_transpose() 
         A01t = None if self.A10 is None else self.A10.to_transpose()
         Ht = SolveHierMat(A00=self.A00.to_transpose(), A11=self.A11.to_transpose(),
-                          A10=A10t, A01=A01t, lower=self.lower==False, scalar=self.scalar,
+                          A10=A10t, A01=A01t, lower=not self.lower, scalar=self.scalar,
                           trans_solve=self.trans_solve)
         if self._T is None:
             # cache this for repeated calls
