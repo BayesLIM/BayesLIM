@@ -1956,7 +1956,8 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     return icov
 
 
-def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
+def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
+                    ignore_complex=False):
     """
     Compute the hessian for a LogProb object. Note this
     purposely avoids torch.autograd.functional.hessian
@@ -1986,6 +1987,12 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
         the hessian. Note that due to autograd limitations,
         we still have to compute the off diagonal, but
         we just truncate them afterwards to save space.
+    ignore_complex : bool, optional
+        If True and if params is complex-valued, ignore the
+        component of the hessian derived from the imaginary
+        gradients (i.e. only compute the component of the
+        hessian from the real gradients). Note that
+        either way, the output hessian is always real-valued.
 
     Returns
     -------
@@ -2057,7 +2064,13 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False):
                     if grads[j] is None: continue
 
                     # compute a row of the hessian
-                    h = torch.autograd.grad(grads[j][k], pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
+                    if torch.is_complex(pdict[j][param]) and not ignore_complex:
+                        # if param is complex, compute grad for real and imag and then sum
+                        h = torch.autograd.grad(grads[j][k].real, pdict[j][param], retain_graph=True, allow_unused=True)[0].flatten().real
+                        h += torch.autograd.grad(grads[j][k].imag, pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten().imag
+
+                    else:
+                        h = torch.autograd.grad(grads[j][k], pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
 
                     if rm_offdiag:
                         h = h[k]
