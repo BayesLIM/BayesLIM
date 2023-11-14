@@ -2066,8 +2066,8 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
                     # compute a row of the hessian
                     if torch.is_complex(pdict[j][param]) and not ignore_complex:
                         # if param is complex, compute grad for real and imag and then sum
-                        h = torch.autograd.grad(grads[j][k].real, pdict[j][param], retain_graph=True, allow_unused=True)[0].flatten().real
-                        h += torch.autograd.grad(grads[j][k].imag, pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten().imag
+                        h = .5 * torch.autograd.grad(grads[j][k].real, pdict[j][param], retain_graph=True, allow_unused=True)[0].flatten().real
+                        h += .5 * torch.autograd.grad(grads[j][k].imag, pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten().imag
 
                     else:
                         h = torch.autograd.grad(grads[j][k], pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
