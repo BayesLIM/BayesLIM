@@ -1957,7 +1957,7 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
 
 
 def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
-                    compute_real=True, cast2real=False):
+                    compute_real=True, cast2real=False, device=None):
     """
     Compute the hessian for a LogProb object. Note this
     purposely avoids torch.autograd.functional.hessian
@@ -1997,6 +1997,13 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
         real component of the hessian matrix. If compute_real == False,
         then only store the imaginary component. Otherwise, return
         the complex hessian as-is.
+    device : str, optional
+        Push each row of the computed hessian to this device
+        while we compute the hessian. Default is to leave
+        the hessian on the device it was computed (prob's device).
+        E.g. if prob lives on a GPU and we are computing a large hessian,
+        we can push each row to the CPU so that we don't run out of
+        memory on the GPU.
 
     Returns
     -------
@@ -2081,6 +2088,9 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
                             h = h.imag
                         else:
                             h = h.real
+
+                    if device is not None:
+                        h = utils.push(h, device)
 
                     if rm_offdiag:
                         h = h[k]
