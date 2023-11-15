@@ -1957,7 +1957,7 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
 
 
 def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
-                    compute_real=True):
+                    compute_real=True, cast2real=False):
     """
     Compute the hessian for a LogProb object. Note this
     purposely avoids torch.autograd.functional.hessian
@@ -1992,6 +1992,11 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
         the hessian from the real component of the gradient.
         Otherwise, compute the hessian from the imaginary
         component of the gradient.
+    cast2real : bool, optional
+        If True and if the params is complex, only store the
+        real component of the hessian matrix. If compute_real == False,
+        then only store the imaginary component. Otherwise, return
+        the complex hessian as-is.
 
     Returns
     -------
@@ -2070,6 +2075,12 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
                         g = grads[j][k].real
 
                     h = torch.autograd.grad(g, pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
+
+                    if cast2real:
+                        if torch.is_complex(pdict[j][param]) and not compute_real:
+                            h = h.imag
+                        else:
+                            h = h.real
 
                     if rm_offdiag:
                         h = h[k]
