@@ -84,7 +84,6 @@ def _cfloat(numpy=False):
         elif float_type == torch.float16:
             return np.complex32
 
-
 _float_resol = {
     torch.float16: 0,
     torch.complex32: 1,
@@ -92,6 +91,12 @@ _float_resol = {
     torch.complex64: 3,
     torch.float64: 4,
     torch.complex128: 5,
+}
+
+_cfloat2float = {
+    torch.complex32: torch.float16,
+    torch.complex64: torch.float32,
+    torch.complex128: torch.float64,
 }
 
 

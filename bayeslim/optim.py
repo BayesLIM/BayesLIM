@@ -1956,8 +1956,8 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     return icov
 
 
-def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
-                    compute_real=True, cast2real=False, device=None):
+def compute_hessian(prob, params, Nstart=None, Nrows=None, vectorize=False,
+                    rm_offdiag=False, grad_real=True, cast2real=False, out_ftype=None):
     """
     Compute the hessian for a LogProb object. Note this
     purposely avoids torch.autograd.functional.hessian
@@ -1978,8 +1978,10 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
         (e.g. model.rime.beam.params or main_params)
         to compute hessian for. Can also be a list of
         parameter names.
-    N : ParamDict, int, optional
-        Compute hessian for first N elements in pdict.
+    Nstart : ParamDict, int, optional
+        Starting row of the hessian to compute, default is zeroth row.
+    Nrows : ParamDict, int, optional
+        Number of rows of the hessian to compute, default is all rows.
     vectorize : bool, optional
         Not implemented yet. See torch.autograd.grad()
     rm_offdiag : bool, optional
@@ -1987,23 +1989,20 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
         the hessian. Note that due to autograd limitations,
         we still have to compute the off diagonal, but
         we just truncate them afterwards to save space.
-    compute_real : bool, optional
+    grad_real : bool, optional
         If True and if params is complex-valued, only compute
         the hessian from the real component of the gradient.
         Otherwise, compute the hessian from the imaginary
         component of the gradient.
     cast2real : bool, optional
         If True and if the params is complex, only store the
-        real component of the hessian matrix. If compute_real == False,
+        real component of the hessian matrix. If grad_real == False,
         then only store the imaginary component. Otherwise, return
         the complex hessian as-is.
-    device : str, optional
-        Push each row of the computed hessian to this device
-        while we compute the hessian. Default is to leave
-        the hessian on the device it was computed (prob's device).
-        E.g. if prob lives on a GPU and we are computing a large hessian,
-        we can push each row to the CPU so that we don't run out of
-        memory on the GPU.
+    out_ftype : dtype object, optional
+        Cast hessian from default float type to this float type
+        (e.g. float64 -> float32). Default is to keep default type.
+        Note: to convert from complex->float use cast2real=True.
 
     Returns
     -------
@@ -2027,9 +2026,11 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
     if isinstance(params, (str, np.str_)):
         params = [params]
 
-    # type check N
-    if isinstance(N, (int, np.integer)):
-        N = {k: N for k in params}
+    # type check Nrows
+    if isinstance(Nrows, (int, np.integer)):
+        Nrows = {k: Nrows for k in params}
+    if isinstance(Nstart, (int, np.integer)):
+        Nstart = {k: Nstart for k in params}
 
     # generate list of pdict for each LogProb
     pdict = [paramdict.ParamDict({p: prob[p] for p in params}) for prob in probs]
@@ -2039,15 +2040,35 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
     if vectorize:
         raise NotImplementedError
 
-    hess = [paramdict.ParamDict({}) for i in range(len(probs))]
+    # setup placeholders for hessians
+    hess = [paramdict.ParamDict({}) for j in range(len(probs))]
 
     # get max Nbatch across all probs
     Nbatch = max([prob.Nbatch for prob in probs])
 
     # iterate over params (move up to innermost loop? will this increase memory too much?)
     for param in params:
-        # get number of elements in this parameter
-        n = N[param] if N is not None else pdict[0][param].numel()
+        # get shape of the output hessian (not necessarily square)
+        ntot = pdict[0][param].numel()
+        nstart = Nstart[param] if Nstart is not None else 0
+        nend = Nrows[param] + nstart if Nrows is not None else ntot
+        nend = min([nend, ntot])
+        nrows = nend - nstart
+
+        # get dtype of the hessian
+        if out_ftype is None:
+            dtype = pdict[0][param].dtype
+            if torch.is_complex(pdict[0][param]) and cast2real:
+                dtype = utils._cfloat2float[dtype]
+        else:
+            dtype = out_ftype
+
+        # initialize empty hessian for this param and every prob object
+        for j, prob in enumerate(probs):
+            if rm_offdiag:
+                hess[j][param] = torch.zeros(nrows, device=prob.device, dtype=dtype)
+            else:
+                hess[j][param] = torch.zeros(nrows, ntot, device=prob.device, dtype=dtype)
 
         # iterate over Nbatch
         for i in range(Nbatch):
@@ -2063,60 +2084,48 @@ def compute_hessian(prob, params, N=None, vectorize=False, rm_offdiag=False,
                     # get flat gradient
                     grads[j] = torch.autograd.grad(out, pdict[j][param], create_graph=True, allow_unused=True)[0].flatten()
 
-            # now setup hessian (grad of grad)
-            _hess = [[] for prob in probs]
-
-            # get the first n rows of the hessian: this is where vectorize=True would go...
-            # note that this particular FOR loop ordering (first n, then probs) is what makes
+            # compute nrows of the hessian
+            # note: this is where vectorize=True would go...
+            # note: this particular FOR loop ordering (first n, then probs) is what makes
             # this parallelize well over multiple probs, not sure why...
-            for k in range(n):
+            z = 0
+            for k in range(nstart, nend):
                 for j, prob in enumerate(probs):
                     # skip if no gradient computed
                     if grads[j] is None: continue
 
                     # compute a row of the hessian
-                    if torch.is_complex(pdict[j][param]) and not compute_real:
+                    if torch.is_complex(pdict[j][param]) and not grad_real:
                         g = grads[j][k].imag
 
                     else:
                         g = grads[j][k].real
 
-                    h = torch.autograd.grad(g, pdict[j][param], retain_graph=k < n - 1, allow_unused=True)[0].flatten()
-
-                    if cast2real:
-                        if torch.is_complex(pdict[j][param]) and not compute_real:
-                            h = h.imag
-                        else:
-                            h = h.real
-
-                    if device is not None:
-                        h = utils.push(h, device)
+                    # compute hessian row
+                    h = torch.autograd.grad(g, pdict[j][param], retain_graph=k < nend - 1, allow_unused=True)[0].flatten()
 
                     if rm_offdiag:
                         h = h[k]
 
-                    _hess[j].append(h)
+                    if cast2real:
+                        if torch.is_complex(pdict[j][param]) and not grad_real:
+                            h = h.imag
+                        else:
+                            h = h.real
 
-            # now vstack and insert into hess
-            for j, prob in enumerate(probs):
-                if i == 0:
-                    hess[j][param] = torch.vstack(_hess[j])
+                    if out_ftype is not None:
+                        h = h.to(out_ftype)
 
-                else:
-                    hess[j][param] += torch.vstack(_hess[j])
+                    # add this row to the hessian
+                    hess[j][param][z] += h
+
+                z += 1
 
     # reshape if rm_offdiag
-    if rm_offdiag:
+    if rm_offdiag and Nstart is None and Nrows is None:
         for j, h in enumerate(hess):
             for param in h:
-                if N is None:
-                    h[param] = h[param].reshape(pdict[j][param].shape)
-                else:
-                    h[param] = h[param].flatten()
-
-    if len(probs) == 1:
-        # just a single logprob
-        hess = hess[0]
+                h[param] = h[param].reshape(pdict[j][param].shape)
 
     return hess
 
