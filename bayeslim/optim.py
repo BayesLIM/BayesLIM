@@ -901,7 +901,7 @@ class LogProb(utils.Module):
 
             if not inplace:
                 # collect dictionary of params and return
-                return {k: model[k] for k in self._main_indices}
+                return {k: model[v] for k, v in self._main_names.items()}
 
     @property
     def Nbatch(self):
