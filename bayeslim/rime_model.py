@@ -91,6 +91,10 @@ class RIME(utils.Module):
             appropriately. If a bl in data_bls does not have a redudant
             bl match in sim_bls, it is dropped. Baseline redundancies
             are computed by the array object.
+        device : str, optional
+            This is the device that the output visibilities will be on.
+            Note this doesn't necessarily have to be the same device
+            that sky or beam, etc are on.
         name : str, optional
             Name for this object, stored as self.name
         verbose : bool, optional
@@ -107,6 +111,14 @@ class RIME(utils.Module):
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
  
+    def push(self, device):
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.device = device
+            for k, v in self._sim2data.items():
+                if v is not None:
+                    self._sim2data[k] = utils.push(v, device)
+
     @property
     def Ntimes_all(self):
         return len(self.all_sim_times)
@@ -180,7 +192,7 @@ class RIME(utils.Module):
             self._sim2data = {i: None for i in range(len(self.sim_bl_groups))}
 
         else:
-            # output visibility has extra redundant baselines
+            # output visibility has extra physical baselines
             self._sim2data = {}
             self.data_bl_groups = {}
             # iterate over sim baseline groups
