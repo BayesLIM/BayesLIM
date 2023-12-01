@@ -1461,17 +1461,30 @@ class DistributedLogProb(utils.Module):
                 else:
                     self._main_indices[k] = utils._idx2ten(v, self.device)
 
-    def send_main_params(self, main_params=None, **kwargs):
+    def send_main_params(self, main_params=None, send_probs=False, **kwargs):
         """
         Copy self.main_params to each object in self.prob.
         Note this does not also call self.probs[i].send_main_params().
         Note this does not preserve graph from self.main_params, each
         self.probs[i].main_params is itself a torch.nn.Parameter object
+
+        Parameters
+        ----------
+        main_params : tensor, optional
+            If provided, overwrite self.main_params with
+            this tensor.
+        send_probs : bool, optional
+            If True, also call self.probs[i].send_main_params().
+            Default is False because this is already done
+            in the normal forward() call.
         """
         with torch.no_grad():
-            main_params = main_params if main_params is not None else self.main_params
+            if main_params is not None:
+                self.main_params = torch.nn.Parameter(main_params)
             for prob, device in zip(self.probs, self.devices):
-                prob.main_params = torch.nn.Parameter(main_params.to(device))
+                prob.main_params = torch.nn.Parameter(self.main_params.to(device))
+                if send_probs:
+                    prob.send_main_params()
 
     def get_main_params(self, add_p0=False):
         """
