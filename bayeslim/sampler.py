@@ -675,7 +675,7 @@ class HMC(SamplerBase):
             model_tree = json.dumps(io.get_model_description(self.potential_fn)[1], indent=2)
             description = "{}\n{}\n{}".format(model_tree, '-'*40, description)
         self._write_chain(outfile, overwrite=overwrite,
-                          attrs=['fn_evals', '_H', '_divergences'],
+                          attrs=['fn_evals', '_divergences'],
                           description=description)
 
 
