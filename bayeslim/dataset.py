@@ -234,6 +234,8 @@ class VisData(TensorData):
         # and push antpos if needed
         if self.antpos:
             self.antpos.push(device)
+        self.setup_meta(telescope=self.telescope, antpos=self.antpos)
+        self.freqs = utils.push(self.freqs, device)
         if return_obj:
             return self
 
