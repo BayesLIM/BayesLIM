@@ -903,9 +903,9 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     if to_real:
         if np.iscomplexobj(Ylm) or (isinstance(Ylm, tuple) and np.iscomplexobj(Ylm[1])):
             if isinstance(Ylm, tuple):
-                Ylm = (Ylm[0].real, Ylm[1].real)
+                Ylm = (Ylm[0].real.contiguous(), Ylm[1].real.contiguous())
             else:
-                Ylm = Ylm.real
+                Ylm = Ylm.real.contiguous()
         if alm_mult is not None:
             info['alm_mult'][:] = 1.0
 
