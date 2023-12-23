@@ -188,7 +188,7 @@ class HMC(SamplerBase):
     is provided.
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True, Nstep=10,
-                 dHmax=1000, record_divergences=False):
+                 pdist=None, dHmax=1000, record_divergences=False):
         """
         Parameters
         ----------
@@ -214,6 +214,10 @@ class HMC(SamplerBase):
             Otherwise, cov_L and/or hess_L are assumed dense (and 2D)
         Nstep : int, optional
             Number of leapfrog updates per step
+        pdist : dict, optional
+            Custom (base) momentum sampling distribution.
+            Default is a unit gaussian. Keys are x0 keys, values
+            are functions that return momenta on x.device and x.dtype
         dHmax : float, optional
             Maximum allowable change in Hamiltonian for a
             step, in which case the trajectory is deemed divergent.
@@ -237,6 +241,7 @@ class HMC(SamplerBase):
         self._gradU = None
         self.p = None    # ending momentum
         self.eps = eps
+        self.pdist = pdist
         self.set_chol(cov_L=cov_L, hess_L=hess_L, diag_mass=diag_mass)
 
     def set_chol(self, cov_L=None, hess_L=None, diag_mass=True):
@@ -471,13 +476,21 @@ class HMC(SamplerBase):
         Returns
         -------
         p : ParamDict
-            Random Gaussian momenta scaled by choleksy
+            Random Gaussian scaled by mass matrix choleksy
         """
         p = {}
         for k in self.x:
+            # setup base momentum distribution
             x = self.x[k]
             N = x.shape.numel()
-            momentum = torch.randn(N, device=x.device, dtype=x.dtype)
+            if self.pdist is not None:
+                # sample from custom distribution if provided
+                momentum = self.pdist[k]()
+            else:
+                # otherwise draw from unit Gaussian
+                momentum = torch.randn(N, device=x.device, dtype=x.dtype)            
+
+            # now scale the momenta by M cholesky
             if self.diag_mass[k] and momentum.shape != x.shape:
                 momentum = momentum.reshape(x.shape)
             L = self.hess_L[k]
