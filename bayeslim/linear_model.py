@@ -368,6 +368,8 @@ def gen_linear_A(linear_mode, A=None, x=None, d0=None, logx=False,
         A = torch.as_tensor(A)
     elif linear_mode == 'fourier':
         A, _ = gen_fourier_A(x, Ndeg=Ndeg, device=device, fft_norm=fft_norm)
+    else:
+        raise NameError("linear_mode {} not recognized".format(linear_mode))
 
     A = torch.atleast_1d(A).to(dtype).to(device)
 
