@@ -188,7 +188,7 @@ class HMC(SamplerBase):
     is provided.
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True, Nstep=10,
-                 pdist=None, dHmax=1000, record_divergences=False):
+                 pdist=None, dHmax=1000, record_divergences=False, U0=None):
         """
         Parameters
         ----------
@@ -226,6 +226,9 @@ class HMC(SamplerBase):
         record_divergences : bool, optional
             If True, record metadata about divergences as they
             appear in self._divergences
+        U0 : tensor, optional
+            Starting potential energy given x0. If None (default)
+            then evaluate potential_fn(x0).
         """
         super().__init__(x0)
         self._lists += ['_divergences']
@@ -237,8 +240,11 @@ class HMC(SamplerBase):
         self._divergences = []  # [(chain_sample, final x, final p), ]
         if isinstance(eps, (torch.Tensor)):
             eps = ParamDict({k: eps for k in x0})
-        self._U = np.inf # starting potential energy
-        self._gradU = None
+        # get starting potential and gradient
+        if U0 is None:
+            self._U, self._gradU = self.potential_fn(self.x)
+        else:
+            self._U, self._gradU = U0, None
         self.p = None    # ending momentum
         self.eps = eps
         self.pdist = pdist
