@@ -884,7 +884,7 @@ class NUTS(HMC):
     No U-Turn Sampler variant of HMC.
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True,
-                 dHmax=1000, record_divergences=False, max_tree_depth=6,
+                 pdist=None, dHmax=1000, record_divergences=False, max_tree_depth=6,
                  biased=True, track_states=False):
         """
         Parameters
@@ -909,7 +909,10 @@ class NUTS(HMC):
             If True and if cov_L and/or hess_L is fed, assume we are using a
             1D diagonal mass matrix (and equivalently a diagonal covariance).
             Otherwise, cov_L and/or hess_L are assumed dense (and 2D)
-        max_tree_depth
+        pdist : dict, optional
+            Custom (base) momentum sampling distribution.
+            Default is a unit gaussian. Keys are x0 keys, values
+            are functions that return momentum vector on x.device and x.dtype
         dHmax : float, optional
             Maximum allowable change in Hamiltonian for a
             step, in which case the trajectory is deemed divergent.
@@ -927,7 +930,7 @@ class NUTS(HMC):
             If True, track all states visited in a single NUTS trajectory
         """
         super().__init__(potential_fn, x0, eps, cov_L=cov_L, hess_L=hess_L, diag_mass=diag_mass,
-                         dHmax=dHmax, record_divergences=record_divergences)
+                         pdist=pdist, dHmax=dHmax, record_divergences=record_divergences)
         self.max_tree_depth = max_tree_depth
         self.biased = biased
         self.track_states = track_states
