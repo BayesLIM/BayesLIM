@@ -1588,7 +1588,7 @@ class DynamicStepSize(ParamDict):
     def __mul__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: self.params[k] * other.params[k] for k in self.keys()}
+            new.params = {k: self.params[k] * other[k] for k in self.keys()}
         else:
             new.params = {k: self.params[k] * other for k in self.keys()}
 
@@ -1600,7 +1600,7 @@ class DynamicStepSize(ParamDict):
     def __imul__(self, other):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
-                self.params[k] *= other.params[k]
+                self.params[k] *= other[k]
         else:
             for k in self.keys():
                 self.params[k] *= other
@@ -1609,7 +1609,7 @@ class DynamicStepSize(ParamDict):
     def __div__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: self.params[k] / other.params[k] for k in self.keys()}
+            new.params = {k: self.params[k] / other[k] for k in self.keys()}
         else:
             new.params = {k: self.params[k] / other for k in self.keys()}
 
@@ -1618,7 +1618,7 @@ class DynamicStepSize(ParamDict):
     def __rdiv__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: other.params[k] / self.params[k] for k in self.keys()}
+            new.params = {k: other[k] / self.params[k] for k in self.keys()}
         else:
             new.params = {k: other / self.params[k] for k in self.keys()}
 
@@ -1627,7 +1627,7 @@ class DynamicStepSize(ParamDict):
     def __idiv__(self, other):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
-                self.params[k] /= other.params[k]
+                self.params[k] /= other[k]
         else:
             for k in self.keys():
                 self.params[k] /= other
@@ -1645,7 +1645,7 @@ class DynamicStepSize(ParamDict):
     def __add__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: self.params[k] + other.params[k] for k in self.keys()}
+            new.params = {k: self.params[k] + other[k] for k in self.keys()}
         else:
             new.params = {k: self.params[k] + other for k in self.keys()}
 
@@ -1657,7 +1657,7 @@ class DynamicStepSize(ParamDict):
     def __iadd__(self, other):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
-                self.params[k] += other.params[k]
+                self.params[k] += other[k]
         else:
             for k in self.keys():
                 self.params[k] += other
@@ -1666,7 +1666,7 @@ class DynamicStepSize(ParamDict):
     def __sub__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: self.params[k] - other.params[k] for k in self.keys()}
+            new.params = {k: self.params[k] - other[k] for k in self.keys()}
         else:
             new.params = {k: self.params[k] - other for k in self.keys()}
 
@@ -1675,7 +1675,7 @@ class DynamicStepSize(ParamDict):
     def __rsub__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: other.params[k] - self.params[k] for k in self.keys()}
+            new.params = {k: other[k] - self.params[k] for k in self.keys()}
         else:
             new.params = {k: other - self.params[k] for k in self.keys()}
 
@@ -1684,7 +1684,7 @@ class DynamicStepSize(ParamDict):
     def __isub__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] -= other.params[k]
+                self.params[k] -= other[k]
         else:
             for k in self.keys():
                 self.params[k] -= other

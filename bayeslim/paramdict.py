@@ -189,7 +189,7 @@ class ParamDict:
 
     def __mul__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] * other.params[k] for k in self.keys()})
+            return ParamDict({k: self.params[k] * other[k] for k in self.keys()})
         else:
             return ParamDict({k: self.params[k] * other for k in self.keys()})
 
@@ -199,7 +199,7 @@ class ParamDict:
     def __imul__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] *= other.params[k]
+                self.params[k] *= other[k]
         else:
             for k in self.keys():
                 self.params[k] *= other
@@ -207,20 +207,20 @@ class ParamDict:
 
     def __matmul__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] @ other.params[k] for k in self.keys()})
+            return ParamDict({k: self.params[k] @ other[k] for k in self.keys()})
         else:
             return ParamDict({k: self.params[k] @ other for k in self.keys()})
 
     def __rmatmul__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: other.params[k] @ self.params[k] for k in self.keys()})
+            return ParamDict({k: other[k] @ self.params[k] for k in self.keys()})
         else:
             return ParamDict({k: other @ self.params[k] for k in self.keys()})
 
     def __imatmul__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] @= other.params[k]
+                self.params[k] @= other[k]
         else:
             for k in self.keys():
                 self.params[k] @= other
@@ -228,20 +228,20 @@ class ParamDict:
 
     def __div__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] / other.params[k] for k in self.keys()})
+            return ParamDict({k: self.params[k] / other[k] for k in self.keys()})
         else:
             return ParamDict({k: self.params[k] / other for k in self.keys()})
 
     def __rdiv__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: other.params[k] / self.params[k] for k in self.keys()})
+            return ParamDict({k: other[k] / self.params[k] for k in self.keys()})
         else:
             return ParamDict({k: other / self.params[k] for k in self.keys()})
 
     def __idiv__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] /= other.params[k]
+                self.params[k] /= other[k]
         else:
             for k in self.keys():
                 self.params[k] /= other
@@ -258,7 +258,7 @@ class ParamDict:
 
     def __add__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] + other.params[k] for k in self.keys()})
+            return ParamDict({k: self.params[k] + other[k] for k in self.keys()})
         else:
             return ParamDict({k: self.params[k] + other for k in self.keys()})
 
@@ -268,7 +268,7 @@ class ParamDict:
     def __iadd__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] += other.params[k]
+                self.params[k] += other[k]
         else:
             for k in self.keys():
                 self.params[k] += other
@@ -276,20 +276,20 @@ class ParamDict:
 
     def __sub__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: self.params[k] - other.params[k] for k in self.keys()})
+            return ParamDict({k: self.params[k] - other[k] for k in self.keys()})
         else:
             return ParamDict({k: self.params[k] - other for k in self.keys()})
 
     def __rsub__(self, other):
         if isinstance(other, ParamDict):
-            return ParamDict({k: other.params[k] - self.params[k] for k in self.keys()})
+            return ParamDict({k: other[k] - self.params[k] for k in self.keys()})
         else:
             return ParamDict({k: other - self.params[k] for k in self.keys()})
 
     def __isub__(self, other):
         if isinstance(other, ParamDict):
             for k in self.keys():
-                self.params[k] -= other.params[k]
+                self.params[k] -= other[k]
         else:
             for k in self.keys():
                 self.params[k] -= other
