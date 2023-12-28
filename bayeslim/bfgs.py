@@ -427,11 +427,10 @@ class LBFGS(BFGS):
         self.update_Hdiag = update_Hdiag
 
         # compute starting Hdiag
-        if self.H is None:
+        if self.H is None or not update_Hdiag:
             self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=utils._float())
         else:
             self._Hdiag = torch.median(self.H.diagonal().real)
-
 
     def update_hessian(self, s, y, alpha=None):
         """
