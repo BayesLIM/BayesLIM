@@ -593,6 +593,10 @@ class HMC(SamplerBase):
             self._U = U_start
             self._gradU = dUdq0
 
+        if isinstance(self.eps, DynamicStepSize):
+            # update stepsize if using a dynamic eps
+            self.eps.update(prob)
+
         return accept, prob
 
     def dual_averaging(self, Nadapt, target=0.8, gamma=0.05, t0=10.0, kappa=0.75):
@@ -655,7 +659,7 @@ class HMC(SamplerBase):
             Use robust measure of the variance if diag_mass is True.
         eps : ParamDict, optional
             Tikhonov regularization for Cholesky of sample covariance
-            if diag_mass is False
+            if diag_mass is False (this is not the leapfrog stepsize)
         """
         eps = eps if eps is not None else {k: 0 for k in self.chain}
         cov_L = ParamDict({})
@@ -821,6 +825,10 @@ class RecycledHMC(HMC):
                 self._gradU = gradUs[i]
 
             self._acceptances.append(accept)
+
+        if isinstance(self.eps, DynamicStepSize):
+            # update stepsize if using a dynamic eps
+            self.eps.update(prob)
 
         return accept, prob
 
@@ -1237,6 +1245,10 @@ class NUTS(HMC):
             self._U = U_start
             self._gradU = dUdq0
 
+        if isinstance(self.eps, DynamicStepSize):
+            # update stepsize if using a dynamic eps
+            self.eps.update(prob)
+
         return accept, prob
 
 
@@ -1487,4 +1499,201 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
         states.append((q.clone(), p.clone(), U, gradU))
  
     return q, p
+
+
+class DynamicStepSize(ParamDict):
+    """
+    A dynamically adjusting stepsize object
+    for the HMC class, subclassing ParamDict
+    """
+    def __init__(self, params, eps_mul=None, min_prob=0.5, alpha=1.2, track=False, chain=None):
+        """
+        Parameters
+        ----------
+        params : dict
+            The nominal stepsize for each parameter.
+        eps_mul : dict, ParamDict, optional
+            Starting eps multiplier. Default (None) is 1.
+        min_prob : float
+            The minimum probability [0, 1] of a trajectory,
+            below which we divide eps by two.
+        alpha : float, optional
+            The amount to multiply the stepsize by if it is below
+            the nominal amount.
+        track : bool, optional
+            If True (default) track the step size at each iteration,
+            as self.chain, otherwise don't track.
+        chain : list, optional
+            Append to a copy of this chain if tracking.
+        """
+        super().__init__(params)
+        if eps_mul is None:
+            self.eps_mul = {k: torch.tensor(1.0, device=v.device) for k, v in params.items()}
+        else:
+            assert isinstance(eps_mul, (ParamDict, dict))
+            self.eps_mul = eps_mul
+        self.min_prob = min_prob
+        self.alpha = alpha
+        self.track = track
+        if not track:
+            self.chain = None
+        else:
+            self.chain = [] if chain is None else chain.copy()
+
+    def copy(self):
+        """A shallow copy of self"""
+        return DynamicStepSize(self.params, eps_mul=self.eps_mul, min_prob=self.min_prob,
+                               alpha=self.alpha, track=self.track)
+            
+    def __getitem__(self, key):
+        return self.params[key] * self.eps_mul[key]
+
+    def values(self):
+        return (v1 * v2 for v1, v2 in zip(self.params.values(), self.eps_mul.values()))
+
+    def items(self):
+        return zip(self.keys(), self.values())
+
+    def update(self, prob):
+        """
+        If the acceptance prob of the last trajectory [0, 1] is less
+        than self.min_prob, divide eps_mul by two. Otherwise,
+        increase its value by alpha until it reaches 1.
+
+        Parameters
+        ----------
+        prob : float
+            Acceptance probability of last trajectory
+        """
+        if self.track:
+            self.chain.append(self.eps_mul)
+        if prob < self.min_prob:
+            # divide eps_mul by two
+            for k in self.eps_mul:
+                self.eps_mul[k] /= 2
+        else:
+            # increment its value by alpha unless its reached 1
+            for k, v in self.eps_mul.items():
+                self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
+
+    def __repr__(self):
+        return "DynamicStepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
+
+    def push(self, device):
+        for k in self.params:
+            d = device if not isinstance(device, dict) else device[k]
+            self.params[k] = utils.push(self.params[k], d)
+            self.eps_mul[k] = utils.push(self.eps_mul[k], d)
+
+    def __mul__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: self.params[k] * other.params[k] for k in self.keys()}
+        else:
+            new.params = {k: self.params[k] * other for k in self.keys()}
+
+        return new
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __imul__(self, other):
+        if isinstance(other, (ParamDict, dict)):
+            for k in self.keys():
+                self.params[k] *= other.params[k]
+        else:
+            for k in self.keys():
+                self.params[k] *= other
+        return self    
+        
+    def __div__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: self.params[k] / other.params[k] for k in self.keys()}
+        else:
+            new.params = {k: self.params[k] / other for k in self.keys()}
+
+        return new
+
+    def __rdiv__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: other.params[k] / self.params[k] for k in self.keys()}
+        else:
+            new.params = {k: other / self.params[k] for k in self.keys()}
+
+        return new
+
+    def __idiv__(self, other):
+        if isinstance(other, (ParamDict, dict)):
+            for k in self.keys():
+                self.params[k] /= other.params[k]
+        else:
+            for k in self.keys():
+                self.params[k] /= other
+        return self
+
+    def __truediv__(self, other):
+        return self.__div__(other)
+
+    def __rtruediv__(self, other):
+        return self.__rdiv__(other)
+
+    def __itruediv__(self, other):
+        return self.__idiv__(other)
+
+    def __add__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: self.params[k] + other.params[k] for k in self.keys()}
+        else:
+            new.params = {k: self.params[k] + other for k in self.keys()}
+
+        return new
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __iadd__(self, other):
+        if isinstance(other, (ParamDict, dict)):
+            for k in self.keys():
+                self.params[k] += other.params[k]
+        else:
+            for k in self.keys():
+                self.params[k] += other
+        return self
+
+    def __sub__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: self.params[k] - other.params[k] for k in self.keys()}
+        else:
+            new.params = {k: self.params[k] - other for k in self.keys()}
+
+        return new
+
+    def __rsub__(self, other):
+        new = self.copy()
+        if isinstance(other, (ParamDict, dict)):
+            new.params = {k: other.params[k] - self.params[k] for k in self.keys()}
+        else:
+            new.params = {k: other - self.params[k] for k in self.keys()}
+
+        return new
+
+    def __isub__(self, other):
+        if isinstance(other, ParamDict):
+            for k in self.keys():
+                self.params[k] -= other.params[k]
+        else:
+            for k in self.keys():
+                self.params[k] -= other
+
+        return self
+
+    def __pow__(self, alpha):
+        new = self.copy()
+        new.params = {k: self.params[k]**alpha for k in self.keys()}
+
+        return new
 
