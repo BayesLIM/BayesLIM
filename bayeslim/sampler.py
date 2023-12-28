@@ -1506,7 +1506,7 @@ class DynamicStepSize(ParamDict):
     A dynamically adjusting stepsize object
     for the HMC class, subclassing ParamDict
     """
-    def __init__(self, params, eps_mul=None, min_prob=0.5, alpha=1.2, track=False, chain=None):
+    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, track=False, chain=None):
         """
         Parameters
         ----------
@@ -1569,8 +1569,8 @@ class DynamicStepSize(ParamDict):
             self.chain.append(self.eps_mul)
         if prob < self.min_prob:
             # divide eps_mul by two
-            for k in self.eps_mul:
-                self.eps_mul[k] /= 2
+            for k, v in self.eps_mul.items():
+                self.eps_mul[k] = v / 2
         else:
             # increment its value by alpha unless its reached 1
             for k, v in self.eps_mul.items():
