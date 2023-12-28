@@ -237,7 +237,6 @@ class ParamDict:
             return ParamDict({k: other.params[k] / self.params[k] for k in self.keys()})
         else:
             return ParamDict({k: other / self.params[k] for k in self.keys()})
-        return self
 
     def __idiv__(self, other):
         if isinstance(other, ParamDict):
