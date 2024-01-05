@@ -1936,6 +1936,7 @@ class HierMat:
             self.A01 = utils.push(self.A01, device)
         if self.A10 is not None:
             self.A10 = utils.push(self.A10, device)
+        self.device = self.A00.device
 
     def mat_vec_mul(self, vec, out=None, **kwargs):
         """
@@ -2032,7 +2033,8 @@ class HierMat:
 
     def to_SolveHierMat(self, lower=True, trans_solve=False):
         """
-        Convert self to a SolveHierMat and return (not inplace)
+        Convert self to a SolveHierMat and return (not inplace).
+        Assumes that self is a Cholesky matrix.
         """
         scalar = 1 / self.scalar if self.scalar is not None else None
         H = SolveHierMat(self.A00, self.A11, A01=self.A01, A10=self.A10,

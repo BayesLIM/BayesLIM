@@ -1552,10 +1552,15 @@ class DynamicStepSize(ParamDict):
                                alpha=self.alpha, index=self.index, track=self.track)
             
     def __getitem__(self, key):
-        return self.params[key] * self.eps_mul[key]
+        if self.index is None:
+            return self.params[key] * self.eps_mul[key]
+        else:
+            out = self.params[key].clone()
+            out[self.index[key]] *= self.eps_mul[key]
+            return out
 
     def values(self):
-        return (v1 * v2 for v1, v2 in zip(self.params.values(), self.eps_mul.values()))
+        return (self[k] for k in self.params)
 
     def items(self):
         return zip(self.keys(), self.values())
@@ -1576,18 +1581,11 @@ class DynamicStepSize(ParamDict):
         if prob < self.min_prob:
             # divide eps_mul by two
             for k, v in self.eps_mul.items():
-                if self.index is None:
-                    self.eps_mul[k] /= 2
-                else:
-                    self.eps_mul[k][self.index[k]] /= 2
+                self.eps_mul[k] = v / 2
         else:
             # increment its value by alpha unless its reached 1
             for k, v in self.eps_mul.items():
-                if self.index is None:
-                    self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
-                else:
-                    idx = self.index[k]
-                    self.eps_mul[k][idx] = (v[idx] * self.alpha).clip(None, 1.0)
+                self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
 
     def __repr__(self):
         return "DynamicStepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
