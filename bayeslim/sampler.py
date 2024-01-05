@@ -1506,7 +1506,8 @@ class DynamicStepSize(ParamDict):
     A dynamically adjusting stepsize object
     for the HMC class, subclassing ParamDict
     """
-    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, track=False, chain=None):
+    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, index=None,
+                 track=False, chain=None):
         """
         Parameters
         ----------
@@ -1520,6 +1521,10 @@ class DynamicStepSize(ParamDict):
         alpha : float, optional
             The amount to multiply the stepsize by if it is below
             the nominal amount.
+        index : dict, optional
+            Select elements of params to adjust while keeping others static.
+            Default is to adjust all elements. Keys are keys of params,
+            values are slice obj or int tensor
         track : bool, optional
             If True (default) track the step size at each iteration,
             as self.chain, otherwise don't track.
@@ -1534,6 +1539,7 @@ class DynamicStepSize(ParamDict):
             self.eps_mul = eps_mul
         self.min_prob = min_prob
         self.alpha = alpha
+        self.index = index
         self.track = track
         if not track:
             self.chain = None
@@ -1543,7 +1549,7 @@ class DynamicStepSize(ParamDict):
     def copy(self):
         """A shallow copy of self"""
         return DynamicStepSize(self.params, eps_mul=self.eps_mul, min_prob=self.min_prob,
-                               alpha=self.alpha, track=self.track)
+                               alpha=self.alpha, index=self.index, track=self.track)
             
     def __getitem__(self, key):
         return self.params[key] * self.eps_mul[key]
@@ -1570,11 +1576,18 @@ class DynamicStepSize(ParamDict):
         if prob < self.min_prob:
             # divide eps_mul by two
             for k, v in self.eps_mul.items():
-                self.eps_mul[k] = v / 2
+                if self.index is None:
+                    self.eps_mul[k] /= 2
+                else:
+                    self.eps_mul[k][self.index[k]] /= 2
         else:
             # increment its value by alpha unless its reached 1
             for k, v in self.eps_mul.items():
-                self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
+                if self.index is None:
+                    self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
+                else:
+                    idx = self.index[k]
+                    self.eps_mul[k][idx] = (v[idx] * self.alpha).clip(None, 1.0)
 
     def __repr__(self):
         return "DynamicStepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
@@ -1584,6 +1597,9 @@ class DynamicStepSize(ParamDict):
             d = device if not isinstance(device, dict) else device[k]
             self.params[k] = utils.push(self.params[k], d)
             self.eps_mul[k] = utils.push(self.eps_mul[k], d)
+            if self.index is not None:
+                if isinstance(self.index[k], torch.Tensor) and not isinstance(d, torch.dtype):
+                    self.index[k] = utils.push(self.index[k], d)
 
     def __mul__(self, other):
         new = self.copy()
