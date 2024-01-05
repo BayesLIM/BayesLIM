@@ -484,6 +484,9 @@ class LBFGS(BFGS):
             # check if we should update diagonal
             if self.update_Hdiag:
                 new_Hdiag = 1. / (rho * (y.conj() @ y).real)
+                # check if self.H is an implicit Cholesky-solve representation (SolveMat or SolveHierMat)
+                if (hasattr(self.H, 'chol') and self.H.chol) or (hasattr(self.H, 'trans_solve') and self.H.trans_solve):
+                    new_Hdiag = new_Hdiag**.5
                 prev_Hdiag = 1. if self._Hdiag is None else self._Hdiag
                 self.H.scalar_mul(new_Hdiag / prev_Hdiag)
                 self._Hdiag = new_Hdiag

@@ -2037,6 +2037,8 @@ class HierMat:
         Assumes that self is a Cholesky matrix.
         """
         scalar = 1 / self.scalar if self.scalar is not None else None
+        if scalar is not None and trans_solve:
+            scalar = scalar**2
         H = SolveHierMat(self.A00, self.A11, A01=self.A01, A10=self.A10,
                          lower=lower, trans_solve=trans_solve, scalar=scalar)
         return H
@@ -2101,7 +2103,7 @@ class SolveHierMat(HierMat):
         self.trans_solve = trans_solve
         self._T = None
 
-    def mat_vec_mul(self, vec, out=None, trans_solve=None, mul_scalar=True, **kwargs):
+    def mat_vec_mul(self, vec, out=None, trans_solve=None, **kwargs):
         """
         Matrix-vector product using linear solves
 
@@ -2112,10 +2114,6 @@ class SolveHierMat(HierMat):
             Add output to this tensor
         trans_solve : bool, optional
             Use this value of trans_solve as opposed to self.trans_solve
-            Default is self.trans_solve.
-        mul_scalar : bool, optional
-            If True (default) multiply self.scalar with output if it exists.
-            When using trans_solve=True this is only done once.
 
         Returns
         -------
@@ -2148,13 +2146,13 @@ class SolveHierMat(HierMat):
         if out is None:
             out = torch.cat([z_0, z_1])
 
-        if self.scalar is not None and mul_scalar:
+        if self.scalar is not None:
             out *= self.scalar
 
         # perform transpose solve if needed (i.e. for solving L L^T x = b)
         trans_solve = trans_solve if trans_solve is not None else self.trans_solve
         if trans_solve:
-            out = self.to_transpose()(out, out=torch.zeros_like(out), trans_solve=False, mul_scalar=False)
+            out = self.to_transpose()(out, out=torch.zeros_like(out), trans_solve=False)
 
         return out
 

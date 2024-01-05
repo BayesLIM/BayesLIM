@@ -271,7 +271,7 @@ class HMC(SamplerBase):
 
         3.  Direct matmul given sum[ (Lc^T p)^2 ] = sum[ z^2 ].
             Or given z = Lm^-1 p, solve Lm z = p
-        
+
         Parameters
         ----------
         cov_L : ParamDict, optional
@@ -414,7 +414,7 @@ class HMC(SamplerBase):
         else:
             K = 0
             for k, momentum in p.items():
-                L = self.cov_L[k]  # assume L is lower-tri
+                L = self.cov_L[k]  # assume L is lower-tri for all below
                 if L is not None:
                     if isinstance(L, torch.Tensor):
                         # direct matmul (dense mass)
@@ -424,10 +424,10 @@ class HMC(SamplerBase):
                         momentum = L(momentum)
                     elif isinstance(L, hmat.SolveMat):
                         # solve Lm z = momentum (implicit solve)
-                        momentum = L(momentum)
+                        momentum = L(momentum, chol=False)
                     elif isinstance(L, hmat.SolveHierMat):
                         # solve Lm z = momentum (implicit solve)
-                        momentum = L(momentum, out=torch.zeros_like(momentum))
+                        momentum = L(momentum, out=torch.zeros_like(momentum), trans_solve=False)
                     elif isinstance(L, hmat.BaseMat):
                         # direct matmul (dense mass)
                         momentum = L(momentum, transpose=True)
@@ -1598,6 +1598,7 @@ class DynamicStepSize(ParamDict):
             if self.index is not None:
                 if isinstance(self.index[k], torch.Tensor) and not isinstance(d, torch.dtype):
                     self.index[k] = utils.push(self.index[k], d)
+        self._setup()
 
     def __mul__(self, other):
         new = self.copy()
