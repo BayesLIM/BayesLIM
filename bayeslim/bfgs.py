@@ -181,7 +181,7 @@ class BFGS:
         rho = 1. / (y.conj() @ s).real
 
         # apply H update: requires sufficient curvature
-        if (1. / rho) > 1e-10:
+        if (1. / rho) > self.tolerance_grad:
             # perform BFGS update
             # V = (I - rho y @ s^T)
             V = -rho * torch.outer(y.conj(), s).real
@@ -458,7 +458,7 @@ class LBFGS(BFGS):
                                   dtype=utils._float()))
 
         # only update if sufficient curvature
-        if (1. / rho) > 1e-10:
+        if (1. / rho) > self.tolerance_grad:
             # compute hvp
             if self.store_Hy:
                 Hy = self.hvp(y)
