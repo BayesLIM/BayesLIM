@@ -431,6 +431,9 @@ class LBFGS(BFGS):
             self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=utils._float())
         else:
             self._Hdiag = torch.median(self.H.diagonal().real)
+            if isinstance(self.H, (hmat.SolveMat, hmat.SolveHierMat)):
+                # we actually manipulate Hdiag^.5
+                self._Hdiag  = self._Hdiag**.5
 
     def update_hessian(self, s, y, alpha=None):
         """
