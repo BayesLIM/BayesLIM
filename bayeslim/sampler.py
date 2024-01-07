@@ -1546,10 +1546,12 @@ class DynamicStepSize(ParamDict):
         else:
             self.chain = [] if chain is None else chain.copy()
 
-    def copy(self):
-        """A shallow copy of self"""
-        return DynamicStepSize(self.params, eps_mul=self.eps_mul, min_prob=self.min_prob,
-                               alpha=self.alpha, index=self.index, track=self.track)
+    def copy(self, **kwargs):
+        """A shallow copy of self. Overwrite defaults by passing kwargs"""
+        kwgs = dict(eps_mul=self.eps_mul, min_prob=self.min_prob, alpha=self.alpha,
+                    index=self.index, track=self.track)
+        kwgs.update(kwargs)
+        return DynamicStepSize(self.params, **kwgs)
             
     def __getitem__(self, key):
         if self.index is None:
