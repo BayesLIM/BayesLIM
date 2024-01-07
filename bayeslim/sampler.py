@@ -1614,7 +1614,7 @@ class DynamicStepSize(ParamDict):
     def __rmul__(self, other):
         if other.__class__ == ParamDict:
             # this reverts to using other.__mul__()
-            raise NotImplementedError
+            return other.__mul__(self)
         return self.__mul__(other)
 
     def __imul__(self, other):
@@ -1674,7 +1674,7 @@ class DynamicStepSize(ParamDict):
     def __radd__(self, other):
         if other.__class__ == ParamDict:
             # this reverts to using other.__add__()
-            raise NotImplementedError
+            return other.__add__(self)
         return self.__add__(other)
 
     def __iadd__(self, other):
