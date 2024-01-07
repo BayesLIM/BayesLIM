@@ -1631,11 +1631,11 @@ class DynamicStepSize(ParamDict):
         return new
 
     def __rdiv__(self, other):
-        new = self.copy()
+        new = self.copy(eps_mul=None)
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: other[k] / self.params[k] for k in self.keys()}
+            new.params = {k: other[k] / self[k] for k in self.keys()}
         else:
-            new.params = {k: other / self.params[k] for k in self.keys()}
+            new.params = {k: other / self[k] for k in self.keys()}
 
         return new
 
@@ -1688,11 +1688,11 @@ class DynamicStepSize(ParamDict):
         return new
 
     def __rsub__(self, other):
-        new = self.copy()
+        new = self.copy(eps_mul=None)
         if isinstance(other, (ParamDict, dict)):
-            new.params = {k: other[k] - self.params[k] for k in self.keys()}
+            new.params = {k: other[k] - self[k] for k in self.keys()}
         else:
-            new.params = {k: other - self.params[k] for k in self.keys()}
+            new.params = {k: other - self[k] for k in self.keys()}
 
         return new
 
