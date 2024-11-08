@@ -1403,6 +1403,7 @@ def pixelsky_Ylm_cut(obj, lmin=None, lmax=None, mmin=None, mmax=None, other=None
         indexing lm axis.
     """
     assert hasattr(obj.R, 'Alm')
+
     # get indexing tensor
     s = obj.R.Alm.select(lmin=lmin, lmax=lmax, mmin=mmin, mmax=mmax, other=other)
 

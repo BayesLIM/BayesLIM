@@ -210,7 +210,7 @@ def vis_wedge(vd, ravg_kwgs=None, **kwargs):
     return vd, FT
 
 
-def gen_window(window, N, **kwargs):
+def gen_window(window, N, alpha=None, **kwargs):
     """
     Generate a window function of len N
 
@@ -221,7 +221,8 @@ def gen_window(window, N, **kwargs):
     N : int
         number of channels
     alpha : float, optional
-        alpha parameter for tukey window
+        alpha parameter for tukey window,
+        std parameter for gaussian window
 
     Returns
     -------
@@ -235,7 +236,9 @@ def gen_window(window, N, **kwargs):
     elif window in ['hanning', 'hann']:
         w =  windows.hann(N)
     elif window == 'tukey':
-        w =  windows.tukey(N, **kwargs)
+        w =  windows.tukey(N, alpha=alpha, **kwargs)
+    elif window == 'gaussian':
+        w = windows.gaussian(N, std=alpha, **kwargs)
     elif window in ['blackmanharris-7term', 'blackman-harris-7term', 'bh7']:
         # https://ieeexplore.ieee.org/document/293419
         a_k = [0.27105140069342, 0.43329793923448, 0.21812299954311, 0.06592544638803, 0.01081174209837,

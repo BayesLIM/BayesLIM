@@ -8,7 +8,7 @@ import copy
 import os
 import h5py
 
-from . import special, version, utils, linalg
+from . import special, version, utils, linalg, fft
 
 
 def gen_lm(lmax, real_field=True):
@@ -1804,6 +1804,39 @@ class AlmModel:
                 self.Ylm_cache[k]['alm_mult'] = self.Ylm_cache[k]['alm_mult'][s]
 
         return s
+
+    def taper_alm(self, alm, taper, comp_params=False, **kwargs):
+        """
+        Taper alm modes with respect to l-mode
+
+        Parameters
+        ----------
+        alm : tensor
+            Alm modes of shape(..., Ncoeff)
+        taper : str
+            Tapering function
+        comp_params : bool, optional
+            If True, assume alm is intrinsically complex.
+            Therefore, if alm is real, apply taper along -2 dimension instead of -1.
+        kwargs : dict, optional
+            Kwargs for fft.gen_window()
+        """
+        # generate window function
+        N = len(self.l)
+        win = fft.gen_window(taper, N*2, **kwargs)[N:]
+
+        # interpolate window onto self.l modes
+        l = self.l / self.l.max()
+        interp = utils.interp1d(np.linspace(0, 1, N, endpoint=True), win, kind='cubic')
+        win = interp(l)
+
+        # apply to alm modes
+        if comp_params and not torch.is_complex(alm):
+            alm = alm * win[:, None]
+        else:
+            alm = alm * win
+
+        return alm
 
 
 class SFBModel:
