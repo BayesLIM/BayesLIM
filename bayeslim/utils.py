@@ -184,8 +184,11 @@ def half_gaussian_taper(x, xcenter, sigma, below=True):
     tensor
     """
     win = torch.ones_like(x)
-    if below
-    s = x < xcenter
+    if below:
+        s = x < xcenter
+    else:
+        s = x > xcenter
+
     win[s] = torch.exp(-.5 * (x[s] - xcenter)**2 / sigma**2)
 
     return win
