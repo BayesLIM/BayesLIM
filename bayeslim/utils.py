@@ -163,6 +163,34 @@ def stripe_tukey_mask(theta, theta_min, theta_max,
     return theta_mask * phi_mask
 
 
+def half_gaussian_taper(x, xcenter, sigma, below=True):
+    """
+    Create a single-sided Gaussian tapering function
+
+    Parameters
+    ----------
+    x : tensor
+        x-values (e.g. theta sky coordinates)
+    xcenter : float
+        Center of Gaussian in x-values
+    sigma : float
+        Sigma of Gaussian
+    below : bool, optional
+        If True, apply Gaussian for x < xcenter
+        otherwise for x > xcenter
+
+    Returns
+    -------
+    tensor
+    """
+    win = torch.ones_like(x)
+    if below
+    s = x < xcenter
+    win[s] = torch.exp(-.5 * (x[s] - xcenter)**2 / sigma**2)
+
+    return win
+
+
 def prep_xarr(x, d0=None, logx=False,  whiten=False, x0=None, dx=None):
     """
     Prepare input x tensor for anchoring, log, and/or whitening
