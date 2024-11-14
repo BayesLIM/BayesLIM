@@ -781,6 +781,10 @@ class PixelResponse(utils.PixInterp):
         if self.norm_pix is not None:
             p /= p[..., self.norm_pix:self.norm_pix+1].detach().abs()
 
+        if self.powerbeam:
+            ## TODO: replace abs with non-neg prior on beam?
+            b = torch.abs(b)
+
         return p
 
     def __call__(self, params, zen, az, *args):
@@ -790,10 +794,6 @@ class PixelResponse(utils.PixInterp):
 
         # interpolate at sky values
         b = self.interp(self.beam_cache, zen, az)
-
-#        if self.powerbeam:
-#            ## TODO: replace abs with non-neg prior on beam?
-#            b = torch.abs(b)
 
         # apply polarization rotation if desired
         b = self.apply_Rchi(b)
