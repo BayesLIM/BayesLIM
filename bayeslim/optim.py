@@ -303,7 +303,7 @@ class LogGaussPrior(BaseLogPrior):
         if self.diag_cov:
             self.icov = 1. / self.cov
             self.logdet = torch.sum(torch.log(self.cov))
-            self.ndim = sum(self.cov.shape)
+            self.ndim = self.cov.numel()
         else:
             self.icov = linalg.invert_matrix(self.cov, hermitian=True, **kwargs)
             self.logdet = torch.slogdet(self.cov).logabsdet
@@ -1438,6 +1438,9 @@ class DistributedLogProb(utils.Module):
         Resort elements of main_params, see LogProb.sort_main_params()
         for details
         """
+        self.main_params = None
+        self._main_indices = None
+        self._main_index = None
         for prob in self.probs:
             prob.sort_main_params(new_main_indices, incomplete=incomplete)
 
