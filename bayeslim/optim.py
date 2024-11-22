@@ -510,14 +510,14 @@ class LogProb(utils.Module):
             Note you can also end the tuple with an additional
             string which will be the shorthand for the parameter.
             E.g. ('rime.sky.params', None, 'sky') is called 'sky'.
-        main_LM : LinearModel object or DictLM or BaseMat subclass
+        LM : LinearModel or DictLM or BaseMat subclass
             This is a linear model object that can act as a 
             preconditioner to main_params. It is an R^N -> R^N
-            mapping that maps main_params to its expected
-            from given its various sub-params components.
+            mapping that acts as preconditioner on main_params.
             This is acted upon in the self.send_main_params() call.
-            In principle, this should be the lower Cholesky
-            of the covariance matrix (i.e. inverse Hessian).
+            In principle, this could be the lower Cholesky
+            of the covariance matrix, or an NxN matrix holding
+            the covariance eigenvectors.
             This is set as self._main_LM. If this is a DictLM object
             then this acts on each reshaped sub-parameter.
         set_p0 : bool, optional
@@ -755,7 +755,7 @@ class LogProb(utils.Module):
         """
         Take existing values of submodule params and using metadata like
         _main_indices, ..., collect values and assign as self.main_params.
-        Note that if self.main_p0 is not None then the values are set
+        Note that if self._main_set_p0 == True then the values are set
         as main_p0 (non-parameter) and self.main_params is set as zeros.
 
         Parameters
@@ -1481,6 +1481,12 @@ class DistributedLogProb(utils.Module):
             Default is False because this is already done
             in the normal forward() call.
         """
+        ### TODO: instead of copying Parameter to probs,
+        ### just keep the graph anchored on gpu0 and send as
+        ### main_params.to(gpu2), and therefore don't need
+        ### to "collect_gradients" b/c its done automatically
+        ### (will this improve weak scaling?)
+        ### (will this appreciably increase VRAM on gpu0?)
         with torch.no_grad():
             if main_params is not None:
                 self.main_params = torch.nn.Parameter(main_params)
