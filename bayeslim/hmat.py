@@ -1349,6 +1349,25 @@ class PartitionedMat(BaseMat):
     def diagonal(self):
         return torch.cat([b.diagonal() for b in self.diagmats])
 
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y.
+
+        Note: WIP. Currently only uses the block
+        diagonals for solving the inverse problem.
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        kwargs : dict, kwargs for ba.linalg.least_squares()
+        """
+        x = []
+        for idx, mat in zip(self.vec_idx, self.diagmats):
+            x.append(mat.least_squares(y[idx], **kwargs))
+
+        return torch.cat(x)
+
     def __mul__(self, other):
         blocks = {}
         for i, matcol in enumerate(self.matcols):
