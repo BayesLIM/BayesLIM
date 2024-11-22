@@ -60,6 +60,10 @@ class BaseMat(object):
     def __imul__(self, other):
         pass
 
+    @abstractmethod
+    def least_squares(self, y, **kwargs):
+        pass
+
     def __str__(self):
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
 
@@ -188,6 +192,18 @@ class DenseMat(BaseMat):
     def diagonal(self):
         return self.H.diagonal()
 
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y.
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        kwargs : kwargs for ba.linalg.least_squares()
+        """
+        return linalg.least_squares(self.H, y, **kwargs)
+
     def __mul__(self, other):
         return DenseMat(self.H * other)
 
@@ -307,6 +323,17 @@ class DiagMat(BaseMat):
     def diagonal(self):
         return self.diag
 
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y.
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        """
+        return DiagMat(self.size, 1/self.diag)(y)
+
     def __mul__(self, other):
         return DiagMat(self.size, self.diag * other)
 
@@ -407,6 +434,17 @@ class HadamardMat(BaseMat):
             return self.H
         else:
             return self.H.diagonal()
+
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y.
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        """
+        return HadamardMat(1/self.H)(y)
 
     def __mul__(self, other):
         return HadamardMat(self.H * other)
@@ -528,6 +566,18 @@ class TriangMat(BaseMat):
     def diagonal(self):
         return self.L[self.diag_idx]
 
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y.
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        kwargs : kwargs for ba.linalg.least_squares()
+        """
+        return linalg.least_squares(self.to_dense(), y, **kwargs)
+
     def __mul__(self, other):
         return TriangMat(self.L * other, lower=self.lower)
 
@@ -561,7 +611,8 @@ class SparseMat(BaseMat):
             This should have ndim=1 and length of min(Nrows, Ncols).
         hermitian : bool, optional
             If the underlying matrix being modeled can be assumed
-            to be hermitian.
+            to be hermitian, in which case we only store U and assume
+            V = U.T.conj() = U^-1
         """
         self._shape = shape
         self.Hdiag = Hdiag
@@ -764,6 +815,33 @@ class SparseMat(BaseMat):
             Hdiag = Hdiag * other
         return SparseMat(self.shape, U, V=V, Hdiag=Hdiag,
                          hermitian=self.hermitian)
+
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Ax problem for x given y
+        using Woodbury matrix formula:
+        (A + UV)^-1 = Ainv - Ainv U (I + V Ainv U)^-1 V Ainv
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        """
+        # first get A^-1 in rectangular form
+        Ainv = self.Hdiag.pow(-1).diag()
+
+        # get right-hand modes
+        V = self.V if not self.hermitian else self.U.T.conj()
+
+        # get left-hand modes
+        U = self.U
+
+        # get inner inverse
+        I = torch.eye(len(V))
+        inv = torch.linalg.pinv(I + V @ Ainv @ U)
+
+        # return inverted y
+        return (Ainv - Ainv @ U @ inv @ V @ Ainv) @ y
 
     def __rmul__(self, other):
         U = self.U
@@ -2042,6 +2120,48 @@ class HierMat:
         H = SolveHierMat(self.A00, self.A11, A01=self.A01, A10=self.A10,
                          lower=lower, trans_solve=trans_solve, scalar=scalar)
         return H
+
+    def least_squares(self, y, **kwargs):
+        """
+        Solve the y = Mx problem for x given y
+        using Banaschiewicz inversion formula
+        for a partitioned matrix:
+
+            | A B |
+        M = | C D |
+
+        where A and D are invertible, then
+
+               | A^-1 + A^-1 B S_a^-1 C A^-1,  -A^-1 B S_a^-1 |
+        M^-1 = | -S_a^-1 C A^-1,                       S_a^-1 |
+
+        S_a = D - C A^-1 B
+
+        Note: work in progress. Currently we only do implicit
+        matrix-vector product of M^-1 if M is diagonal. If B
+        or C is non-zero then we do a solve against self.to_dense().
+
+        Parameters
+        ----------
+        y : tensor
+            Output of self(x)
+        kwargs : dict, kwargs for ba.linalg.least_squares()
+        """
+        if not self.A10 and not self.A01:
+            # setup solves against diagonal
+            x0 = self.A00.least_squares(y[self._idx0[1]], **kwargs)
+            x1 = self.A11.least_squares(y[self._idx1[1]], **kwargs)
+
+            return torch.cat([x0, x1])
+
+        else:
+            # TODO: do all of the implicit matrix-inverse vector products!
+            # Need to figure out how to do S_a^-1 y implicitly...
+
+            # B or C is present, so for now we just do a solve against
+            # the dense matrix...
+            M = self.to_dense()
+            return torch.linalg.lstsq(M, y)
 
     def __str__(self):
         return "<{} ({}x{})>".format(self.__class__.__name__, *self.shape)
