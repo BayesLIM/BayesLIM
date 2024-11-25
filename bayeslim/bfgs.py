@@ -379,7 +379,8 @@ class LBFGS(BFGS):
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
                  history_size=100, tolerance_grad=1e-10, tolerance_change=1e-12,
-                 line_search_fn='strong_wolfe', store_Hy=False, update_Hdiag=True):
+                 line_search_fn='strong_wolfe', store_Hy=False,
+                 update_Hdiag=True, update_diag_idx=None):
         """
         Parameters
         ----------
@@ -412,8 +413,13 @@ class LBFGS(BFGS):
             If True, compute and store the Hessian-y vector product as self._Hy.
             Needed for factored LBFGS.
         update_Hdiag : bool, optional
-            If True, multiply the starting Hessian with Eqn. 7.20 of [1]
-            for every step.
+            If True, update the starting inverse Hessian (H0) with Eqn. 7.20 of [1]
+            at every step.
+        update_diag_idx : list, optional
+            If update_Hdiag: List of slice objects choosing the windows over
+            which to compute Eqn. 7.20 of [1] and assign to new H diagonal.
+            Note that the inner products s @ y for the LBFGS updates are still
+            computed over the full parameter length.
         """
         assert not isinstance(H0, torch.Tensor), "H0 should be a hmat.BaseMat subclass"
         super().__init__(params, H0=H0, lr=lr, max_iter=max_iter,
@@ -425,12 +431,19 @@ class LBFGS(BFGS):
         # rho and alpha will be float-lists, so performance isn't as critical
         self._rho, self._alpha = [], []
         self.update_Hdiag = update_Hdiag
+        if update_diag_idx is None:
+            update_diag_idx = [slice(None)]
+        self.update_diag_idx = update_diag_idx
 
         # compute starting Hdiag
         if self.H is None or not update_Hdiag:
-            self._Hdiag = torch.tensor(1.0, device=self.params[0].device, dtype=utils._float())
+            self._Hdiag = torch.ones(
+                self._numel(),
+                device=self.params[0].device,
+                dtype=utils._float()
+            )
         else:
-            self._Hdiag = torch.median(self.H.diagonal().real)
+            self._Hdiag = self.H.diagonal().real
             if isinstance(self.H, (hmat.SolveMat, hmat.SolveHierMat)):
                 # we actually manipulate Hdiag^.5
                 self._Hdiag  = self._Hdiag**.5
@@ -456,7 +469,7 @@ class LBFGS(BFGS):
         if self.H is None:
             # just use I
             self.H = hmat.DiagMat(self._numel(),
-                                  torch.tensor([1.],
+                                  torch.ones(self._numel(),
                                   device=self.params[0].device,
                                   dtype=utils._float()))
 
@@ -484,15 +497,33 @@ class LBFGS(BFGS):
             if self.store_Hy:
                 self._Hy.append(Hy)
 
-            # check if we should update diagonal
+            # check if we should update the inv H diagonal
             if self.update_Hdiag:
-                new_Hdiag = 1. / (rho * (y.conj() @ y).real)
+                # iterate over parameter blocks, compute Eqn. 7.20 from [1]
+                new_Hdiag = torch.ones_like(self._Hdiag)
+                for idx in self.update_diag_idx:
+                    # compute Eqn 7.20
+                    _s = s[idx]
+                    _y = y[idx]
+                    _rho = 1 / (_y.conj() @ _s).real
+                    update = 1. / (_rho * (_y.conj() @ _y).real)
+
+                    # divide by (geometric) average of existing diagonal
+                    Hdiag = self._Hdiag[idx]
+                    new_Hdiag[idx] = update / Hdiag.pow(1/len(Hdiag)).prod()
+
                 # check if self.H is an implicit Cholesky-solve representation (SolveMat or SolveHierMat)
                 if (hasattr(self.H, 'chol') and self.H.chol) or (hasattr(self.H, 'trans_solve') and self.H.trans_solve):
+                    # TODO: this may be wrong now that /= Hdiag[idx] is above..
+                    # write a unit-test to check it works...
                     new_Hdiag = new_Hdiag**.5
-                prev_Hdiag = 1. if self._Hdiag is None else self._Hdiag
-                self.H.scalar_mul(new_Hdiag / prev_Hdiag)
-                self._Hdiag = new_Hdiag
+
+                # update diagonal inplace
+                self.H.scalar_mul(new_Hdiag)
+
+                # store Hdiag b/c in some cases diag of H0 is implicit and
+                # not easy to compute. easy to index this at next iteration
+                self._Hdiag *= new_Hdiag
 
     def hvp(self, vec):
         """
@@ -530,8 +561,9 @@ def two_loop_recursion(vec, s, y, rho, H0=None):
     H0 : tensor or *Mat object
         Starting matrix to dot into g
         in addition to the implicit
-        representation. If feeding a
-        tensor, it is assumed to have ndim = 1.
+        representation. If feeding a 
+        tensor of ndim=1, this is taken
+        to be the diagonal of H.
 
     Returns
     -------
@@ -576,7 +608,9 @@ def implicit_to_dense(H0, s, y):
     Takes a history of position and gradient
     difference tensors and, with a starting inv.
     hessian, performs BFGS updates to construct
-    an approximate, dense, inverse hessian
+    an approximate, dense, inverse hessian. Note
+    that this uses BFGS updating, so s and y 
+    must contain the full LBFGS history.
 
     Parameters
     ----------
