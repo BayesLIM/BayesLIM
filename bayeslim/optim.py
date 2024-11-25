@@ -627,7 +627,7 @@ class LogProb(utils.Module):
             # collect values from leaf tensors and insert to main_params
             self.collect_main_params()
 
-            # this sends values back to leaf tensors making them leaf views
+            # send Parameters back to leaf tensors making them leaf views
             self.send_main_params()
 
     def sort_main_params(self, new_main_indices, incomplete=False):
@@ -1451,6 +1451,7 @@ class DistributedLogProb(utils.Module):
         Shallow wrapper around prob.collect_main_params(),
         and then collect onto self.main_params
         """
+        self.main_params = None
         for prob in self.probs:
             prob.collect_main_params()
         self._main_indices = copy.deepcopy(self.probs[0]._main_indices)

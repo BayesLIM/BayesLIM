@@ -316,7 +316,7 @@ class DiagMat(BaseMat):
 
         Parameters
         ----------
-        scalar : float
+        scalar : tensor
         """
         self.diag *= scalar
 
