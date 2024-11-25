@@ -277,12 +277,11 @@ class LogGaussPrior(BaseLogPrior):
         elif self.side == 'lower':
             res[res > 0] = 0
         if self.diag_cov:
-            res = torch.abs(res) if torch.is_complex(res) else res
-            chisq = torch.sum(res**2 * self.icov)
+            res_sq = (res * res.conj()).real if torch.is_complex(res) else res**2
+            chisq = torch.sum(res_sq * self.icov)
         else:
             res = res.ravel()
-            res2 = res.conj() if torch.is_complex(res) else res
-            chisq = torch.sum(res @ self.icov @ res2)
+            chisq = torch.sum(res @ self.icov @ res.conj())
 
         out = -0.5 * chisq.real
         if self.density:
