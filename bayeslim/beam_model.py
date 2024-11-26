@@ -1146,6 +1146,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         dtype = utils._cfloat() if comp_params else utils._float()
         self.mode = mode
         self.beam_cache = None
+        self.separable = separable
         self.freq_ax = 3
         self.device = device
         self.log = log
