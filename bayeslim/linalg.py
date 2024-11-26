@@ -479,7 +479,7 @@ def invert_matrix(A, inv='pinv', rcond=1e-15, hermitian=False, eps=None,
 
 
 def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
-                  pinv=True, eps=0, rcond=1e-15, hermitian=False, D=None,
+                  pinv=True, eps=0, rcond=1e-15, hermitian=True, D=None,
                   preconj=False, pretran=False, driver=None):
     """
     Solve a linear equation via generalized least squares.
