@@ -1527,13 +1527,14 @@ class DistributedLogProb(utils.Module):
             if self.compute == 'prior' and i > 0: continue  # don't double count prior
             loss.append(prob.closure())
 
-        # collect gradients
-        for i, prob in enumerate(self.probs):
-            if self.compute == 'prior' and i > 0: continue  # don't double count prior
-            if i == 0:
-                self.main_params.grad = prob.main_params.grad.to(self.device)
-            else:
-                self.main_params.grad += prob.main_params.grad.to(self.device)
+        # collect gradients if grad enabled
+        if torch.is_grad_enabled():
+            for i, prob in enumerate(self.probs):
+                if self.compute == 'prior' and i > 0: continue  # don't double count prior
+                if i == 0:
+                    self.main_params.grad = prob.main_params.grad.to(self.device)
+                else:
+                    self.main_params.grad += prob.main_params.grad.to(self.device)
 
         return sum([l.to(self.device) for l in loss])
 
