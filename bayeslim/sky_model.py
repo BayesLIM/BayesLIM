@@ -538,7 +538,7 @@ class PixelSkyResponse:
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
                  cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False,
-                 real_output=True, LM=None):
+                 real_output=True, LM=None, sky0=None):
         """
         Parameters
         ----------
@@ -595,6 +595,11 @@ class PixelSkyResponse:
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
+        sky0 : tensor, optional
+            Starting sky model to add with self(params) after
+            forward modeling. This redefines the forward model
+            as a perturbation about sky0. Must have the same
+            shape as the forward model.
         """
         self.freqs = freqs
         self.comp_params = comp_params
@@ -609,6 +614,7 @@ class PixelSkyResponse:
         self.log = log
         self.LM = LM
         self.real_output = real_output
+        self.sky0 = sky0
 
         self._spatial_setup(spatial_kwargs=spatial_kwargs)
         self._freq_setup(freq_kwargs=freq_kwargs)
@@ -770,6 +776,9 @@ class PixelSkyResponse:
         if hasattr(self, '_freq_idx') and self._freq_idx is not None:
             params = params[..., self._freq_idx, :]
 
+        if self.sky0 is not None:
+            params = params + self.sky0
+
         return params
 
     def set_freq_index(self, idx=None):
@@ -800,6 +809,8 @@ class PixelSkyResponse:
         self.freqs = self.freqs.to(device)
         if self.LM is not None: self.LM.push(device)
         if not dtype: self.device = device
+        if self.sky0 is not None:
+            self.sky0 = utils.push(self.sky0, device)
 
 
 class SphHarmSky(SkyBase):
@@ -1105,7 +1116,7 @@ def read_catalogue(catfile, freqs=None, device=None,
         raise NotImplementedError
 
     R = PointSkyResponse(freqs, freq_mode=d['freq_mode'], device=device, **d['mode_kwargs'])
-    sky = PointSky(params, angs, freqs, R=R, parameter=parameter)
+    sky = PointSky(params, angs, R=R, parameter=parameter)
 
     if 'polarizaton' in d:
         # still under development
