@@ -1524,6 +1524,7 @@ class SolveMat(BaseMat):
     def push(self, device):
         self.A = utils.push(self.A, device)
         self.device = self.A.device
+        self.dtype = self.A.dtype
 
     def to_dense(self, **kwargs):
         return self(torch.eye(self.shape[1], device=self.device, dtype=self.dtype), **kwargs)
