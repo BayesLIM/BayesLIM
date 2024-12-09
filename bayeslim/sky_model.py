@@ -776,7 +776,7 @@ class PixelSkyResponse:
         if hasattr(self, '_freq_idx') and self._freq_idx is not None:
             params = params[..., self._freq_idx, :]
 
-        if self.sky0 is not None:
+        if hasattr(self, 'sky0') and self.sky0 is not None:
             params = params + self.sky0
 
         return params
