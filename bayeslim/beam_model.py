@@ -1250,7 +1250,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         Used for mode = 'interpolate'
         """
         # forward params at theta/phi and set beam cache
-        if self.separable:
+        if hasattr(self, 'separable') and self.separable:
             self.beam_cache = self.forward(params, self.theta_grid, self.phi_grid)
         else:
             self.beam_cache = self.forward(params, self.theta, self.phi)
