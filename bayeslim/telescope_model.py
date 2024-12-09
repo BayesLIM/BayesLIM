@@ -654,6 +654,106 @@ def top2eq(location, time, alt, az):
     return out.ra.deg, out.dec.deg
 
 
+def _eq2top_m(ha, dec):
+    """
+    Return the 3x3 matrix converting equatorial coordinates to topocentric
+    at the given hour angle (ha) and declination (dec).
+
+    Returned array has the number of ha's or dec's in the first dimension, so is
+    shape ``(Nha, 3, 3)``.
+
+    Borrowed from pyuvdata which borrowed from aipy
+    """
+    ha, dec = torch.as_tensor(ha), torch.as_tensor(dec)
+    sin_H, cos_H = torch.sin(ha), torch.cos(ha)
+    sin_d, cos_d = torch.sin(dec), torch.cos(dec)
+    mat = torch.stack(
+        [sin_H, cos_H, torch.zeros_like(ha),
+         -sin_d * cos_H, sin_d * sin_H, cos_d,
+         cos_d * cos_H, -cos_d * sin_H, sin_d]
+    )
+    mat = mat.reshape(-1, 3, 3)
+
+    return mat
+
+
+def _top2eq_m(ha, dec):
+    """Return the 3x3 matrix converting topocentric coordinates to equatorial
+    at the given hour angle (ha) and declination (dec).
+
+    Returned array has the number of ha's or dec's in the first dimension, so is
+    shape ``(Nha, 3, 3)``.
+
+    Slightly changed from aipy to simply write the matrix instead of inverting.
+    Borrowed from pyuvdata which borrowed from aipy.
+    """
+    ha, dec = torch.as_tensor(ha), torch.as_tensor(dec)
+    sin_H, cos_H = torch.sin(ha), torch.cos(ha)
+    sin_d, cos_d = torch.sin(dec), torch.cos(dec)
+    mat = torch.stack(
+        [sin_H, -cos_H * sin_d, cos_d * cos_H,
+         cos_H, sin_d * sin_H, -cos_d * sin_H,
+         torch.zeros_like(ha), cos_d, sin_d]
+    )
+    mat = mat.reshape(-1, 3, 3)
+
+    return mat
+
+
+def vis_rephase(dlst, lat, blvecs, freqs):
+    """
+    Generate a rephasing tensor for drift-scan,
+    zenith-pointing interferometric visibilities.
+
+    Parameters
+    ----------
+    dlst : tensor
+        Delta-LST in radians to move fringe center
+    lat : float
+        Earth latitude of telescope in degrees
+    blvecs : tensor
+        3D baseline vectors in ENU coordinates of shape (Nbls, 3)
+    freqs : tensor
+        Observing frequenices in Hz
+    device : str
+        Device to operate one
+
+    Returns
+    -------
+    tensor
+        Rephasing vector to multiply complex visibilities
+        of shape (Nbls, Ntimes, Nfreqs)
+    """
+    dlst, lat = torch.as_tensor(dlst), torch.as_tensor(lat)
+    dlst, lat = torch.atleast_1d(dlst), torch.atleast_1d(lat)
+
+    # get zero vector
+    zero = torch.tensor([0.], device=dlst.device)
+
+    # get top2eq matrix (1, 3, 3)
+    top2eq_mat = _top2eq_m(zero, lat * np.pi / 180)
+
+    # get eq2top matrix (Nlst, 3, 3)
+    eq2top_mat = _eq2top_m(-dlst, lat * np.pi / 180)
+
+    # get full rotation matrix (Nlst, 3, 3)
+    rot = torch.einsum("...jk,...kl->...jl", eq2top_mat, top2eq_mat)
+
+    # get new s-hat vector (Nlsts, 3)
+    s_zenith = torch.tensor([0.0, 0.0, 1.0], device=dlst.device)
+    s_prime = torch.einsum("...ij,j->...i", rot, s_zenith)
+
+    # dot bl with difference of pointing vectors to get new u: Zhang, Y. et al. 2018 (Eqn. 22)
+    # note that we pre-divided s_diff by c so this is in units of tau.
+    s_diff_over_c = (s_prime - s_zenith) / 2.99792458e8
+    tau = torch.einsum("...i,ki->...k", s_diff_over_c, blvecs)  # (Nlst, Nbls)
+
+    # get phasor (Nbls, Nlst, Nfreqs)
+    phasor = torch.exp(-2j * np.pi * freqs * tau.T[..., None])
+
+    return phasor
+
+
 def JD2RA(tloc, jd):
     """
     Convert JD to Equatorial J2000
