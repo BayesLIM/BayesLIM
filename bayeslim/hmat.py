@@ -2242,7 +2242,7 @@ class SolveHierMat(HierMat):
         self.trans_solve = trans_solve
         self._T = None
 
-    def mat_vec_mul(self, vec, out=None, trans_solve=None, **kwargs):
+    def mat_vec_mul(self, vec, out=None, transpose=False, trans_solve=None, **kwargs):
         """
         Matrix-vector product using linear solves
 
@@ -2251,6 +2251,8 @@ class SolveHierMat(HierMat):
         vec : tensor
         out : tensor, optional
             Add output to this tensor
+        transpose : bool, optional
+            First tranpose self (not inplace), then perform solves
         trans_solve : bool, optional
             Use this value of trans_solve as opposed to self.trans_solve
 
@@ -2258,6 +2260,8 @@ class SolveHierMat(HierMat):
         -------
         tensor
         """
+        if transpose:
+            self = self.to_transpose()
         # forward substitution
         if self.lower:
             # first solve L_00 z_0 = v_0
