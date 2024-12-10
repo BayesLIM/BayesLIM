@@ -1407,7 +1407,8 @@ class SolveMat(BaseMat):
         Parameters
         ----------
         A : tensor
-            The linear model matrix
+            The linear model matrix. If A is square and diagonal,
+            you can pass the diagonal as a 1D tensor here.
         tri : bool, optional
             If True, treat A as triangular
         lower : bool, optional
@@ -1418,10 +1419,15 @@ class SolveMat(BaseMat):
             in which case we do forward and
             backward substitution to solve the system
         """
+        if isinstance(A, DiagMat):
+            A = A.diagonal()
         if isinstance(A, BaseMat):
             A = A.to_dense()
         self.A = A
-        self._shape = self.A.shape
+        if isinstance(A, torch.Tensor) and A.ndim == 1:
+            self._shape = (len(A), len(A))
+        else:
+            self._shape = self.A.shape
         self.device = A.device
         self.dtype = A.dtype
         self.tri = tri
@@ -1454,23 +1460,31 @@ class SolveMat(BaseMat):
         chol = chol if chol is not None else self.chol
         A = self.A if not transpose else self.A.T.conj()
         lower = self.lower if not transpose else not self.lower
-        if self.tri:
-            # A is triangular
-            ndim = vec.ndim
-            if ndim == 1: vec = vec[:, None]
 
-            # do forward sub
-            result = self._solve_tri(A, vec, upper=not lower)
+        # check if A is diagonal
+        if A.ndim == 1:
+            # in this case, the solve is trivial
+            result = vec / A
 
-            # check if we need to do backward sub
-            if chol:
-                result = self._solve_tri(A.T.conj(), result, upper=lower)
-
-            if ndim == 1:
-                result = result.squeeze()
         else:
-            # generic solve
-            result = self._solve(A, vec)
+            # if A is a matrix, proceed with solves
+            if self.tri:
+                # A is triangular
+                ndim = vec.ndim
+                if ndim == 1: vec = vec[:, None]
+
+                # do forward sub
+                result = self._solve_tri(A, vec, upper=not lower)
+
+                # check if we need to do backward sub
+                if chol:
+                    result = self._solve_tri(A.T.conj(), result, upper=lower)
+
+                if ndim == 1:
+                    result = result.squeeze()
+            else:
+                # generic solve
+                result = self._solve(A, vec)
 
         if out is not None:
             out[:] += result
@@ -2230,9 +2244,15 @@ class SolveHierMat(HierMat):
         if A11.__class__ == HierMat:
             A11 = A11.to_SolveHierMat(lower=lower, trans_solve=False)
         if isinstance(A00, BaseMat) and not isinstance(A00, SolveMat):
-            A00 = A00.to_dense()
+            if isinstance(A00, DiagMat):
+                A00 = A00.diagonal()
+            else:
+                A00 = A00.to_dense()
         if isinstance(A11, BaseMat) and not isinstance(A11, SolveMat):
-            A11 = A11.to_dense()
+            if isinstance(A00, DiagMat):
+                A11 = A11.diagonal()
+            else:
+                A11 = A11.to_dense()
         if isinstance(A00, torch.Tensor):
             A00 = SolveMat(A00, tri=True, lower=lower, chol=False)
         if isinstance(A11, torch.Tensor):
