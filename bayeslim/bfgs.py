@@ -469,7 +469,6 @@ class LBFGS(BFGS):
         if self.H is None:
             # just use I
             self.H = hmat.DiagMat(torch.ones(self._numel(),
-                                  self._numel(),
                                   device=self.params[0].device,
                                   dtype=utils._float()))
 
