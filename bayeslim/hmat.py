@@ -221,18 +221,19 @@ class DiagMat(BaseMat):
     This can also be a scalar matrix by passing
     diag as a single element.
     """
-    def __init__(self, size, diag):
+    def __init__(self, diag, size=None):
         """
         Parameters
         ----------
-        size : int
-            Number of elements along the diagonal
         diag : tensor
-            The diagonal elements. For a scalar matrix
-            this can be a len-1 tensor.
+            1D tensor holding the diagonal elements. For a
+            scalar matrix this can be a len-1 tensor and size >= 1.
+        size : int, optional
+            Number of elements along the diagonal. If None,
+            inferred from size of diag.
         """
-        self.size = size
         self.diag = diag
+        self.size = size is size is not None else diag.numel()
         self._complex = torch.is_complex(diag)
         self.dtype = diag.dtype
         self.device = diag.device
@@ -332,13 +333,13 @@ class DiagMat(BaseMat):
         y : tensor
             Output of self(x)
         """
-        return DiagMat(self.size, 1/self.diag)(y)
+        return DiagMat(1/self.diag, self.size)(y)
 
     def __mul__(self, other):
-        return DiagMat(self.size, self.diag * other)
+        return DiagMat(self.diag * other, self.size)
 
     def __rmul__(self, other):
-        return DiagMat(self.size, other * self.diag)
+        return DiagMat(other * self.diag, self.size)
 
     def __imul__(self, other):
         self.scalar_mul(other)
@@ -1188,7 +1189,7 @@ class PartitionedMat(BaseMat):
         for k, v in blocks.items():
             if isinstance(v, torch.Tensor):
                 if v.ndim == 1:
-                    blocks[k] = DiagMat(len(v), v)
+                    blocks[k] = DiagMat(v, len(v))
                 else:
                     blocks[k] = DenseMat(v)
 

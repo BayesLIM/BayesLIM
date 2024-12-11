@@ -468,8 +468,8 @@ class LBFGS(BFGS):
         # check if starting Hessian needs defining
         if self.H is None:
             # just use I
-            self.H = hmat.DiagMat(self._numel(),
-                                  torch.ones(self._numel(),
+            self.H = hmat.DiagMat(torch.ones(self._numel(),
+                                  self.numel(),
                                   device=self.params[0].device,
                                   dtype=utils._float()))
 

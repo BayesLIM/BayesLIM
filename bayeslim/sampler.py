@@ -676,7 +676,7 @@ class HMC(SamplerBase):
                     cov = (invm * 1.42)**2
                 else:
                     cov = torch.tensor(np.var(c, axis=1), dtype=dtype, device=device)
-                cov_L[k] = hmat.DiagMat(len(cov), cov.abs().sqrt())
+                cov_L[k] = hmat.DiagMat(cov.abs().sqrt(), len(cov))
             else:
                 cov = torch.tensor(np.cov(c), dtype=dtype, device=device)
                 cov_L[k] = hmat.DenseMat(torch.linalg.cholesky(cov + torch.eye(len(cov)) * eps[k], upper=False))
