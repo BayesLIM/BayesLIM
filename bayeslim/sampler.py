@@ -580,18 +580,20 @@ class HMC(SamplerBase):
                 self._U = self.Uchain[i]
                 self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
 
-            return False, torch.tensor(0.)
+            accept, prob = torch.tensor(False), torch.tensor(0.)
 
-        # evaluate metropolis acceptance
-        prob = min([torch.exp(H_start - H_end), torch.tensor(1.)])
-        accept = torch.isfinite(H_end) and (np.random.rand() < prob)
-
-        if accept:
-            self.x = q
-            self.p = p
         else:
-            self._U = U_start
-            self._gradU = dUdq0
+            # not divergent
+            # evaluate metropolis acceptance
+            prob = min([torch.exp(H_start - H_end), torch.tensor(1.)])
+            accept = torch.isfinite(H_end) and (np.random.rand() < prob)
+
+            if accept:
+                self.x = q
+                self.p = p
+            else:
+                self._U = U_start
+                self._gradU = dUdq0
 
         if isinstance(self.eps, DynamicStepSize):
             # update stepsize if using a dynamic eps
@@ -800,7 +802,13 @@ class RecycledHMC(HMC):
                     self._U = self.Uchain[i]
                     self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
 
-                return False, torch.tensor(0.)
+                accept, prob = torch.tensor(False), torch.tensor(0.)
+
+                if isinstance(self.eps, DynamicStepSize):
+                    # update stepsize if using a dynamic eps
+                    self.eps.update(prob)
+
+                return accept, prob
 
             # otherwise append info to lists
             qs.append(q.clone())
