@@ -233,7 +233,7 @@ class DiagMat(BaseMat):
             inferred from size of diag.
         """
         self.diag = diag
-        self.size = size is size is not None else diag.numel()
+        self.size = size is size if not None else diag.numel()
         self._complex = torch.is_complex(diag)
         self.dtype = diag.dtype
         self.device = diag.device
