@@ -677,7 +677,7 @@ def _eq2top_m(ha, dec):
          -sin_d * cos_H, sin_d * sin_H, cos_d,
          cos_d * cos_H, -cos_d * sin_H, sin_d]
     )
-    mat = mat.reshape(-1, 3, 3).moveaxis(2, 0)
+    mat = mat.reshape(3, 3, -1).moveaxis(2, 0)
 
     return mat
 
@@ -705,7 +705,7 @@ def _top2eq_m(ha, dec):
          cos_H, sin_d * sin_H, -cos_d * sin_H,
          torch.zeros_like(ha), cos_d, sin_d]
     )
-    mat = mat.reshape(-1, 3, 3).moveaxis(2, 0)
+    mat = mat.reshape(3, 3, -1).moveaxis(2, 0)
 
     return mat
 
