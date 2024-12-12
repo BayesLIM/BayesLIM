@@ -1084,39 +1084,24 @@ class VisData(TensorData):
         other_data = other_vis.data if other_vis is not None else torch.zeros_like(self.data)
         return calibration.chisq(self.data, other_data, icov, axis=axis, cov_axis=cov_axis, dof=dof)
 
-    def bl_average(self, wgts=None, reds=None, redtol=1.0, inplace=True):
+    def bl_average(self, reds=None, wgts=None, redtol=1.0, inplace=True):
         """
         Average baselines together, weighted by inverse covariance. Note
         this drops all baselines not present in reds from the object.
 
         Parameters
         ----------
-        wgts : tensor, optional
-            Weights to use, with the same shape as the data. Default
-            is to use diagonal component of self.icov, if it exists.
         reds : list of baseline groups, optional
             List of baseline groups to average.
             E.g. [[(0, 1), (1, 2)], [(2, 5), (3, 6), (4, 7)], ...]
-            Default is to automatically build redundant groups
+            Default is to automatically build redundant groups.
+        wgts : tensor, optional
+            Weights to use, with the same shape as the data. Default
+            is to use diagonal component of self.icov, if it exists.
         redtol : float, optional
             Tolerance [meters] in building redundant groups
         inplace : bool, optional
             If True, edit arrays inplace, otherwise return a deepcopy
-
-        Notes
-        -----
-        If we are estimating a compressed basis x from a data basis y, such that
-            y = A x
-        where A is a matrix of 1's and 0's indicating the binning of y into x
-        and W is a diagonal matrix representing the data weights (i.e. inv var) then
-
-            G = (A^T W A)
-            x_avg = G^-1 A^T y
-            C_x = G^-1 A^T W C_y W A G^-1
-
-        which in the limit W = C_y^-1 reduces C_x to
-
-            C_x = G^-1
         """
         from bayeslim import optim
 
@@ -1135,38 +1120,36 @@ class VisData(TensorData):
             if wgts is None:
                 if obj.icov is not None:
                     wgt = optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis')
+                elif obj.cov is not None:
+                    wgt = 1 / optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis').clip(1e-40)
                 else:
                     wgt = torch.ones_like(obj.data)
             else:
                 # select wgt given bl selection
                 wgt = wgts[self.get_inds(bl=red)]
+                
             assert wgt.shape[2] == obj.data.shape[2]
             wgt = wgt.real
 
-            # average data
-            wgt_norm = torch.sum(wgt, dim=2, keepdims=True)
-            avg_data = torch.sum(obj.data * wgt, dim=2, keepdims=True) / wgt_norm.clip(1e-40)
+            # get covariance
+            if obj.cov is not None:
+                cov = optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis')
+            elif obj.icov is not None:
+                cov = 1 / optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis').clip(1e-40)
+            else:
+                cov = None
+
+            # take average along bl axis
+            avg_data, wgt_norm, avg_cov = average_data(obj.data, 2, wgts=wgt, cov=cov, keepdims=True)
 
             # update flag array
             avg_flags = abs(wgt_norm) > 1e-40
 
             # update cov array
-            avg_cov = None
-            avg_icov = None
-            if obj.cov is not None:
-                # TODO: allow for propagation of dense covariances
-                if obj.cov_axis is None:
-                    # cov is just variances
-                    cov = obj.cov
-                else:
-                    # just grab variances
-                    cov = optim.cov_get_diag(cov, obj.cov_axis, mode='vis', shape=obj.data.shape)
-
-                # propagate covariance through weighted sum
-                avg_cov = torch.sum(cov * wgt**2, dim=2, keepdims=True) / (wgt_norm**2).clip(1e-40)
-
-            if obj.icov is not None and avg_cov is not None:
+            if obj.icov is not None:
                 avg_icov = optim.compute_icov(avg_cov, None)
+            else:
+                avg_icov = None
 
             # setup data
             obj.setup_data(red[:1], obj.times, obj.freqs, pol=obj.pol,
@@ -1177,6 +1160,110 @@ class VisData(TensorData):
 
         # concatenate the averaged groups
         out = concat_VisData(avg_groups, 'bl')
+
+        if inplace:
+            # overwrite self.data and appropriate metadata
+            self.setup_data(out.bls, out.times, out.freqs, pol=out.pol,
+                            data=out.data, flags=out.flags, cov=out.cov,
+                            cov_axis=out.cov_axis, icov=out.icov,
+                            history=out.history)
+
+        else:
+            return out
+
+    def time_average(self, time_inds=None, wgts=None, atol=1e-5, rephase=False, inplace=True):
+        """
+        Average time integrations together, weighted by inverse covariance. Note
+        this drops all time indices not present in time_inds list.
+
+        Parameters
+        ----------
+        time_inds : list of tensors, optional
+            List of time indices from self.times to average together. Default is to
+            average all times. E.g. [(0,1,2,3,4,...,N)]
+        wgts : tensor, optional
+            Weights to use, with the same shape as the data. Default
+            is to use diagonal component of self.icov, if it exists.
+        atol : float, optional
+            Tolerance for matching time stamps in self.times array [julian date].
+        rephase : bool, optional
+            If True, assume data are in drift-scan mode. Rephase the data to bin center in LST
+            before averaging.
+        inplace : bool, optional
+            If True, edit arrays inplace, otherwise return a deepcopy
+        """
+        from bayeslim import optim
+
+        # setup times
+        if time_inds is None:
+            time_inds = [torch.arange(self.Ntimes)]
+
+        # iterate over times: select, average, then append
+        avg_groups = []
+        for i, times in enumerate(time_inds):
+            # down select bls from self
+            obj = self.select(time_inds=times, inplace=False)
+
+            # setup weights
+            if wgts is None:
+                if obj.icov is not None:
+                    wgt = optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis')
+                elif obj.cov is not None:
+                    wgt = 1 / optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis').clip(1e-40)
+                else:
+                    wgt = torch.ones_like(obj.data)
+            else:
+                # select wgt given bl selection
+                wgt = wgts[self.get_inds(time_inds=times)]
+                
+            assert wgt.shape[2] == obj.data.shape[2]
+            wgt = wgt.real
+
+            # get covariance
+            if obj.cov is not None:
+                cov = optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis')
+            elif obj.icov is not None:
+                cov = 1 / optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis').clip(1e-40)
+            else:
+                cov = None
+
+            # rephase the data
+            if rephase:
+                # get phasor
+                from bayeslim import telescope_model
+                lon, lat = self.telescope.location
+                lsts = telescope_model.JD2LST(self.times[times], lon) # rad
+                dlst = lsts[obj.Ntimes//2] - lsts
+                phs = telescope_model.vis_rephase(dlst, lat, self.get_bl_vecs(self.bls), self.freqs)
+                data = obj.data * phs
+
+            else:
+                data = obj.data
+
+            # take average along bl axis
+            avg_data, wgt_norm, avg_cov = average_data(data, 3, wgts=wgt, cov=cov, keepdims=True)
+
+            # update flag array
+            avg_flags = abs(wgt_norm) > 1e-40
+
+            # update cov array
+            if obj.icov is not None:
+                avg_icov = optim.compute_icov(avg_cov, None)
+            else:
+                avg_icov = None
+
+            # get new time
+            new_time = torch.atleast_1d(obj.times[obj.Ntimes//2])
+
+            # setup data
+            obj.setup_data(obj.bls, new_time, obj.freqs, pol=obj.pol,
+                           data=avg_data, flags=avg_flags, cov=avg_cov,
+                           icov=avg_icov, cov_axis=None, history=obj.history)
+
+            avg_groups.append(obj)
+
+        # concatenate the averaged groups
+        out = concat_VisData(avg_groups, 'time')
 
         if inplace:
             # overwrite self.data and appropriate metadata
@@ -3029,6 +3116,90 @@ def average_TensorData(objs, wgts=None):
     TensorData object
     """
     raise NotImplementedError
+
+
+def average_data(data, dim, wgts=None, cov=None, keepdims=True):
+    """
+    Average tensor data along a dimension
+
+    Parameters
+    ----------
+    data : tensor
+        nd-tensor to average along one dimension
+    dim : int
+        Dimension of data to average over
+    wgts : tensor
+        Weights to use for averaging. If None and cov is None
+        use uniform weights. If None but cov is not None, use inverse-cov.
+        If wgts and cov are passed, use wgts for weighting.
+    cov : tensor
+        Covariance of data to use in weighting, and to propgate to averaged
+        data. Currently only supports diagonal covariances. Must match
+        shape of data tensor along last cov.ndim dimensions.
+    keepdims : bool, optional
+        If True, keep averaged dimension, otherwise squeeze it.
+
+    Returns
+    -------
+    avg_data : tensor
+        Data averaged along dim.
+    wgt_norm : tensor
+        Sum of weights along dim.
+    avg_cov : tensor
+        Covariance of averaged data.
+
+    Notes
+    -----
+    If we estimate a compressed (scalar) basis x from a vector basis y, such that
+        y = A x
+    where A is a 1's vector (column vector) representing the signal mapping of 
+    scalar x -> vector y, then the generalized least-squares average of x is
+
+        x_avg = G^-1 A^T W y
+
+    where W is a diagonal matrix representing the data weights (i.e. inverse
+    variance of the noise in y), and
+
+        G = A^T W A = tr(W)
+        C_x = G^-1 A^T W C_y W A G^-1
+
+    which in the limit W = C_y^-1 reduces C_x to
+
+        C_x = G^-1 A^T W A G^-1 = G^-1 = 1 / tr(W)
+    """
+    # setup weights
+    if wgts is None:
+        if cov is not None:
+            wgts = 1 / cov.clip(1e-40)
+        else:
+            wgts = torch.ones_like(data)
+
+    wgts = wgts.real
+
+    # make sure wgts have same shape as data
+    if wgts.shape != data.shape[-wgts.ndim:]:
+        wgts = torch.ones_like(data).real * wgts
+
+    # get dim relative to last dimension
+    dim = np.arange(-data.ndim, 0, 1)[dim]
+    
+    # average data
+    wgt_norm = torch.sum(wgts, dim=dim, keepdims=keepdims)
+
+    # TODO: do a true divide where wgt_norm == 0
+    avg_data = torch.sum(data * wgts, dim=dim, keepdims=keepdims) / wgt_norm.clip(1e-40)
+
+    # update cov array
+    if cov is not None:
+        # ensure cov broadcasts with data
+        assert cov.shape == data.shape[-cov.ndim:]  # only diagonal
+    else:
+        cov = torch.ones_like(data).real
+
+    # propagate covariance through weighted sum
+    avg_cov = torch.sum(cov * wgts**2, dim=dim, keepdims=keepdims) / (wgt_norm**2).clip(1e-40)
+
+    return avg_data, wgt_norm, avg_cov
 
 
 def load_data(fname, concat_ax=None, copy=False, **kwargs):

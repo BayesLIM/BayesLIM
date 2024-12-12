@@ -663,8 +663,13 @@ def _eq2top_m(ha, dec):
     shape ``(Nha, 3, 3)``.
 
     Borrowed from pyuvdata which borrowed from aipy
+
+    Args:
+        ha : float or ndarray
+        dec: float
     """
-    ha, dec = torch.as_tensor(ha), torch.as_tensor(dec)
+    ha = torch.as_tensor(ha)
+    dec = torch.ones_like(ha) * dec
     sin_H, cos_H = torch.sin(ha), torch.cos(ha)
     sin_d, cos_d = torch.sin(dec), torch.cos(dec)
     mat = torch.stack(
@@ -672,7 +677,7 @@ def _eq2top_m(ha, dec):
          -sin_d * cos_H, sin_d * sin_H, cos_d,
          cos_d * cos_H, -cos_d * sin_H, sin_d]
     )
-    mat = mat.reshape(-1, 3, 3)
+    mat = mat.reshape(-1, 3, 3).moveaxis(2, 0)
 
     return mat
 
@@ -686,8 +691,13 @@ def _top2eq_m(ha, dec):
 
     Slightly changed from aipy to simply write the matrix instead of inverting.
     Borrowed from pyuvdata which borrowed from aipy.
+
+    Args:
+        ha : float or ndarray
+        dec: float
     """
-    ha, dec = torch.as_tensor(ha), torch.as_tensor(dec)
+    ha = torch.as_tensor(ha)
+    dec = torch.ones_like(ha) * dec
     sin_H, cos_H = torch.sin(ha), torch.cos(ha)
     sin_d, cos_d = torch.sin(dec), torch.cos(dec)
     mat = torch.stack(
@@ -695,7 +705,7 @@ def _top2eq_m(ha, dec):
          cos_H, sin_d * sin_H, -cos_d * sin_H,
          torch.zeros_like(ha), cos_d, sin_d]
     )
-    mat = mat.reshape(-1, 3, 3)
+    mat = mat.reshape(-1, 3, 3).moveaxis(2, 0)
 
     return mat
 
