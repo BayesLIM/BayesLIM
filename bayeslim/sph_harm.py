@@ -2128,9 +2128,9 @@ def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=Non
             for j in range(Nl):
                 idx = np.where((kinds == i) & (linds == j))[0]
                 w = wgts[..., idx]
-                w /= torch.sum(w).clip(1e-40)
-                out[..., i, j] = torch.sum(params[..., idx] * w, dim=-1)
-                vout[..., i, j] = torch.sum(var[..., idx] * w**2, dim=-1)
+                w_norm = torch.sum(w).clip(1e-40)
+                out[..., i, j] = torch.sum(params[..., idx] * w, dim=-1) / w_norm
+                vout[..., i, j] = torch.sum(var[..., idx] * w**2, dim=-1) / w_norm**2
 
     return out, vout
 
