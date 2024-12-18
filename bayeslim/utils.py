@@ -46,10 +46,15 @@ except ImportError:
     import_sklearn = False
     warnings.warn("could not import sklearn")
 
-
-D2R = np.pi / 180
+# 2-real to complex, vice versa
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
+
+# degree to radian
+D2R = np.pi / 180
+
+# log-base-e to log-base-10
+log2ten = np.log(np.e) / np.log(10)
 
 
 def _float(numpy=False):
