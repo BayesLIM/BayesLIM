@@ -257,7 +257,7 @@ class VisData(TensorData):
                 pass
             else:
                 antpos = utils.AntposDict(list(antpos.keys()),
-                    list(torch.vstack(antpos.values())))
+                    list(antpos.values()))
         self.antpos = antpos
         self.ants, self.antvecs = None, None
         if antpos is not None:
