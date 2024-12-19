@@ -783,7 +783,7 @@ class PixelResponse(utils.PixInterp):
 
         if self.powerbeam:
             ## TODO: replace abs with non-neg prior on beam?
-            b = torch.abs(b)
+            p = torch.abs(p)
 
         return p
 
