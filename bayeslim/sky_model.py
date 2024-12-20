@@ -880,6 +880,7 @@ class CompositeModel(utils.Module):
             works if each successive sky object in models
             can be summed with its predecessor, optionally
             with an indexing along the Npix axis.
+            All sky models are summed into the zeroth model.
         device : str, optional
             Device to move all outputs to before summing
             if sum_output
@@ -1451,3 +1452,37 @@ def eqarea_grid(resol):
     theta = np.arccos(t)
 
     return theta, phi
+
+
+def index_sky_pixels(angs_large, angs_small):
+    """
+    Given a large area sampling of the sky, and a smaller
+    but overlapping sampling of the sky, compute
+    the indices that map angs_small into angs_large.
+    All angles in angs_small must have a counterpart
+    in angs_large, but not vice versa.
+
+    Parameters
+    ----------
+    angs_large : tensor
+        The phi and theta tensors in degrees (2, Npixels_large) for
+        a large area sampling of the sky.
+    angs_small : tensor
+        The phi and theta tensors in degrees (2, Npixels_small) for
+        a smaller, subset sampling of the sky. 
+    atol : float, optional
+        Absolute tolerance for matching phi and theta arrays.
+
+    Returns
+    -------
+    idx : tensor
+        The indexing tensor that satisfies:
+        angs_large[:, idx] = angs_small
+    """
+    idx = []
+    for ph, th in zip(*angs_small):
+        # ph % 360 % 360 ensures -1e-15 -> 0 instead of 360
+        idx.append(np.argmin(np.linalg.norm(angs_large.T - torch.tensor([ph % 360 % 360, th]), axis=1)))
+
+    return torch.as_tensor(idx)
+
