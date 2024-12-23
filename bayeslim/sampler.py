@@ -1587,7 +1587,7 @@ class DynamicStepSize(ParamDict):
             Acceptance probability of last trajectory
         """
         if self.track:
-            self.chain.append(self.eps_mul)
+            self.chain.append(copy.deepcopy(self.eps_mul))
         if prob < self.min_prob:
             # divide eps_mul by two
             for k, v in self.eps_mul.items():
