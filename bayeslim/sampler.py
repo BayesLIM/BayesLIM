@@ -188,7 +188,7 @@ class HMC(SamplerBase):
     is provided.
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True, Nstep=10,
-                 pdist=None, dHmax=1000, record_divergences=False, U0=None):
+                 pdist=None, pmask=None, dHmax=1000, record_divergences=False, U0=None):
         """
         Parameters
         ----------
@@ -218,6 +218,12 @@ class HMC(SamplerBase):
             Custom (base) momentum sampling distribution.
             Default is a unit gaussian. Keys are x0 keys, values
             are functions that return momenta on x.device and x.dtype
+        pmask : tensor, optional
+            A {0,1}-valued mask for the momentum sampling.
+            These are multiplied during draw_momentum().
+            If complex, we apply mask as:
+                p = torch.complex(p.real * pmask.real, p.imag * p.imag)
+            Keys are x0 keys, values are tensors.
         dHmax : float, optional
             Maximum allowable change in Hamiltonian for a
             step, in which case the trajectory is deemed divergent.
@@ -248,6 +254,7 @@ class HMC(SamplerBase):
         self.p = None    # ending momentum
         self.eps = eps
         self.pdist = pdist
+        self.pmask = pmask
         self.set_chol(cov_L=cov_L, hess_L=hess_L, diag_mass=diag_mass)
 
     def set_chol(self, cov_L=None, hess_L=None, diag_mass=True):
@@ -411,7 +418,12 @@ class HMC(SamplerBase):
             if torch.is_complex(p):
                 p = p.abs()
             K = torch.sum(p**2 / 2)
+
         else:
+            # apply momentum mask if needed
+            p = self.apply_pmask(p)
+
+            # compute kinetic energies
             K = 0
             for k, momentum in p.items():
                 L = self.cov_L[k]  # assume L is lower-tri for all below
@@ -476,8 +488,9 @@ class HMC(SamplerBase):
 
     def draw_momentum(self):
         """
-        Draw from a mean-zero, unit variance normal and
-        multiply by M^1/2 aka the mass matrix cholesky
+        Draw from a mean-zero, unit variance normal,
+        multiply by M^1/2 aka the mass matrix cholesky,
+        and multiply by momentum mask (pmask).
 
         Returns
         -------
@@ -496,9 +509,15 @@ class HMC(SamplerBase):
                 # otherwise draw from unit Gaussian
                 momentum = torch.randn(N, device=x.device, dtype=x.dtype)            
 
-            # now scale the momenta by M cholesky
+            # reshape if needed
             if self.diag_mass[k] and momentum.shape != x.shape:
                 momentum = momentum.reshape(x.shape)
+
+            # apply pmask
+            if self.pmask is not None:
+                momentum = eps_mul(momentum, self.pmask[k])
+
+            # now scale the momenta by cholesky of mass matrix (aka hessian)
             L = self.hess_L[k]
             if L is not None:
                 if isinstance(L, torch.Tensor):
@@ -517,6 +536,10 @@ class HMC(SamplerBase):
 
             if not self.diag_mass[k]:
                 momentum = momentum.reshape(x.shape)
+
+            # apply pmask
+            if self.pmask is not None:
+                momentum = eps_mul(momentum, self.pmask[k])
 
             p[k] = momentum
 
@@ -702,6 +725,32 @@ class HMC(SamplerBase):
         self._write_chain(outfile, overwrite=overwrite,
                           attrs=['fn_evals', '_divergences'],
                           description=description)
+
+    def apply_pmask(self, momentum, pmask=None, inplace=True):
+        """
+        Apply a [0,1] mask to a momentum tensor.
+
+        Parameters
+        ----------
+        momentum : ParamDict
+            Momentum tensors
+        pmask : ParamDict, optional
+            Use this pmask instead of self.pmask.
+        inplace : bool, optional
+            Whether to update p inplace
+
+        Returns
+        -------
+        ParamDict
+        """
+        pmask = pmask if pmask is not None else self.pmask
+        if pmask is not None:
+            if not inplace:
+                momentum = copy.deepcopy(momentum)
+            for key, p in momentum.items():
+                p[:] = eps_mul(p, pmask[key])
+
+        return momentum
 
 
 class RecycledHMC(HMC):
@@ -1436,7 +1485,7 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
         states.append((q.clone(), p.clone(), U, dUdq0))
 
     # initial momentum half step
-    p -= dUdq0 * (eps / 2)
+    p -= (eps / 2) * dUdq0
 
     def pos_step(q, p, cov_L, eps, diag_mass):
         """
@@ -1489,7 +1538,7 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
         if i != (N - 1):
             Ucache = []
             gradU = dUdq(q, Ucache=Ucache)
-            gradU_eps = gradU * eps
+            gradU_eps = eps * gradU
             p -= gradU_eps
 
             # append q, and p with a half-step update
@@ -1500,7 +1549,7 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
     # momentum half step
     Ucache = []
     gradU = dUdq(q, Ucache=Ucache)
-    p -= gradU * (eps / 2)
+    p -= (eps / 2) * gradU
 
     if states is not None:
         U = None if len(Ucache) == 0 else Ucache[-1]
@@ -1509,65 +1558,33 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
     return q, p
 
 
-class DynamicStepSize(ParamDict):
+class StepSize(ParamDict):
     """
-    A dynamically adjusting stepsize object
-    for the HMC class, subclassing ParamDict
+    An 'epsilon' step-size class with special __mul__
+    specifically for leapfrog integration
+    with a complex-valued mask.
     """
-    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, index=None,
-                 track=False, chain=None):
+    def __init__(self, params):
         """
         Parameters
         ----------
         params : dict
             The nominal stepsize for each parameter.
-        eps_mul : dict, ParamDict, optional
-            Starting eps multiplier. Default (None) is 1.
-        min_prob : float
-            The minimum probability [0, 1] of a trajectory,
-            below which we divide eps by two.
-        alpha : float, optional
-            The amount to multiply the stepsize by if it is below
-            the nominal amount.
-        index : dict, optional
-            Select elements of params to adjust while keeping others static.
-            Default is to adjust all elements. Keys are keys of params,
-            values are slice obj or int tensor
-        track : bool, optional
-            If True (default) track the step size at each iteration,
-            as self.chain, otherwise don't track.
-        chain : list, optional
-            Append to a copy of this chain if tracking.
+
+        Notes
+        -----
+        If the step size is complex then we update complex-valued tensors as
+            dq = torch.complex(p.real * eps.real, p.imag * eps.imag)
         """
         super().__init__(params)
-        if eps_mul is None:
-            self.eps_mul = {k: torch.tensor(1.0, device=v.device) for k, v in params.items()}
-        else:
-            assert isinstance(eps_mul, (ParamDict, dict))
-            self.eps_mul = eps_mul
-        self.min_prob = min_prob
-        self.alpha = alpha
-        self.index = index
-        self.track = track
-        if not track:
-            self.chain = None
-        else:
-            self.chain = [] if chain is None else chain.copy()
+        self.is_complex = {k: torch.is_complex(v) for k, v in params.items()}
 
-    def copy(self, **kwargs):
-        """A shallow copy of self. Overwrite defaults by passing kwargs"""
-        kwgs = dict(eps_mul=self.eps_mul, min_prob=self.min_prob, alpha=self.alpha,
-                    index=self.index, track=self.track)
-        kwgs.update(kwargs)
-        return DynamicStepSize(self.params, **kwgs)
-            
+    def copy(self):
+        """A shallow copy of self."""
+        return StepSize(self.params)
+ 
     def __getitem__(self, key):
-        if self.index is None:
-            return self.params[key] * self.eps_mul[key]
-        else:
-            out = self.params[key].clone()
-            out[self.index[key]] *= self.eps_mul[key]
-            return out
+        return self.params[key]
 
     def values(self):
         return (self[k] for k in self.params)
@@ -1575,49 +1592,29 @@ class DynamicStepSize(ParamDict):
     def items(self):
         return zip(self.keys(), self.values())
 
-    def update(self, prob):
-        """
-        If the acceptance prob of the last trajectory [0, 1] is less
-        than self.min_prob, divide eps_mul by two. Otherwise,
-        increase its value by alpha until it reaches 1.
-
-        Parameters
-        ----------
-        prob : float
-            Acceptance probability of last trajectory
-        """
-        if self.track:
-            self.chain.append(copy.deepcopy(self.eps_mul))
-        if prob < self.min_prob:
-            # divide eps_mul by two
-            for k, v in self.eps_mul.items():
-                self.eps_mul[k] = v / 2
-        else:
-            # increment its value by alpha unless its reached 1
-            for k, v in self.eps_mul.items():
-                self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
-
     def __repr__(self):
-        return "DynamicStepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
+        return "StepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
 
     def push(self, device):
         for k in self.params:
             d = device if not isinstance(device, dict) else device[k]
             self.params[k] = utils.push(self.params[k], d)
-            self.eps_mul[k] = utils.push(self.eps_mul[k], d)
-            if self.index is not None:
-                if isinstance(self.index[k], torch.Tensor) and not isinstance(d, torch.dtype):
-                    self.index[k] = utils.push(self.index[k], d)
         self._setup()
 
     def __mul__(self, other):
-        new = self.copy()
-        if isinstance(other, (ParamDict, dict)):
-            new.params = {k: self.params[k] * other[k] for k in self.keys()}
-        else:
-            new.params = {k: self.params[k] * other for k in self.keys()}
+        if other.__class__ == ParamDict:
+            # other is position or momentum tensor, so return ParamDict object
+            return ParamDict({k: eps_mult(self[k], other[k]) for k in self.keys()})
 
-        return new
+        else:
+            # other is StepSize or a dict, return StepSize object
+            new = self.copy()
+            if isinstance(other, (StepSize, dict)):
+                new.params = {k: eps_mult(self.params[k], other[k]) for k in self.keys()}
+            else:
+                new.params = {k: eps_mult(self.params[k], other) for k in self.keys()}
+
+            return new
 
     def __rmul__(self, other):
         if other.__class__ == ParamDict:
@@ -1628,12 +1625,14 @@ class DynamicStepSize(ParamDict):
     def __imul__(self, other):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
-                self.params[k] *= other[k]
+                p = self.params[k]
+                p[:] = eps_mult(p, other[k])
         else:
             for k in self.keys():
-                self.params[k] *= other
+                p = self.params[k]
+                p[:] = eps_mult(p, other)
         return self    
-        
+
     def __div__(self, other):
         new = self.copy()
         if isinstance(other, (ParamDict, dict)):
@@ -1728,3 +1727,134 @@ class DynamicStepSize(ParamDict):
 
         return new
 
+
+class DynamicStepSize(StepSize):
+    """
+    A dynamically adjusting stepsize object
+    for the HMC class, subclassing StepSize & ParamDict.
+
+    Note that arithmetic operations only operate on self.params,
+    not self.eps_mul.
+    """
+    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, index=None,
+                 track=False, chain=None):
+        """
+        Parameters
+        ----------
+        params : dict
+            The nominal stepsize for each parameter.
+        eps_mul : dict, ParamDict, optional
+            Starting eps multiplier. Default (None) is 1.
+        min_prob : float
+            The minimum probability [0, 1] of a trajectory,
+            below which we divide eps by two.
+        alpha : float, optional
+            The amount to multiply the stepsize by if it is below
+            the nominal amount.
+        index : dict, optional
+            Select elements of params to adjust while keeping others static.
+            Default is to adjust all elements. Keys are keys of params,
+            values are slice obj or int tensor
+        track : bool, optional
+            If True (default) track the step size at each iteration,
+            as self.chain, otherwise don't track.
+        chain : list, optional
+            Append to a copy of this chain if tracking.
+
+        Notes
+        -----
+        If the step size is complex then we update complex-valued tensors as
+            dq = torch.complex(p.real * eps.real, p.imag * eps.imag)
+        """
+        super().__init__(params)
+        if eps_mul is None:
+            self.eps_mul = {k: torch.tensor(1.0, device=v.device) for k, v in params.items()}
+        else:
+            assert isinstance(eps_mul, (ParamDict, dict))
+            self.eps_mul = eps_mul
+        self.min_prob = min_prob
+        self.alpha = alpha
+        self.index = index
+        self.track = track
+        if not track:
+            self.chain = None
+        else:
+            self.chain = [] if chain is None else chain.copy()
+
+    def copy(self, **kwargs):
+        """A shallow copy of self. Overwrite defaults by passing kwargs"""
+        kwgs = dict(eps_mul=self.eps_mul, min_prob=self.min_prob, alpha=self.alpha,
+                    index=self.index, track=self.track)
+        kwgs.update(kwargs)
+        return DynamicStepSize(self.params, **kwgs)
+            
+    def __getitem__(self, key):
+        if self.index is None:
+            return self.params[key] * self.eps_mul[key]
+        else:
+            out = self.params[key].clone()
+            out[self.index[key]] *= self.eps_mul[key]
+            return out
+
+    def update(self, prob):
+        """
+        If the acceptance prob of the last trajectory [0, 1] is less
+        than self.min_prob, divide eps_mul by two. Otherwise,
+        increase its value by alpha until it reaches 1.
+
+        Parameters
+        ----------
+        prob : float
+            Acceptance probability of last trajectory
+        """
+        if self.track:
+            self.chain.append(copy.deepcopy(self.eps_mul))
+        if prob < self.min_prob:
+            # divide eps_mul by two
+            for k, v in self.eps_mul.items():
+                self.eps_mul[k] = v / 2
+        else:
+            # increment its value by alpha unless its reached 1
+            for k, v in self.eps_mul.items():
+                self.eps_mul[k] = (v * self.alpha).clip(None, 1.0)
+
+    def __repr__(self):
+        return "DynamicStepSize\n" + "\n".join(["'{}': {}".format(k, str(self[k])) for k in self.params])
+
+    def push(self, device):
+        for k in self.params:
+            d = device if not isinstance(device, dict) else device[k]
+            self.params[k] = utils.push(self.params[k], d)
+            self.eps_mul[k] = utils.push(self.eps_mul[k], d)
+            if self.index is not None:
+                if isinstance(self.index[k], torch.Tensor) and not isinstance(d, torch.dtype):
+                    self.index[k] = utils.push(self.index[k], d)
+        self._setup()
+
+
+def eps_mult(x, eps):
+    """
+    Multiply tensor by a step-size for HMC leapfrog.
+
+    If eps is complex we do
+        x = torch.complex(x.real * eps.real, x.imag * eps.imag)
+
+    Parameters
+    ----------
+    x : tensor
+        Position or momentum tensor
+    eps : tensor or float
+        Step-size parameter. Can be a scalar,
+        or a tensor of x.shape
+
+    Returns
+    -------
+    tensor
+    """
+    if isinstance(eps, torch.Tensor):
+        if torch.is_complex(eps):
+            return torch.complex(x.real * eps.real, x.imag * eps.imag)
+        else:
+            return x * eps
+    else:
+        return x * eps

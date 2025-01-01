@@ -1527,7 +1527,7 @@ def set_model_attr(model, name, value, clobber_param=False,
 
                 # fill elements if needed
                 if fill is not None:
-                    param.data[:] = fill
+                    param.data[:] = fill.to(param.data.dtype)
 
                 # insert value
                 if add:
