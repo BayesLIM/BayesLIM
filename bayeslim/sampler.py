@@ -955,7 +955,7 @@ class NUTS(HMC):
     No U-Turn Sampler variant of HMC.
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True,
-                 pdist=None, dHmax=1000, record_divergences=False, max_tree_depth=6,
+                 pdist=None, pmask=None, dHmax=1000, record_divergences=False, max_tree_depth=6,
                  biased=True, track_states=False):
         """
         Parameters
@@ -984,6 +984,12 @@ class NUTS(HMC):
             Custom (base) momentum sampling distribution.
             Default is a unit gaussian. Keys are x0 keys, values
             are functions that return momentum vector on x.device and x.dtype
+        pmask : tensor, optional
+            A {0,1}-valued mask for the momentum sampling.
+            These are multiplied during draw_momentum().
+            If complex, we apply mask as:
+                p = torch.complex(p.real * pmask.real, p.imag * p.imag)
+            Keys are x0 keys, values are tensors.
         dHmax : float, optional
             Maximum allowable change in Hamiltonian for a
             step, in which case the trajectory is deemed divergent.
@@ -1001,7 +1007,7 @@ class NUTS(HMC):
             If True, track all states visited in a single NUTS trajectory
         """
         super().__init__(potential_fn, x0, eps, cov_L=cov_L, hess_L=hess_L, diag_mass=diag_mass,
-                         pdist=pdist, dHmax=dHmax, record_divergences=record_divergences)
+                         pdist=pdist, pmask=pmask, dHmax=dHmax, record_divergences=record_divergences)
         self.max_tree_depth = max_tree_depth
         self.biased = biased
         self.track_states = track_states
@@ -1756,7 +1762,7 @@ class DynamicStepSize(StepSize):
             Default is to adjust all elements. Keys are keys of params,
             values are slice obj or int tensor
         track : bool, optional
-            If True (default) track the step size at each iteration,
+            If True (default) track eps_mul at each iteration,
             as self.chain, otherwise don't track.
         chain : list, optional
             Append to a copy of this chain if tracking.
