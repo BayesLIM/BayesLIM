@@ -1508,31 +1508,31 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
             # q, p, etc. are tensors
             if cov_L is None:
                 # identity mass
-                q += eps * p
+                q += multiply_eps(p, eps)
             elif isinstance(cov_L, hmat.SolveMat):
                 # tell cov_L to perform forward then backward solves
                 dq = cov_L(p, chol=True)
-                q += eps * dq
+                q += multiply_eps(dq, eps)
             elif isinstance(cov_L, hmat.SolveHierMat):
                 # do forward then backward solves
                 dq = cov_L(p, out=torch.zeros_like(p), trans_solve=True)
-                q += eps * dq
+                q += multiply_eps(dq, eps)
             elif isinstance(cov_L, (hmat.HadamardMat, hmat.DiagMat)):
                 # this is diag_mass case
                 dq = cov_L(p)
                 dq = cov_L(dq)
-                q += eps * dq
+                q += multiply_eps(dq, eps)
             elif isinstance(cov_L, hmat.BaseMat):
                 # this is dense mass case
                 dq = cov_L(p, transpose=True)
                 dq = cov_L(dq)
-                q += eps * dq
+                q += multiply_eps(dq, eps)
             else:
                 if diag_mass:
-                    q += eps * (cov_L**2 * p)
+                    q += multiply_eps(cov_L**2 * p, eps)
                 else:
                     # treat cov_L as lower-tri
-                    q += eps * (cov_L @ (cov_L.T @ p.flatten())).reshape(p.shape)
+                    q += multiply_eps((cov_L @ (cov_L.T @ p.flatten())).reshape(p.shape), eps)
 
     # iterate over steps
     for i in range(N):
