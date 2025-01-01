@@ -218,7 +218,7 @@ class HMC(SamplerBase):
             Custom (base) momentum sampling distribution.
             Default is a unit gaussian. Keys are x0 keys, values
             are functions that return momenta on x.device and x.dtype
-        pmask : tensor, optional
+        pmask : dict, optional
             A {0,1}-valued mask for the momentum sampling.
             These are multiplied during draw_momentum().
             If complex, we apply mask as:
@@ -515,7 +515,7 @@ class HMC(SamplerBase):
 
             # apply pmask
             if self.pmask is not None:
-                momentum = eps_mul(momentum, self.pmask[k])
+                momentum = multiply_eps(momentum, self.pmask[k])
 
             # now scale the momenta by cholesky of mass matrix (aka hessian)
             L = self.hess_L[k]
@@ -539,7 +539,7 @@ class HMC(SamplerBase):
 
             # apply pmask
             if self.pmask is not None:
-                momentum = eps_mul(momentum, self.pmask[k])
+                momentum = multiply_eps(momentum, self.pmask[k])
 
             p[k] = momentum
 
@@ -748,7 +748,7 @@ class HMC(SamplerBase):
             if not inplace:
                 momentum = copy.deepcopy(momentum)
             for key, p in momentum.items():
-                p[:] = eps_mul(p, pmask[key])
+                p[:] = multiply_eps(p, pmask[key])
 
         return momentum
 
@@ -984,7 +984,7 @@ class NUTS(HMC):
             Custom (base) momentum sampling distribution.
             Default is a unit gaussian. Keys are x0 keys, values
             are functions that return momentum vector on x.device and x.dtype
-        pmask : tensor, optional
+        pmask : dict, optional
             A {0,1}-valued mask for the momentum sampling.
             These are multiplied during draw_momentum().
             If complex, we apply mask as:
@@ -1610,15 +1610,15 @@ class StepSize(ParamDict):
     def __mul__(self, other):
         if other.__class__ == ParamDict:
             # other is position or momentum tensor, so return ParamDict object
-            return ParamDict({k: eps_mult(self[k], other[k]) for k in self.keys()})
+            return ParamDict({k: multiply_eps(self[k], other[k]) for k in self.keys()})
 
         else:
             # other is StepSize or a dict, return StepSize object
             new = self.copy()
             if isinstance(other, (StepSize, dict)):
-                new.params = {k: eps_mult(self.params[k], other[k]) for k in self.keys()}
+                new.params = {k: multiply_eps(self.params[k], other[k]) for k in self.keys()}
             else:
-                new.params = {k: eps_mult(self.params[k], other) for k in self.keys()}
+                new.params = {k: multiply_eps(self.params[k], other) for k in self.keys()}
 
             return new
 
@@ -1632,11 +1632,11 @@ class StepSize(ParamDict):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
                 p = self.params[k]
-                p[:] = eps_mult(p, other[k])
+                p[:] = multiply_eps(p, other[k])
         else:
             for k in self.keys():
                 p = self.params[k]
-                p[:] = eps_mult(p, other)
+                p[:] = multiply_eps(p, other)
         return self    
 
     def __div__(self, other):
@@ -1838,7 +1838,7 @@ class DynamicStepSize(StepSize):
         self._setup()
 
 
-def eps_mult(x, eps):
+def multiply_eps(x, eps):
     """
     Multiply tensor by a step-size for HMC leapfrog.
 
