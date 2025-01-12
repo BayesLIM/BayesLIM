@@ -1502,8 +1502,7 @@ def leapfrog(q, p, dUdq, eps, N, cov_L=1.0, diag_mass=True, dUdq0=None,
         if isinstance(q, ParamDict):
             # q, p, etc. are dictionaries
             for k in q:
-                L = None if cov_L is None else cov_L[k]
-                pos_step(q[k], p[k], L, eps[k], diag_mass[k])
+                pos_step(q[k], p[k], cov_L[k], eps[k], diag_mass[k])
         else:
             # q, p, etc. are tensors
             if cov_L is None:

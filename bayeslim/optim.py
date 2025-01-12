@@ -1167,10 +1167,11 @@ class LogProb(utils.Module):
         """
         return self.forward(idx=idx, **kwargs)
 
-    def closure(self):
+    def closure(self, **kwargs):
         """
         Function for evaluating the model, performing
-        backprop, and returning output given self.grad_type
+        backprop, and returning output given self.grad_type.
+        kwargs are to out.backward(**kwargs)
         """
         self.closure_eval += 1
         if torch.is_grad_enabled():
@@ -1183,7 +1184,7 @@ class LogProb(utils.Module):
                 self.batch_idx = i
                 out = self()
                 if out.requires_grad:
-                    out.backward()
+                    out.backward(**kwargs)
                 loss = loss + out.detach()
             loss = loss / self.Nbatch
             self.batch_idx = 0
@@ -1192,7 +1193,7 @@ class LogProb(utils.Module):
         elif self.grad_type == 'stochastic':
             out = self()
             if out.requires_grad:
-                out.backward()
+                out.backward(**kwargs)
             loss = out.detach()
 
         # modify gradients if desired
@@ -1509,7 +1510,7 @@ class DistributedLogProb(utils.Module):
 
         return main_params
 
-    def closure(self):
+    def closure(self, **kwargs):
         """
         Function for evaluating the model, performing
         backprop, and returning output given self.grad_type
@@ -1525,7 +1526,7 @@ class DistributedLogProb(utils.Module):
         loss = []
         for i, prob in enumerate(self.probs):
             if self.compute == 'prior' and i > 0: continue  # don't double count prior
-            loss.append(prob.closure())
+            loss.append(prob.closure(**kwargs))
 
         # collect gradients if grad enabled
         if torch.is_grad_enabled():
