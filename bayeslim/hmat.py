@@ -1555,7 +1555,11 @@ class SolveMat(BaseMat):
         self.A /= scalar
 
     def diagonal(self):
-        return self.to_dense().diagonal()
+        if self.chol:
+            q = torch.randn(self.shape[0], 3000, device=self.device)
+            return self(q, transpose=True, chol=False).var(1)
+        else:
+            return self.to_dense().diagonal()
 
     def __mul__(self, other):
         return SolveMat(self.A / other, tri=self.tri, lower=self.lower, chol=self.chol)
