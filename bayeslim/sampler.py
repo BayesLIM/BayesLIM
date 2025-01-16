@@ -1609,15 +1609,15 @@ class StepSize(ParamDict):
     def __mul__(self, other):
         if other.__class__ == ParamDict:
             # other is position or momentum tensor, so return ParamDict object
-            return ParamDict({k: multiply_eps(self[k], other[k]) for k in self.keys()})
+            return ParamDict({k: multiply_eps(other[k], self[k]) for k in self.keys()})
 
         else:
             # other is StepSize or a dict, return StepSize object
             new = self.copy()
             if isinstance(other, (StepSize, dict)):
-                new.params = {k: multiply_eps(self.params[k], other[k]) for k in self.keys()}
+                new.params = {k: multiply_eps(other[k], self.params[k]) for k in self.keys()}
             else:
-                new.params = {k: multiply_eps(self.params[k], other) for k in self.keys()}
+                new.params = {k: multiply_eps(other, self.params[k]) for k in self.keys()}
 
             return new
 
@@ -1631,11 +1631,11 @@ class StepSize(ParamDict):
         if isinstance(other, (ParamDict, dict)):
             for k in self.keys():
                 p = self.params[k]
-                p[:] = multiply_eps(p, other[k])
+                p[:] = multiply_eps(other[k], p)
         else:
             for k in self.keys():
                 p = self.params[k]
-                p[:] = multiply_eps(p, other)
+                p[:] = multiply_eps(other, p)
         return self    
 
     def __div__(self, other):
