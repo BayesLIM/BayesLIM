@@ -602,6 +602,8 @@ class HMC(SamplerBase):
                 i = np.random.randint(0, Nchain)
                 self._U = self.Uchain[i]
                 self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
+            else:
+                self._U = None
 
             accept, prob = torch.tensor(False), torch.tensor(0.)
 
@@ -1291,6 +1293,8 @@ class NUTS(HMC):
                 self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
 
                 return False, torch.tensor(0.)
+            else:
+                self._U = None
 
         # evaluate metropolis acceptance
         prob = min(torch.tensor(1.), torch.exp(H_start - base_tree.q_prop_H).cpu())
@@ -1305,8 +1309,8 @@ class NUTS(HMC):
             self._U = base_tree.q_prop_U
             self._gradU = None
         else:
-            self._U = U_start
-            self._gradU = dUdq0
+            self._U = None #U_start
+            self._gradU = None #dUdq0
 
         if isinstance(self.eps, DynamicStepSize):
             # update stepsize if using a dynamic eps
@@ -1741,7 +1745,7 @@ class DynamicStepSize(StepSize):
     Note that arithmetic operations only operate on self.params,
     not self.eps_mul.
     """
-    def __init__(self, params, eps_mul=None, min_prob=0.2, alpha=1.2, index=None,
+    def __init__(self, params, eps_mul=None, gamma=0.8, min_prob=0.2, alpha=1.25, index=None,
                  track=False, chain=None):
         """
         Parameters
@@ -1750,12 +1754,15 @@ class DynamicStepSize(StepSize):
             The nominal stepsize for each parameter.
         eps_mul : dict, ParamDict, optional
             Starting eps multiplier. Default (None) is 1.
+        gamma : float, optional
+            The amount to multiply the stepsize by if the
+            trajectory probability is below min_prob.
         min_prob : float
             The minimum probability [0, 1] of a trajectory,
             below which we divide eps by two.
         alpha : float, optional
-            The amount to multiply the stepsize by if it is below
-            the nominal amount.
+            The amount to multiply the stepsize by if the trajectory
+            probability is above min_prob.
         index : dict, optional
             Select elements of params to adjust while keeping others static.
             Default is to adjust all elements. Keys are keys of params,
@@ -1778,6 +1785,7 @@ class DynamicStepSize(StepSize):
             assert isinstance(eps_mul, (ParamDict, dict))
             self.eps_mul = eps_mul
         self.min_prob = min_prob
+        self.gamma = gamma
         self.alpha = alpha
         self.index = index
         self.track = track
@@ -1817,7 +1825,7 @@ class DynamicStepSize(StepSize):
         if prob < self.min_prob:
             # divide eps_mul by two
             for k, v in self.eps_mul.items():
-                self.eps_mul[k] = v / 2
+                self.eps_mul[k] = v * self.gamma
         else:
             # increment its value by alpha unless its reached 1
             for k, v in self.eps_mul.items():
