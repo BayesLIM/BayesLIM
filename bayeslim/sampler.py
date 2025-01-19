@@ -1309,7 +1309,7 @@ class NUTS(HMC):
             self._U = base_tree.q_prop_U
             self._gradU = None
         else:
-            self._U = None #U_start
+            self._U = U_start
             self._gradU = None #dUdq0
 
         if isinstance(self.eps, DynamicStepSize):
