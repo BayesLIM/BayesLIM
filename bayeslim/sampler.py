@@ -73,7 +73,7 @@ class SamplerBase:
         """
         for i in range(Nsample):
             accept, prob = self.step()
-            self._acceptances.append(accept)
+            self._acceptances.append(utils.tensor2numpy(accept))
 
             # append parameter values to chain
             self.append_chain(self.x, U=self._U)
