@@ -538,7 +538,7 @@ class PixelSkyResponse:
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
                  cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False,
-                 real_output=True, LM=None, sky0=None):
+                 real_output=True, abs_output=True, LM=None, sky0=None):
         """
         Parameters
         ----------
@@ -592,6 +592,8 @@ class PixelSkyResponse:
             exp of params just before return
         real_output : bool, optional
             If True, ensure that the output of self is a real-valued tensor.
+        abs_output : bool, optional
+            If True, take abs of final output in self() call.
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
@@ -778,6 +780,9 @@ class PixelSkyResponse:
 
         if hasattr(self, 'sky0') and self.sky0 is not None:
             params = params + self.sky0
+
+        if hasattr(self, 'abs_output') and self.abs_output:
+            params = params.abs()
 
         return params
 
