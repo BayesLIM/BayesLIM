@@ -573,8 +573,11 @@ class HMC(SamplerBase):
         else:
             p = self.p.clone()
         K_start = self.K(p)
-        if self._U is None:
-            self.dUdx(q)
+
+        # set self._U, self._gradU
+        self.dUdx(q)
+
+        # get starting energy
         U_start = self._U
         H_start = K_start + U_start
 
@@ -602,8 +605,6 @@ class HMC(SamplerBase):
                 i = np.random.randint(0, Nchain)
                 self._U = self.Uchain[i]
                 self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
-            else:
-                self._U = None
 
             accept, prob = torch.tensor(False), torch.tensor(0.)
 
@@ -1236,8 +1237,11 @@ class NUTS(HMC):
         else:
             p = self.p.clone()
         K_start = self.K(p)
-        if self._U is None:
-            self.dUdx(q)
+
+        # set self._U, self._gradU
+        self.dUdx(q)
+
+        # get starting energy
         U_start = self._U
         dUdq0 = self._gradU
         H_start = K_start + U_start
@@ -1293,8 +1297,6 @@ class NUTS(HMC):
                 self.x = ParamDict({k: torch.as_tensor(self.chain[k][i], device=self.x[k].device) for k in self.x})
 
                 return False, torch.tensor(0.)
-            else:
-                self._U = None
 
         # evaluate metropolis acceptance
         prob = min(torch.tensor(1.), torch.exp(H_start - base_tree.q_prop_H).cpu())
@@ -1310,7 +1312,7 @@ class NUTS(HMC):
             self._gradU = None
         else:
             self._U = U_start
-            self._gradU = None #dUdq0
+            self._gradU = dUdq0
 
         if isinstance(self.eps, DynamicStepSize):
             # update stepsize if using a dynamic eps
