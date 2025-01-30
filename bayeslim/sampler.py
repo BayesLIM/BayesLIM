@@ -959,7 +959,7 @@ class NUTS(HMC):
     """
     def __init__(self, potential_fn, x0, eps, cov_L=None, hess_L=None, diag_mass=True,
                  pdist=None, pmask=None, dHmax=1000, record_divergences=False, max_tree_depth=6,
-                 biased=True, track_states=False):
+                 biased=True, track_states=False, sample_direction=True):
         """
         Parameters
         ----------
@@ -1008,12 +1008,16 @@ class NUTS(HMC):
             Biased gives slight preference to the new tree over the old tree.
         track_states : bool, optional
             If True, track all states visited in a single NUTS trajectory
+        sample_direction : bool, optional
+            If True, randomely sample direction [1, -1] for each trajectory
+            subtree. Otherwise keep direction = 1.
         """
         super().__init__(potential_fn, x0, eps, cov_L=cov_L, hess_L=hess_L, diag_mass=diag_mass,
                          pdist=pdist, pmask=pmask, dHmax=dHmax, record_divergences=record_divergences)
         self.max_tree_depth = max_tree_depth
         self.biased = biased
         self.track_states = track_states
+        self.sample_direction = sample_direction
 
     def is_turning(self, tree):
         """
@@ -1255,8 +1259,11 @@ class NUTS(HMC):
         q_left = q_right = q
         p_left = p_right = p
         while tree_depth < self.max_tree_depth:
-            # randomly sample the direction
-            direction = 1.0 if np.random.rand() > 0.5 else -1.0
+            if self.sample_direction:
+                # randomly sample the direction
+                direction = 1.0 if np.random.rand() > 0.5 else -1.0
+            else:
+                direction = 1.0
 
             # build the tree for this depth
             q_start = q_right if direction > 0 else q_left
