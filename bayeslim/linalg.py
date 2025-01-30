@@ -674,7 +674,7 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
                 A = A.conj()
             # just invert diagonal to get D
             if Ninv is None:
-                Dinv = (torch.abs(A)**2).sum(dim=0 if not pretran else 1)
+                Dinv = A.norm(dim=0 if not pretran else 1).pow(2)
             else:
                 if Ninv.ndim == 2:
                     # Ninv is a matrix
