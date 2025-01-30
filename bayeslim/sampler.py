@@ -1055,9 +1055,11 @@ class NUTS(HMC):
             The merged tree
         """
         if self.biased:
-            new_prob = min(1, torch.exp(new_tree.weight - old_tree.weight))
+            # biased progressive sampling
+            new_prob = (new_tree.weight - old_tree.weight).exp().clamp(max=1.0)
         else:
-            new_prob = torch.exp(new_tree.weight - _logaddexp(old_tree.weight, new_tree.weight))
+            # uniform progressive sampling
+            new_prob = (new_tree.weight - _logaddexp(old_tree.weight, new_tree.weight)).exp().clamp(max=1.0)
 
         # Bernoulli draw
         if np.random.rand() < new_prob:
@@ -1118,6 +1120,8 @@ class NUTS(HMC):
         U_new = self._U
         H_new = U_new + self.K(p_new)
         diverging = self.is_divergent(H_start, H_new)
+        ## TODO: see pyro docs: I think this should actually be weight = -H_new
+        # or weight = -H_new + H_start where H_start is at the traj. origin
         weight = _logaddexp(-H_start, -H_new)
 
         q_left     = q_new
@@ -1155,7 +1159,7 @@ class NUTS(HMC):
         tree_depth : int
             Depth of this subtree
         H_start : float
-            Starting energy (Hamiltonian) for input q and p
+            Starting energy (Hamiltonian)
         dUdq0 : ParamDict, optional
             Precomputed potential gradient at input q
         base_tree : TreeInfo object, optional
@@ -1258,6 +1262,7 @@ class NUTS(HMC):
         tree_depth = 0
         q_left = q_right = q
         p_left = p_right = p
+        dUdq_left = dUdq_right = dUdq0
         while tree_depth < self.max_tree_depth:
             if self.sample_direction:
                 # randomly sample the direction
@@ -1268,8 +1273,9 @@ class NUTS(HMC):
             # build the tree for this depth
             q_start = q_right if direction > 0 else q_left
             p_start = p_right if direction > 0 else p_left
-            new_tree = self.build_tree(q_start, p_start, direction, tree_depth, H_start, dUdq0=dUdq0,
-                                       base_tree=base_tree)
+            dUdq_start = dUdq_right if direction > 0 else dUdq_left
+            new_tree = self.build_tree(q_start, p_start, direction, tree_depth, H_start,
+                                       dUdq0=dUdq_start, base_tree=base_tree)
 
             # check for doubling or diverging
             if new_tree.diverging or new_tree.turning:
@@ -1281,6 +1287,7 @@ class NUTS(HMC):
             # update new left and right nodes
             q_left, p_left = base_tree.q_left, base_tree.p_left
             q_right, p_right = base_tree.q_right, base_tree.p_right
+            dUdq_left, dUdq_right = base_tree.grad_left, base_tree.grad_right
 
             tree_depth += 1
 
