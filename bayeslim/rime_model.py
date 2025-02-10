@@ -590,30 +590,34 @@ class VisMapper:
             self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
             # get weights
-            if self.vis.icov is not None and self.vis.cov_axis is None:
-                wgt = self.vis.get_icov(bl=self.vis.bls, times=time, squeeze=False)[0, 0, :, 0]
+            if vis.icov is not None and vis.cov_axis is None:
+                wgt = vis.get_icov(bl=vis.bls, times=time, squeeze=False)[0, 0, :, 0]
             else:
                 wgt = torch.tensor(1.0, device=self.device)
 
             # insert into w vector
             self.w[i*Nbls:(i+1)*Nbls] = wgt
 
-        # normalize weights by sum
-        self.w /= self.w.sum(0).clip(1e-40)
-
-    def make_map(self, clip=1e-5, norm_sqbeam=False):
+    def make_map(self, clip=1e-10, norm='w', DI=None):
         """
-        Given A matrix and other products from build_A()
+        Given self.A matrix and other products from build_A()
         and build_v(), make and normalize a dirty map.
+
+        Note that the normalized dirty map is
+            m_dirty = DI^-1 A^t v
+        with DI being diagonal.
 
         Parameters
         ----------
         clip : float, optional
             Clip normalization matrix (weighted beam) at this value
-        norm_sqbeam : bool, optional
-            If True, normalize map with two factors
-            of the powerbeam (standard least squares)
-            otherwise normalize with only one factor.
+        norm : str, optional
+            Choice of dirty map normalization:
+                'w'  : DI = w @ 1
+                'Aw' : DI = Max(|A^t| @ w @ 1) * w @ 1
+        DI : tensor, optional
+            User-fed diagonal normalization, overrides
+            norm if provided.
         """
         if self.A is None:
             raise ValueError("must run build_A() first")
@@ -621,15 +625,19 @@ class VisMapper:
         # make un-normalized map
         m = torch.einsum('ijk,ij->jk', self.A, self.v * self.w).real
 
-        # compute diagonal of A^t w A
-        # note that abs(A) means fringe term is just 1.0, so this really
-        # only accounts for factors of the beam and the number of visibilities
-        if norm_sqbeam:
-            # normalize by two factors of beam (standard least squares)
-            self.DI = (torch.abs(self.A)**2 * self.w[:, :, None]).sum(0).clip(clip)
+        # compute normalization
+        if DI is None:
+            wsum = self.w.sum(0)[:, None].clip(min=clip)
+            if norm == 'w':
+                # no beam, just normalize by sum of weights
+                self.DI = wsum
+
+            elif norm == 'Aw':
+                # one beam factor, see Xu+2024 (Direct Optimal Mapping)
+                Aw = (self.w[:, :, None] * self.A.abs()).sum(0)
+                self.DI = Aw / Aw.max(1).values()[:, None] * wsum
         else:
-            # normalize by one factor of beam (prevents overshoot far from fov center)
-            self.DI = (torch.abs(self.A) * self.w[:, :, None]).sum(0).clip(clip)
+            self.DI = DI
 
         # normalize map
         m /= self.DI
