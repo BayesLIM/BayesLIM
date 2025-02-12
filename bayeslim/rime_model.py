@@ -565,7 +565,7 @@ class VisMapper:
             self.A[i*Nbls:(i+1)*Nbls, :, cut] = fr
 
     @torch.no_grad()
-    def build_v(self, vis=None):
+    def build_v(self, vis=None, icov=None):
         """
         Build the visibility tensor that is dotted
         into self.A to form dirty map and its associated weight vector.
@@ -578,8 +578,15 @@ class VisMapper:
             fed will use this VisData instead.
             vis must match self.vis in shape
             and in metadata exactly.
+        icov : tensor, optional
+            Use this icov instead of vis.icov when
+            building weights. This must conform
+            to the same shape and ordering of vis.icov.
+            Must be a diagonal icov with cov_axis = None.
         """
         vis = vis if vis is not None else self.vis
+        cov_axis = None if icov is not None else vis.cov_axis
+        icov = icov if icov is not None else vis.icov
         Ntimes = vis.Ntimes
         Nbls = vis.Nbls
         Nfreqs = vis.Nfreqs
@@ -590,8 +597,8 @@ class VisMapper:
             self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
 
             # get weights
-            if vis.icov is not None and vis.cov_axis is None:
-                wgt = vis.get_icov(bl=vis.bls, times=time, squeeze=False)[0, 0, :, 0]
+            if icov is not None and cov_axis is None:
+                wgt = vis.get_icov(bl=vis.bls, times=time, icov=icov, squeeze=False)[0, 0, :, 0]
             else:
                 wgt = torch.tensor(1.0, device=self.device)
 
@@ -604,8 +611,8 @@ class VisMapper:
         and build_v(), make and normalize a dirty map.
 
         Note that the normalized dirty map is
-            m_dirty = DI^-1 A^t v
-        with DI being diagonal.
+            m_dirty = DI^-1 A^t w v
+        with DI being diagonal and w being (diagonal) weights.
 
         Parameters
         ----------
