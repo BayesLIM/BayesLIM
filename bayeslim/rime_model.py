@@ -642,7 +642,7 @@ class VisMapper:
             elif norm == 'Aw':
                 # one beam factor, see Xu+2024 (Direct Optimal Mapping)
                 Aw = (self.w[:, :, None] * self.A.abs()).sum(0)
-                self.DI = Aw / Aw.max(1).values()[:, None] * wsum
+                self.DI = Aw / Aw.max(1).values[:, None] * wsum
         else:
             self.DI = DI
 
