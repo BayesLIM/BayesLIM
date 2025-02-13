@@ -2068,7 +2068,8 @@ def sfb_binning(params, k_arr, kbins, var=None, wgts=None, l_arr=None, lbins=Non
     k_arr : array
         Array of k-values for params of shape (Nlmn,)
     kbins : array
-        Array of k bin centers [Mpc^-1]
+        Array of k bin centers [Mpc^-1], monotonically
+        increasing.
     var : array
         Variance of params tensor, of same shape.
     wgts : array, optional
