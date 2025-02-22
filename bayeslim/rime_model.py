@@ -605,7 +605,7 @@ class VisMapper:
             # insert into w vector
             self.w[i*Nbls:(i+1)*Nbls] = wgt
 
-    def make_map(self, clip=1e-10, norm='w', DI=None):
+    def make_map(self, clip=1e-5, norm='w', DI=None):
         """
         Given self.A matrix and other products from build_A()
         and build_v(), make and normalize a dirty map.
@@ -634,7 +634,7 @@ class VisMapper:
 
         # compute normalization
         if DI is None:
-            wsum = self.w.sum(0)[:, None].clip(min=clip)
+            wsum = self.w.sum(0)[:, None]
             if norm == 'w':
                 # no beam, just normalize by sum of weights
                 self.DI = wsum
@@ -643,6 +643,8 @@ class VisMapper:
                 # one beam factor, see Xu+2024 (Direct Optimal Mapping)
                 Aw = (self.w[:, :, None] * self.A.abs()).sum(0)
                 self.DI = Aw / Aw.max(1).values[:, None] * wsum
+                
+            self.DI = self.DI.clip(min=clip)
         else:
             self.DI = DI
 
