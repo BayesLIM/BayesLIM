@@ -399,7 +399,7 @@ class LogProb(utils.Module):
     """
     def __init__(self, model, target, start_inp=None, cov_parameter=False,
                  prior_dict=None, device=None, compute='post', negate=True,
-                 grad_type='accumulate'):
+                 grad_type='accumulate', complex_circular=True):
         """
         Parameters
         ----------
@@ -438,6 +438,12 @@ class LogProb(utils.Module):
         grad_type : str, optional
             Gradient type ['accumulate', 'stochastic'].
             If accumulate, then iterate over batches
+        complex_circular : bool, optional
+            If True, assume the likelihood residuals are
+            complex circularly symmetric, which changes the
+            log-likelihood normalization.
+            In this case, the covariance is assumed to be
+            Cz = Cx + Cy, where z = x + jy is the circ. sym. vector.
         """
         super().__init__()
         self.model = model
@@ -453,6 +459,7 @@ class LogProb(utils.Module):
         self.negate = negate
         self.closure_eval = 0
         self.grad_type = grad_type
+        self.complex_circular = complex_circular
 
         # set empty grad mod parameters
         self.set_grad_mod()
@@ -1041,12 +1048,20 @@ class LogProb(utils.Module):
 
         # use it to get log likelihood normalization
         if hasattr(target, 'icov') and target.icov is not None:
-            like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
+            if self.complex_circular:
+                # L(z) = exp(-z^H Cz^-1 z) / (pi^n det(Cz))
+                like_norm = target.cov_ndim * torch.log(torch.tensor(np.pi)) + target.cov_logdet
+            else:
+                # L(x) = exp(-.5 x^H Cx^-1 x) / ((2pi)^n det(Cx)^1/2)
+                like_norm = 0.5 * (target.cov_ndim * torch.log(torch.tensor(2*np.pi)) + target.cov_logdet)
         else:
             like_norm = 0
 
         # form loglikelihood
-        loglike = -0.5 * chisq - like_norm
+        if self.complex_circular:
+            loglike = -chisq - like_norm
+        else:
+            loglike = -0.5 * chisq - like_norm
 
         if self.negate:
             return -loglike
