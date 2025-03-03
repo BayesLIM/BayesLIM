@@ -14,7 +14,7 @@ class FFT(utils.Module):
     """
     def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None,
                  ndim=None, window=None, fftshift=True, ifft=False,
-                 edgecut=None, square=False, **kwargs):
+                 edgecut=None, square=False, device=None, **kwargs):
         """
         Parameters
         ----------
@@ -83,6 +83,9 @@ class FFT(utils.Module):
             shape[dim] = N
             self.win = win.reshape(*shape)
 
+        if device is not None:
+            self.push(device)
+
     def forward(self, inp, **kwargs):
         """
         Take the FFT of the inp and return
@@ -113,6 +116,12 @@ class FFT(utils.Module):
             inp_fft = torch.abs(inp_fft)**2
 
         return inp_fft
+
+    def push(self, device):
+        """
+        Push self to device
+        """
+        self.win = self.win.to(device)
 
 
 class PeakDelay(FFT):
