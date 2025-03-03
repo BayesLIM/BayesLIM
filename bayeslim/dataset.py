@@ -107,6 +107,8 @@ class TensorData:
                 cov_logdet = cov_logdet.real
 
         # set covariance
+        if cov is not None: cov = cov.clone()
+        if icov is not None: icov = icov.clone()
         self.cov = cov
         self.icov = icov
         self.cov_axis = cov_axis
