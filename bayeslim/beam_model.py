@@ -336,14 +336,12 @@ class PixelBeam(utils.Module):
         else:
             # two feed polarizations
             if self.powerbeam:
-                ### TODO: make a special 2-pol mode where vis is (2, 1, *sky.shape[2:])
-                ### which assumes all downstream Jones matrices are diagonal
                 # this is 2-pol mode, a simplified version of the full 4-pol mode
                 assert self.Nvec == 1
                 assert sky.shape[:2] == (1, 1)
-                psky = torch.zeros(2, 2, *sky.shape[2:], dtype=sky.dtype, device=self.device)
-                psky[0, 0] = beam1[0, 0] * sky[0, 0]
-                psky[1, 1] = beam1[1, 0] * sky[0, 0]
+                psky = torch.zeros(2, 1, *sky.shape[2:], dtype=sky.dtype, device=self.device)
+                psky[0] = beam1[0, 0] * sky[0, 0]
+                psky[1] = beam1[1, 0] * sky[0, 0]
 
             else:
                 # this is 4-pol mode

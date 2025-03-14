@@ -407,6 +407,9 @@ class RIME(utils.Module):
         # sum across sky
         sum_sky = torch.sum(psky, dim=-1).to(self.device)
 
+        if not utils.check_devices(self.device, sum_sky.device):
+            sum_sky = sum_sky.to(self.device)
+
         # copy sim_bls over to each redundant bl in visibility if needed
         if sim2data_idx is not None:
             sum_sky = torch.index_select(sum_sky, 2, sim2data_idx)
