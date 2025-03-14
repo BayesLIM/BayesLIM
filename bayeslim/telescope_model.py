@@ -481,8 +481,11 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
         # multiply in fringe
         if inplace:
-            sky.mul_(fringe)
-            psky = sky
+            # can't do sky.mul_(fringe) b/c sky <- expand()
+            fringe = fringe[None, None]
+            fringe.mul_(sky)
+            psky = fringe
+
         else:
             psky = sky * fringe
 
