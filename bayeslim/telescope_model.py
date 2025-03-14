@@ -449,7 +449,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
         return self._fringe(bl, zen, az, conj=conj)
 
-    def apply_fringe(self, fringe, sky, inplace=True):
+    def apply_fringe(self, fringe, sky):
         """
         Apply a fringe matrix to a representation
         of the sky.
@@ -462,8 +462,6 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         sky : tensor
             Holds the sky coherency matrix, which generally
             has a shape of (Nvec, Nvec, ..., Nfreqs, Npix)
-        inplace : bool, optional
-            If True, edit "sky" tensor inplace.
 
         Returns
         -------
@@ -480,14 +478,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             sky = sky[:, :, None]
 
         # multiply in fringe
-        if inplace:
-            # can't do sky.mul_(fringe) b/c sky <- expand()
-            fringe = fringe[None, None]
-            fringe.mul_(sky)
-            psky = fringe
-
-        else:
-            psky = sky * fringe
+        psky = sky * fringe
 
         return psky
 
