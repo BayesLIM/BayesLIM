@@ -405,7 +405,7 @@ class RIME(utils.Module):
         #psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
 
         # sum across sky
-        sum_sky = torch.sum(psky, axis=-1).to(self.device)
+        sum_sky = torch.sum(psky, dim=-1).to(self.device)
 
         # copy sim_bls over to each redundant bl in visibility if needed
         if sim2data_idx is not None:
