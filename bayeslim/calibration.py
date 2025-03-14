@@ -87,12 +87,16 @@ class BaseResponse:
         elif self.time_mode == 'linear':
             # get linear A mapping wrt time
             kwgs = copy.deepcopy(kwargs)
-            linear_mode = kwgs.pop('linear_mode')
-            if times is not None:
-                kwgs['x'] = times
-            kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-            self.time_LM = linear_model.LinearModel(linear_mode, dim=self.time_dim,
-                                                    device=self.device, **kwgs)
+            if 'LM' in kwgs:
+                self.time_LM = kwgs['LM']
+                self.time_LM.push(self.device)
+            else:
+                linear_mode = kwgs.pop('linear_mode')
+                if times is not None:
+                    kwgs['x'] = times
+                kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
+                self.time_LM = linear_model.LinearModel(linear_mode, dim=self.time_dim,
+                                                        device=self.device, **kwgs)
             self.Ntime_params = self.time_LM.A.shape[1]
 
         else:
@@ -117,12 +121,16 @@ class BaseResponse:
         elif self.freq_mode == 'linear':
             # get linear A mapping wrt freq
             kwgs = copy.deepcopy(kwargs)
-            linear_mode = kwgs.pop('linear_mode')
-            kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-            if freqs is not None:
-                kwgs['x'] = freqs
-            self.freq_LM = linear_model.LinearModel(linear_mode, dim=self.freq_dim,
-                                                    device=self.device, **kwgs)
+            if 'LM' in kwgs:
+                self.freq_LM = kwgs['LM']
+                self.freq_LM.push(self.device)
+            else:
+                linear_mode = kwgs.pop('linear_mode')
+                kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
+                if freqs is not None:
+                    kwgs['x'] = freqs
+                self.freq_LM = linear_model.LinearModel(linear_mode, dim=self.freq_dim,
+                                                        device=self.device, **kwgs)
             self.Nfreq_params = self.freq_LM.A.shape[1]
 
         else:
