@@ -481,7 +481,8 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
         # multiply in fringe
         if inplace:
-            psky.mul_(fringe)
+            sky.mul_(fringe)
+            psky = sky
         else:
             psky = sky * fringe
 
