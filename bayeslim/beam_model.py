@@ -336,6 +336,8 @@ class PixelBeam(utils.Module):
         else:
             # two feed polarizations
             if self.powerbeam:
+                ### TODO: make a special 2-pol mode where vis is (2, 1, *sky.shape[2:])
+                ### which assumes all downstream Jones matrices are diagonal
                 # this is 2-pol mode, a simplified version of the full 4-pol mode
                 assert self.Nvec == 1
                 assert sky.shape[:2] == (1, 1)
@@ -744,8 +746,9 @@ class PixelResponse(utils.PixInterp):
             self.beam0 = utils.push(self.beam0, device)
 
     def forward(self, params):
-        """forward angle pixelized beam through frequency response
-        and other operators"""
+        """forward an angularly-pixelized beam through
+        the frequency response and other operators
+        """
         if not utils.check_devices(params.device, self.device):
             params = params.to(self.device)
 

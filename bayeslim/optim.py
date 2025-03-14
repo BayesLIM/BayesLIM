@@ -1138,6 +1138,7 @@ class LogProb(utils.Module):
             is batched. Default is self.batch_idx.
             Otherwise just evaluate prob.
             If passed also sets self.batch_idx.
+            Note: prior is only evaluated at batch_idx = 0.
         """
         assert self.compute in ['post', 'like', 'prior']
         if idx is not None:
