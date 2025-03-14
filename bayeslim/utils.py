@@ -1794,6 +1794,22 @@ def check_devices(d1, d2):
     return parse_device(d1) == parse_device(d2)
 
 
+def check_cuda(d1, d2):
+    """
+    Check if d1 and d2 are both cuda (any ID)
+
+    Parameters
+    ----------
+    d1 : str or torch.device
+    d2 : str or torch.device
+
+    Returns
+    -------
+    bool
+    """
+    return parse_device(d1).type == parse_device(d2).type == 'cuda'
+
+
 def grad_hook_store(store, assign):
     """
     This returns a callable hook function, which assigns
