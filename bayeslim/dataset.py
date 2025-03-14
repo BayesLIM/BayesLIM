@@ -1542,7 +1542,7 @@ class VisData(TensorData):
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
         if self.data is not None:
             assert isinstance(self.data, torch.Tensor)
-            assert self.data.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes, self.Nfreqs)
+            assert self.data.shape[-3:] == (self.Nbls, self.Ntimes, self.Nfreqs)
         if self.flags is not None:
             assert isinstance(self.flags, torch.Tensor)
             assert self.data.shape == self.flags.shape
