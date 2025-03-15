@@ -400,11 +400,11 @@ class RIME(utils.Module):
 
         bls = bl if isinstance(bl, list) else [bl]
         for i, bl in enumerate(bls):
-            # generate fringe: (Nbls, Nfreqs, Npix)
+            # generate fringe: (1, Nfreqs, Npix)
             fringe = self.array.gen_fringe(bl, zen, az)
 
             # apply fringe to psky
-            sum_sky[:, :, i] = self.array.apply_fringe(fringe, psky).sum(-1)
+            sum_sky[:, :, i] = self.array.apply_fringe(fringe, psky[:, :, i]).sum(-1)
 
         # LEGACY: this seems to consume more memory...
         #beam1 = self.array.apply_fringe(fringe, beam1)
