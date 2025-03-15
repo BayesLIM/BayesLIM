@@ -325,11 +325,12 @@ class RIME(utils.Module):
             # iterate over observation times
             for j, time in enumerate(self.sim_times):
 
-                # print info
-                message = "{}/{} times for {}/{} sky model | {} elapsed"
-                message = message.format(j+1, len(self.sim_times), i+1, len(sky_components),
-                                         elapsed_time(start))
-                log(message, verbose=self.verbose, style=1)
+                if self.verbose:
+                    # print info
+                    message = "{}/{} times for {}/{} sky model | {} elapsed"
+                    message = message.format(j+1, len(self.sim_times), i+1, len(sky_components),
+                                             elapsed_time(start))
+                    log(message, verbose=self.verbose, style=1)
 
                 # convert sky pixels from ra/dec to alt/az
                 alt, az = self.telescope.eq2top(time, ra, dec, store=True)
@@ -365,8 +366,8 @@ class RIME(utils.Module):
 
         return vd
 
-    def _prod_and_sum(self, beam, cut_sky, bl,
-                      zen, az, vis, sim2data_idx, obs_ind):
+    def _prod_and_sum(self, beam, cut_sky, bl, zen, az,
+                      vis, sim2data_idx, obs_ind):
         """
         Sky product and sum into vis inplace
 
@@ -394,21 +395,20 @@ class RIME(utils.Module):
         # first apply beam to sky: psky shape (Npol, Npol, Nbls, Nfreqs, Nsources)
         psky = self.beam.apply_beam(beam, bl, cut_sky)
 
-        # generate fringe: (Nbls, Nfreqs, Npix)
-        fringe = self.array.gen_fringe(bl, zen, az)
+        # iterate over bls, compute fringe and perform sky summation
+        sum_sky = torch.zeros(psky.shape[:4], device=self.device, dtype=_cfloat())
 
-        # apply fringe to psky
-        psky = self.array.apply_fringe(fringe, psky)
+        bls = bl if isinstance(bl, list) else [bl]
+        for i, bl in enumerate(bls):
+            # generate fringe: (Nbls, Nfreqs, Npix)
+            fringe = self.array.gen_fringe(bl, zen, az)
+
+            # apply fringe to psky
+            sum_sky[:, :, i] = self.array.apply_fringe(fringe, psky).sum(-1)
 
         # LEGACY: this seems to consume more memory...
         #beam1 = self.array.apply_fringe(fringe, beam1)
         #psky = self.beam.apply_beam(beam1, cut_sky, beam2=beam2)
-
-        # sum across sky
-        sum_sky = torch.sum(psky, dim=-1).to(self.device)
-
-        if not utils.check_devices(self.device, sum_sky.device):
-            sum_sky = sum_sky.to(self.device)
 
         # copy sim_bls over to each redundant bl in visibility if needed
         if sim2data_idx is not None:
