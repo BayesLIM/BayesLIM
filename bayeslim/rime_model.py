@@ -406,7 +406,7 @@ class RIME(utils.Module):
             fringe = self.array.gen_fringe(bl, zen, az)
 
             # apply fringe to psky and perform sky summation
-            sum_sky = (fringe * psky[:, :, i]).sum(-1)
+            sum_sky[:, :, i] = (fringe * psky[:, :, i]).sum(-1)
 
         # LEGACY: this seems to consume more memory...
         #beam1 = self.array.apply_fringe(fringe, beam1)
