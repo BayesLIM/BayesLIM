@@ -449,39 +449,6 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
         return self._fringe(bl, zen, az, conj=conj)
 
-    def apply_fringe(self, fringe, sky):
-        """
-        Apply a fringe matrix to a representation
-        of the sky.
-
-        Parameters
-        ----------
-        fringe : tensor
-            Holds the fringe response for a set of
-            bls of shape (Nbls, Nfreqs, Npix)
-        sky : tensor
-            Holds the sky coherency matrix, which generally
-            has a shape of (Nvec, Nvec, ..., Nfreqs, Npix)
-
-        Returns
-        -------
-        psky : tensor
-            perceived sky, having mutiplied fringe with sky
-            of shape (Nvec, Nvec, Nbls, Nfreqs, Npix)
-        """
-        # move sky to fringe device
-        if not utils.check_devices(sky.device, self.device):
-            sky = sky.to(self.device)
-
-        # give sky Nbls dimension if not present
-        if sky.ndim == 4:
-            sky = sky[:, :, None]
-
-        # multiply in fringe
-        psky = sky * fringe
-
-        return psky
-
     def push(self, device):
         """push model to a new device or dtype"""
         dtype = isinstance(device, torch.dtype)
