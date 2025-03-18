@@ -69,7 +69,7 @@ class TelescopeModel:
         -------
         tuple
         """
-        return (time,) + utils.arr_hash(ra) + utils.arr_hash(dec)
+        return (time, utils.arr_hash(ra), utils.arr_hash(dec))
 
     def clear_cache(self, key=None):
         """Clear conversion cache, or just a single
