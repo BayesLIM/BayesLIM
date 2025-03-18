@@ -38,8 +38,8 @@ class RIME(utils.Module):
     element from the diagonal is used.
     """
     def __init__(self, sky, telescope, beam, array, sim_bls,
-                 times, freqs, data_bls=None, device=None, name=None,
-                 verbose=False):
+                 times, freqs, data_bls=None, device=None,
+                 cache_eq2top=True, name=None, verbose=False):
         """
         RIME object. Takes a model of the sky brightness,
         passes it through a primary beam model (optional) and a
@@ -95,6 +95,9 @@ class RIME(utils.Module):
             This is the device that the output visibilities will be on.
             Note this doesn't necessarily have to be the same device
             that sky or beam, etc are on.
+        cache_eq2top : bool, optional
+            Default True. If True, cache the eq2top conversion in the
+            `telescope` object.
         name : str, optional
             Name for this object, stored as self.name
         verbose : bool, optional
@@ -106,6 +109,7 @@ class RIME(utils.Module):
         self.beam = beam
         self.array = array
         self.device = device
+        self.cache_eq2top = cache_eq2top
         self.verbose = verbose
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
@@ -333,7 +337,7 @@ class RIME(utils.Module):
                     log(message, verbose=self.verbose, style=1)
 
                 # convert sky pixels from ra/dec to alt/az
-                alt, az = self.telescope.eq2top(time, ra, dec, store=True)
+                alt, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top)
 
                 # evaluate beam response
                 zen = utils.colat2lat(alt, deg=True)

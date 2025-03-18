@@ -19,7 +19,7 @@ D2R = utils.D2R
 
 class TelescopeModel:
 
-    def __init__(self, location, tloc=None, device=None):
+    def __init__(self, location, tloc=None, device=None, dtype=None):
         """
         A telescope model for performing
         coordinate conversions
@@ -34,12 +34,19 @@ class TelescopeModel:
             This is only used to speed up the instantiation
             runtime when tloc already exists. Compute it as
             EarthLocation.from_geodetic(*location)
+        device : dtype, optional
+            If provided, this will push topocentric (zen, alt)
+            coordinates to this device.
+        dtype : dtype object, optional
+            The float type to use when caching topocentric
+            (zen, alt) coordinates. Default is _float().
         """
         # setup telescope location in geocentric (ECEF) frame
         self.location = location
         if tloc is None:
             tloc = EarthLocation.from_geodetic(*location)
         self.tloc = tloc
+        self.dtype = dtype
 
         # setup coordinate conversion cache
         self.conv_cache = {}
@@ -60,16 +67,9 @@ class TelescopeModel:
 
         Returns
         -------
-        hash : int
-            A unique integer hash
+        tuple
         """
-        if isinstance(ra, torch.Tensor):
-            ra = ra.numpy()
-        if isinstance(dec, torch.Tensor):
-            dec = dec.numpy()
-        time = float(time)
-
-        return hash((time, ra[0], dec[0], ra[-1], dec[-1]))
+        return (time,) + utils.arr_hash(ra) + utils.arr_hash(dec)
 
     def clear_cache(self, key=None):
         """Clear conversion cache, or just a single
@@ -119,9 +119,8 @@ class TelescopeModel:
 
         # if not present, perform conversion
         ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
-        dtype = ra.dtype if isinstance(ra, torch.Tensor) else None
         angs = eq2top(self.tloc, time, ra, dec)
-        angs = torch.as_tensor(np.asarray(angs), device=self.device, dtype=dtype)
+        angs = torch.as_tensor(np.asarray(angs), device=self.device, dtype=self.dtype)
 
         # and save to cache
         if store:
@@ -133,6 +132,7 @@ class TelescopeModel:
         """push cache to device"""
         dtype = isinstance(device, torch.dtype)
         if not dtype:
+            self.device = device
             for key, angs in self.conv_cache.items():
                 self.conv_cache[key] = angs.to(device)
 
@@ -339,9 +339,8 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         """
         if not isinstance(bl, list):
             bl = [bl]
-        zen, az = torch.as_tensor(zen), torch.as_tensor(az)
         # get angle and baseline hash
-        s_h = utils.arr_hash(zen), utils.arr_hash(az)
+        s_h = utils.arr_hash(zen) + utils.arr_hash(az)
         b_h = utils.arr_hash(bl)
         key = (b_h, s_h)
         # s_h is used for pointing vector caching
@@ -394,7 +393,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             freqs = self.freqs
             if hasattr(self, '_freq_idx') and self._freq_idx is not None:
                 freqs = freqs[self._freq_idx]
-            f = torch.exp(sign * np.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * freqs[:, None])
+            f = torch.exp(sign * torch.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * freqs[:, None])
 
             # if fringe caching, store the full fringe (this is large in memory!)
             if self.cache_f:

@@ -689,7 +689,7 @@ class PixInterp:
     """
     def __init__(self, pixtype, nside=None, interp_mode='nearest',
                  theta_grid=None, phi_grid=None, device=None,
-                 gpu=False, downcast=False, interp_cache_depth=None):
+                 interp_cache_depth=None):
         """
         Interpolation is a weighted average of nearest neighbors.
         If pixtype is 'healpix', this is bilinear interpolation.
@@ -713,19 +713,12 @@ class PixInterp:
             'cubic' : bicubic interpolation, needs rect grid
             'linear,quadratic' : linear along az, quadratic along zen
             For pixtype of 'healpix', we always use healpy bilinear interp.
-        theta_grid, phi_grid : array_like
+        theta_grid, phi_grid : tensor
             1D zen and azimuth arrays [deg] if pixtype is 'rect'
             defining the grid to be interpolated against. These
             should mark the pixel centers.
         device : str, optional
             Device to place object on
-        gpu : bool, optional
-            If True and pixtype is 'rect', perform grid sorting
-            on GPU for speedups
-        downcast : bool, optional
-            If True and using gpu, downcast grids to float32
-            before sending to GPU for further speedup (with
-            slight loss of accuracy)
         interp_cache_depth : int, optional
             The number of caches in the interp_cache allowed.
             Follows first-in, first-out rule. Default is no limit.
@@ -737,8 +730,6 @@ class PixInterp:
         self.theta_grid = theta_grid
         self.phi_grid = phi_grid
         self.device = device
-        self.gpu = gpu
-        self.downcast = downcast
         self.interp_cache_depth = interp_cache_depth
 
     def clear_cache(self, depth=None):
@@ -776,8 +767,8 @@ class PixInterp:
                 inds, wgts = healpy.get_interp_weights(self.nside,
                                                        tensor2numpy(zen) * D2R,
                                                        tensor2numpy(az) * D2R)
-                inds = inds.T
-                wgts = wgts.T
+                inds = torch.as_tensor(inds.T)
+                wgts = torch.as_tensor(wgts.T)
 
             # this is bipolynomial interpolation
             elif self.pixtype == 'rect':
@@ -794,26 +785,28 @@ class PixInterp:
                 # get grid
                 xgrid = self.phi_grid
                 ygrid = self.theta_grid
-                dx = np.median(np.diff(xgrid))
-                dy = np.median(np.diff(ygrid))
-                # TODO: zen and az can be on gpu, which can speed up bipoly_grid_index
-                xnew, ynew = tensor2numpy(az), tensor2numpy(zen)
+                dx = xgrid[1] - xgrid[0]
+                dy = ygrid[1] - ygrid[0]
+                xnew, ynew = az, zen
 
                 # get map indices
                 inds, xyrel = bipoly_grid_index(xgrid, ygrid, xnew, ynew,
                                                 degree[0]+1, degree[1]+1,
-                                                wrapx=True, ravel=True,
-                                                gpu=self.gpu, downcast=self.downcast)
+                                                wrapx=True, ravel=True)
 
                 # get weights
-                Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1])
+                Ainv, Anew = setup_bipoly_interp(degree, dx, dy, xyrel[0], xyrel[1],
+                                                 device=inds.device)
                 wgts = Anew @ Ainv
+
+            interp = (inds, wgts)
 
             # store it in the cache
             if self.interp_cache_depth is None or self.interp_cache_depth > 0:
-                interp = (torch.as_tensor(inds, device=self.device),
-                          torch.as_tensor(wgts, dtype=_float(), device=self.device))
-                self.interp_cache[h] = interp
+                if not check_devices(inds.device, self.device):
+                    inds = inds.to(self.device)
+                    wgts = wgts.to(self.device)
+                self.interp_cache[h] = (inds, wgts)
 
                 # clear cache if needed
                 if self.interp_cache_depth is not None:
@@ -871,11 +864,14 @@ class PixInterp:
         Push cache onto a new device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype: self.device = device
+        if not dtype:
+            self.device = device
         for k in self.interp_cache:
             cache = self.interp_cache[k]
+            self.theta_grid = push(self.theta_grid, device)
+            self.phi_grid = push(self.phi_grid, device)
             if dtype:
-                cache = (cache[0], push(cache[1]))
+                cache = (cache[0], push(cache[1], device))
             else:
                 cache = (push(cache[0], device), push(cache[1], device))
             self.interp_cache[k] = cache
@@ -950,20 +946,20 @@ def freq_interp(params, param_freqs, freqs, kind, axis,
 
 
 def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
-                      wrapx=False, ravel=True, gpu=False, downcast=False):
+                      wrapx=False, ravel=True):
     """
-    For uniform grid in x and y, pick out N nearest grid indices
+    For uniform grid in x and y, pick out N nearest neighbor (NN) indices
     in x and y given a sampling of new xy values.
     
     Parameters
     ----------
-    xgrid : array
-        1D float array of grid x values
-    ygrid : array
-        1D float array of grid y values
-    xnew : array
+    xgrid : tensor
+        1D float array of grid x values (monotonic. increasing)
+    ygrid : tensor
+        1D float array of grid y values (monotonic. increasing)
+    xnew : tensor
         New x samples to get nearest neighbors
-    ynew : array
+    ynew : tensor
         New y samples to get nearest neighbors
     Nx : int
         Number of NN in x to index
@@ -979,17 +975,10 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
             X, Y = np.meshgrid(xgrid, ygrid)
             grid = X.ravel(), Y.ravel()
         i.e. [(x1, y1), (x2, y1), ..., (x1, y2), (x2, y2), ...]
-    gpu : bool or str, optional
-        If True, pass input arrays to GPU to speed up argsort.
-        Default is to send to 'cuda:0', but gpu can be passed
-        as a str specifying the exact GPU to use, e.g. 'cuda:1'
-    downcast : bool, optional
-        If also using gpu, cast input arrays down to torch.float32,
-        which speeds CPU->GPU transfer and argsort.
 
     Returns
     -------
-    inds : array
+    inds : tensor
         Indexes the nearest neighbors of xnew and ynew at
         xgrid and ygrid points. If not ravel,
         this is a 2-tuple holding (Xnn, Ynn), where
@@ -1000,39 +989,18 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
         xnew and ynew but cast into dimensionless units
         relative to the start of inds and dx,dy spacing
     """
-    # set gpu to false if no cuda
-    gpu = gpu if torch.cuda.is_available() else False
-
-    # parse gpu kwarg
-    if gpu and isinstance(gpu, bool):
-        gpu = 'cuda:0'
-
     # get dx, dy
-    dx, dy = np.median(np.diff(xgrid)), np.median(np.diff(ygrid))
-    
+    dx = xgrid[1] - xgrid[0]
+    dy = ygrid[1] - ygrid[0]
+
     # wrap xgrid
     N = len(xgrid)
     if wrapx:
-        xgrid = np.concatenate([xgrid[-Nx:]-N*dx, xgrid, xgrid[:Nx]+N*dx])
+        xgrid = torch.cat([xgrid[-Nx:]-N*dx, xgrid, xgrid[:Nx]+N*dx])
 
-    # get xgrid and ygrid indices for each xynew
-    if gpu:
-        # send arrays to the GPU
-        dtype = torch.float32 if downcast else None
-        _xgrid = torch.as_tensor(xgrid, dtype=dtype).to(gpu)
-        _ygrid = torch.as_tensor(ygrid, dtype=dtype).to(gpu)
-        _xnew = torch.as_tensor(xnew, dtype=dtype).to(gpu)
-        _ynew = torch.as_tensor(ynew, dtype=dtype).to(gpu)
-
-        # get indices
-        xnn = torch.sort(torch.argsort(torch.abs(_xgrid - _xnew[:, None]), dim=-1)[:, :Nx], dim=-1).values
-        ynn = torch.sort(torch.argsort(torch.abs(_ygrid - _ynew[:, None]), dim=-1)[:, :Ny], dim=-1).values
-        xnn, ynn = xnn.cpu().numpy(), ynn.cpu().numpy()
-
-    else:
-        # if using numpy, argpartition is ~4x faster than argsort for large arrays
-        xnn = np.sort(np.argpartition(-np.abs(xgrid - xnew[:, None]), -Nx, axis=-1)[:, -Nx:], axis=-1)
-        ynn = np.sort(np.argpartition(-np.abs(ygrid - ynew[:, None]), -Ny, axis=-1)[:, -Ny:], axis=-1)
+    # get xgrid and ygrid indices for each xynew (Nsamples, Nnn)
+    xnn = torch.sort(torch.argsort(torch.abs(xgrid - xnew[:, None]), dim=-1)[:, :Nx], dim=-1).values
+    ynn = torch.sort(torch.argsort(torch.abs(ygrid - ynew[:, None]), dim=-1)[:, :Ny], dim=-1).values
 
     # get xnew ynew in coords relative to xnn[:, 0] and ynn[:, 0]
     xrel = (xnew - xgrid[xnn[:, 0]]) / dx
@@ -1052,38 +1020,38 @@ def bipoly_grid_index(xgrid, ygrid, xnew, ynew, Nx, Ny,
     return inds, (xrel, yrel)
 
 
-def setup_bipoly_interp(degree, dx, dy, xnew, ynew):
+def setup_bipoly_interp(degree, dx, dy, xnew, ynew, device=None):
     """
     Setup bi-polynomial interpolation weight matrix
     on a uniform grid.
-    
+
     For bi-linear interpolation we use 2x2 grid points.
     Assume interpolation is given by evaluating a bi-linear poly
-        
+
         f(x, y) = a_{00} + a_{10}x + a_{01}y + a_{11}xy
-        
+
     then the 4 points on the 2x2 grid can be expressed as
         
         | 1 x_1 y_1 x_1y_1 | | a_{00} |   | f(x_1,y_1) |
         | 1 x_2 y_1 x_2y_1 | | a_{10} | = | f(x_2,y_1) |
         | 1 x_1 y_2 x_1y_2 | | a_{01} |   | f(x_1,y_2) |
         | 1 x_2 y_2 x_2y_2 | | a_{11} |   | f(x_2,y_2) |
-        
+
     or
     
         Ax = y
-        
+
     The weights "x_hat" can be found via least squares inversion,
-    
+
         x_hat = (A^T A)^-1 A^T y
-        
+
     Note that this function returns the (A^T A)^-1 A^T portion of x_hat,
     which must be dotted into f(x,y) vector with the ordering given above.
-    
+
     Interpolation of any new point within the 2x2 grid can be computed as
-    
+
         f_xy = A_xy x_hat
-        
+
     Note that this generalizes to bi-quadratic and bi-cubic, as
     well as mixed polynomials (e.g. bi-linear-quadratic).
 
@@ -1102,6 +1070,8 @@ def setup_bipoly_interp(degree, dx, dy, xnew, ynew):
         New x positions relative to dx grid
     ynew : tensor
         New y positions relative to dy grid
+    device : str, optional
+        Device to create polynomial on.
 
     Returns
     -------
@@ -1110,24 +1080,38 @@ def setup_bipoly_interp(degree, dx, dy, xnew, ynew):
     Anew : tensor
         A matrix at xnew and ynew points
     """
-    from emupy.linear import setup_polynomial
     if not isinstance(degree, (list, tuple)):
         degree = [degree, degree]
     assert len(degree) == 2
+
     # setup grid given degree
     Npoints = [degree[0]+1, degree[1]+1]
-    x, y = np.meshgrid(np.arange(Npoints[0]) * dx,  np.arange(Npoints[1]) * dy)
-    X = np.array([x.ravel(), y.ravel()]).T
+    x, y = torch.meshgrid(
+        torch.arange(Npoints[0], device=device) * dx,
+        torch.arange(Npoints[1], device=device) * dy,
+        indexing='xy')
+    X = torch.stack([x.ravel(), y.ravel()]).T
 
-    # get design matrix
-    A, _ = setup_polynomial(X, degree, feature_degree=True, basis='direct')
+    # get polynomial design matrix
+    A = torch.zeros(len(X), Npoints[0] * Npoints[1], device=device)
+    k = 0
+    for i in range(Npoints[0]):
+        for j in range(Npoints[1]):
+            A[:, k] = X[:, 0]**i * X[:,1]**j
+            k += 1
+
     # get inverse
-    AtAinvAt = np.linalg.pinv(A.T @ A, hermitian=True) @ A.T
-    
+    AtAinvAt = torch.linalg.pinv(A.T @ A, hermitian=True) @ A.T
+
     # get new design matrix
-    X = np.array([xnew * dx, ynew * dy]).T
-    Anew, _ = setup_polynomial(X, degree, feature_degree=True, basis='direct')
-    
+    X = torch.stack([xnew * dx, ynew * dy]).T
+    Anew = torch.zeros(len(X), Npoints[0] * Npoints[1], device=device)
+    k = 0
+    for i in range(Npoints[0]):
+        for j in range(Npoints[1]):
+            Anew[:, k] = X[:, 0]**i * X[:,1]**j
+            k += 1
+
     return AtAinvAt, Anew
 
 
@@ -1657,31 +1641,46 @@ def white_noise(*args):
 
 def arr_hash(arr):
     """
-    Hash an array or list by using its
+    'Hash' an array or tensor by using its
     first value, last value and length as a
-    unique identifier of the array.
-    Note that if arr is a tensor the hash will be
+    unique tuple identifier of the array. 
+    Note that if arr is a tensor/array the hash will be
     assigned as arr._arr_hash for fast caching.
     Also note, normally array hash is not allowed.
+    As a consquence, the hashing algorithm is somewhat
+    specific to BayesLIM applications. The hash is a tuple,
+    (int(arr[0] * 1000), int(arr[-1] * 1000), len(arr)).
+    This means the hash is also dependent on arr.device
 
     Parameters
     ----------
-    arr : ndarray or tensor or list
+    arr : ndarray or tensor
 
     Returns
     -------
-    hash object
+    tuple
     """
     if hasattr(arr, '_arr_hash'):
         return arr._arr_hash
     if isinstance(arr, torch.Tensor):
-        key = (arr[0].cpu().tolist(), arr[-1].cpu().tolist(), len(arr))
+        key = (
+            arr[0].mul(1000).to(torch.int64),
+            arr[-1].mul(1000).to(torch.int64),
+            arr.numel()
+        )
+        arr._arr_hash = key
+
+    elif isinstance(arr, np.ndarray):
+        key = (
+            int(arr[0] * 1000),
+            int(arr[-1] * 1000),
+            arr.size
+        )
+        arr._arr_hash = key
     else:
         key = (arr[0], arr[-1], len(arr))
-    h = hash(key)
-    if isinstance(arr, torch.Tensor):
-        arr._arr_hash = h
-    return h
+
+    return key
 
 
 def push(tensor, device, parameter=False):
@@ -2195,3 +2194,63 @@ class AntposDict:
     def push(self, device):
         self.antvecs = push(self.antvecs, device)
 
+
+def bl_to_antnums(blint):
+    """
+    Convert baseline integer to tuple of antenna numbers.
+    From hera_pspec.
+
+    Parameters
+    ----------
+    blint : <i6 integer
+        baseline integer
+
+    Returns
+    -------
+    antnums : tuple
+        tuple containing baseline antenna numbers. Ex. (ant1, ant2)
+    """
+    # get antennas
+    if isinstance(blint, torch.Tensor):
+        ant1 = torch.floor(blint / 1e3).to(torch.int64)
+        ant2 = torch.floor(blint - ant1*1e3).to(torch.int64)
+    else:
+        ant1 = int(np.floor(blint / 1e3))
+        ant2 = int(np.floor(blint - ant1*1e3))
+
+    ant1 -= 100
+    ant2 -= 100
+
+    # form antnums tuple
+    antnums = (ant1, ant2)
+
+    return antnums
+
+
+def antnums_to_bl(antnums):
+    """
+    Convert tuple of antenna numbers to baseline integer.
+    A baseline integer is the two antenna numbers + 100
+    directly (i.e. string) concatenated. Ex: (1, 2) -->
+    101 + 102 --> 101102.
+    From hera_pspec.
+
+    Parameters
+    ----------
+    antnums : tuple
+        tuple containing integer antenna numbers for a baseline.
+        Ex. (ant1, ant2)
+
+    Returns
+    -------
+    bl : <i6 integer
+        baseline integer
+    """
+    # get antennas
+    ant1 = antnums[0] + 100
+    ant2 = antnums[1] + 100
+
+    # form bl
+    bl = int(ant1*1e3 + ant2)
+
+    return bl

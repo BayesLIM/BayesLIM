@@ -56,7 +56,7 @@ class PixelBeam(utils.Module):
     def __init__(self, params, freqs, R=None, ant2beam=None,
                  parameter=True, pol=None, powerbeam=True,
                  fov=180, name=None, p0=None, offset=None,
-                 skycut_cache=True, skycut_device=None):
+                 skycut_cache=False, skycut_device=None):
         """
         A generic beam model evaluated on the pixelized sky
 
@@ -234,6 +234,7 @@ class PixelBeam(utils.Module):
             p = self.params + self.p0
 
         # introduce pointing offset if needed
+        ### TODO: make this pure torch
         theta_x = self.theta_x if hasattr(self, 'theta_x') else 0
         theta_y = self.theta_y if hasattr(self, 'theta_y') else 0
         if theta_x > 0 or theta_y > 0:
@@ -615,7 +616,7 @@ class PixelResponse(utils.PixInterp):
     def __init__(self, freqs, pixtype, beam0=None, comp_params=False, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
-                 powerbeam=True, realbeam=True, Rchi=None, interp_gpu=False,
+                 powerbeam=True, realbeam=True, Rchi=None,
                  interp_cache_depth=None, taper_kwargs=None, LM=None, norm_pix=None):
         """
         Parameters
@@ -639,13 +640,13 @@ class PixelResponse(utils.PixInterp):
             Spatial interpolation method for 'rect' pixtype.
             e.g. ['nearest', 'linear', 'quadratic', 'linear,quadratic']
             where mixed mode is for 'az,zen' respectively
-        theta, phi : array_like, optional
+        theta, phi : tensor, optional
             This is the (zen, az) [deg] of the beam
             See pixtype above for theta/phi ordering given 'rect' or 'healpix'.
             Note, this can contain additional points not specified by rect or healpix,
             (e.g. theta=0) but these additional points must come after the points
             required by the pixtype. 
-        theta_grid, phi_grid : array_like, optional
+        theta_grid, phi_grid : tensor, optional
             For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
             in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
         nside : int, optional
@@ -673,9 +674,6 @@ class PixelResponse(utils.PixInterp):
             matrix from J phi theta to J alpha delta (see Memo 1),
             should be shape (2, 2, Npix) where Npix is the spatial
             size of the pixelized beam cache, i.e. len(theta)
-        interp_gpu : bool, optional
-            If True and pixtype is 'rect', use GPU when solving
-            for pixel interpolation weights for speedup (PixInterp)
         interp_cache_depth : int, optional
             Depth of interpolation cache, following FIFO (PixInterp).
             Default is no max depth.
@@ -691,7 +689,7 @@ class PixelResponse(utils.PixInterp):
         """
         super().__init__(pixtype, interp_mode=interp_mode, nside=nside,
                          device=device, theta_grid=theta_grid, phi_grid=phi_grid,
-                         gpu=interp_gpu, interp_cache_depth=interp_cache_depth)
+                         interp_cache_depth=interp_cache_depth)
         self.beam0 = beam0
         self.theta, self.phi = theta, phi
         self.powerbeam = powerbeam
@@ -1043,7 +1041,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, realbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None, interp_gpu=False,
+                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None,
                  separable=False, interp_cache_depth=None, taper_kwargs=None,
                  LM=None, norm_pix=None):
         """
@@ -1111,9 +1109,6 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             matrix from J phi theta to J alpha delta (see Memo 1),
             should be shape (2, 2, Npix) where Npix is the spatial
             size of the pixelized beam cache, i.e. len(theta)
-        interp_gpu : bool, optional
-            If True and pixtype is 'rect', use GPU when solving
-            for pixel interpolation weights for speedup (PixInterp)
         separable : bool, optional
             If True, separate theta and phi transformation in spherical harmonic
             forward model. This requires rectangular grid sampling of theta and phi
@@ -1138,7 +1133,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                                           freq_mode=freq_mode, comp_params=comp_params,
                                           freq_kwargs=freq_kwargs, Rchi=Rchi,
                                           theta_grid=theta_grid, phi_grid=phi_grid,
-                                          interp_gpu=interp_gpu, norm_pix=norm_pix,
+                                          norm_pix=norm_pix,
                                           interp_cache_depth=interp_cache_depth,
                                           powerbeam=powerbeam, realbeam=realbeam)
         # init AlmModel: MRO is YlmResponse, PixelResponse, PixInterp, AlmModel
