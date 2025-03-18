@@ -1663,24 +1663,13 @@ def arr_hash(arr):
     if hasattr(arr, '_arr_hash'):
         return arr._arr_hash
     if isinstance(arr, torch.Tensor):
-        key = (
-            arr[0].mul(1000).to(torch.int64),
-            arr[-1].mul(1000).to(torch.int64),
-            arr.numel()
-        )
-        arr._arr_hash = key
-
+        key = (arr[0].cpu().item(), arr[-1].cpu().item(), len(arr))
     elif isinstance(arr, np.ndarray):
-        key = (
-            int(arr[0] * 1000),
-            int(arr[-1] * 1000),
-            arr.size
-        )
-        arr._arr_hash = key
+        key = (arr[0], arr[-1], len(arr))
     else:
         key = (arr[0], arr[-1], len(arr))
 
-    return key
+    return hash(key)
 
 
 def push(tensor, device, parameter=False):
