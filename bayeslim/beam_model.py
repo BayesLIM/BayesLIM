@@ -736,6 +736,10 @@ class PixelResponse(utils.PixInterp):
             self.theta = self.theta.to(device)
         if self.phi is not None:
             self.phi = self.phi.to(device)
+        if self.theta_grid is not None:
+            self.theta_grid = utils.push(self.theta_grid, device)
+        if self.phi_grid is not None:
+            self.phi_grid = utils.push(self.phi_grid, device)
         if self.LM is not None:
             self.LM.push(device)
         if self.beam0 is not None:
@@ -1075,7 +1079,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             in docstring above.
         interp_mode : str, optional
             If mode is interpolate, this is the kind (see utils.PixInterp)
-        theta, phi : array_like, optional
+        theta, phi : tensor, optional
             Only needed if mode is 'interpolate'. This is the initial (zen, az) [deg]
             to evaluate the Y_lm(zen, az) * a_lm transformation, which is then set on
             the object and interpolated for future calls. 
@@ -1083,7 +1087,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             Note, this can contain additional points not specified by rect or healpix,
             (e.g. theta=0) but these additional points must come after the points
             required by the pixtype. 
-        theta_grid, phi_grid : array_like, optional
+        theta_grid, phi_grid : tensor, optional
             For interp_mode = 'rect', these are 1D float arrays (monotonically increasing)
             in zenith and azimuth [deg] that make-up the 2D grid to be interpolated against.
         nside : int, optional
@@ -1379,7 +1383,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         # generate empty output tensor
         out = torch.zeros(params.shape[:-1] + (len(self.l),),
                           dtype=params.dtype, device=params.device)
-        
+
         # iterate over each m mode A matrix
         for key, (lm_inds, p_inds, A) in self.lm_poly_A.items():
             if A is not None:
