@@ -81,6 +81,12 @@ class SkyBase(utils.Module):
         # push starting p0
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
+        if isinstance(self.angs, torch.Tensor):
+            self.angs = utils.push(self.angs, device)
+        else:
+            self.angs = (utils.push(self.angs[0], device),
+                         utils.push(self.angs[1], device)
+                        )
         # push prior functions
         if self.priors_inp_params is not None:
             for pr in self.priors_inp_params:
