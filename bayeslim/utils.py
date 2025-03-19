@@ -747,7 +747,7 @@ class PixInterp:
 
         Parameters
         ----------
-        zen, az : zenith (co-lat) and azimuth angles [deg]
+        zen, az : tensors, zenith (co-lat) and azimuth angles [deg]
 
         Returns
         -------
@@ -756,7 +756,7 @@ class PixInterp:
             for each entry in zen, az for interpolation
         """
         # get hash
-        h = (arr_hash(zen), arr_hash(az))
+        h = arr_hash(zen)
         if h in self.interp_cache:
             # retrieve interpolation if cached
             interp = self.interp_cache[h]
