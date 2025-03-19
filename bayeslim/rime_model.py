@@ -336,12 +336,20 @@ class RIME(utils.Module):
                                              elapsed_time(start))
                     log(message, verbose=self.verbose, style=1)
 
+                # create unique key (aka hash) for this sky_mdl/obs_time combination
+                key = (i, j)
+
                 # convert sky pixels from ra/dec to alt/az
-                alt, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top)
+                zen, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top, key=key)
+
+                # add the key to zen where utils.arr_hash() will find it
+                zen._arr_hash = key
 
                 # evaluate beam response
-                zen = utils.colat2lat(alt, deg=True)
                 ant_beams, cut, zen, az = self.beam.gen_beam(zen, az, prior_cache=prior_cache)
+
+                # add the key to this new zen array after down-select by the beam FOV
+                zen._arr_hash = key
 
                 # cut down sky to beam FOV
                 cut_sky = beam_model.cut_sky_fov(sky, cut)

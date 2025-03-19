@@ -52,9 +52,10 @@ class TelescopeModel:
         self.conv_cache = {}
         self.device = device
 
-    def hash(self, time, ra, dec):
+    def hash(self, time, ra):
         """
-        Create a hash from time, ra, and dec arrays
+        Create a unique identifier from time and ra arrays
+        based only on the (time, len(ra))
 
         Parameters
         ----------
@@ -62,14 +63,12 @@ class TelescopeModel:
             Observation time in Julian Date
         ra : tensor or ndarray
             right ascension in degrees [J2000]
-        dec : tensor or ndarray
-            declination in degrees [J2000]
 
         Returns
         -------
         tuple
         """
-        return (time, utils.arr_hash(ra), utils.arr_hash(dec))
+        return (time, len(ra))
 
     def clear_cache(self, key=None):
         """Clear conversion cache, or just a single
@@ -87,7 +86,7 @@ class TelescopeModel:
         else:
             del self.conv_cache[key]
 
-    def eq2top(self, time, ra, dec, store=False):
+    def eq2top(self, time, ra, dec, store=False, key=None):
         """
         Convert equatorial coordinates to topocentric (aka AltAz).
         Pull from the conv_cache if saved. Take care of how
@@ -103,6 +102,9 @@ class TelescopeModel:
             declination in degrees [J2000]
         store : bool, optional
             If True, store output to cache.
+        key : int or tuple, optional
+            If storing to the cache, use this key.
+            Otherwise will compute a key using self.hash()
 
         Returns
         -------
@@ -110,12 +112,12 @@ class TelescopeModel:
             alitude angle and azimuth vectors [degrees]
             oriented along East-North-Up frame
         """
-        # create hash
-        h = self.hash(time, ra, dec)
+        # create hash-key
+        key = key if key is not None else self.hash(time, ra)
 
         # pull from cache
-        if h in self.conv_cache:
-            return self.conv_cache[h]
+        if key in self.conv_cache:
+            return self.conv_cache[key]
 
         # if not present, perform conversion
         ra, dec = utils.tensor2numpy(ra), utils.tensor2numpy(dec)
@@ -124,7 +126,7 @@ class TelescopeModel:
 
         # and save to cache
         if store:
-            self.conv_cache[h] = angs
+            self.conv_cache[key] = angs
 
         return angs
 
@@ -340,7 +342,7 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         if not isinstance(bl, list):
             bl = [bl]
         # get angle and baseline hash
-        s_h = utils.arr_hash(zen) + utils.arr_hash(az)
+        s_h = utils.arr_hash(zen)
         b_h = utils.arr_hash(bl)
         key = (b_h, s_h)
         # s_h is used for pointing vector caching
@@ -569,12 +571,12 @@ def eq2top(location, time, ra, dec):
 
     Returns
     -------
-    altitude, azimuth : array
-        alitude angle and az in degrees
+    zenith, azimuth : array
+        zenith angle and az in degrees
 
     Notes
     -----
-    zenith angle (zen) is 90 - alt
+    zenith angle (zen) is 90 - altitude
     """
     # if ra/dec are tensors, then this is a lot slower
     if isinstance(ra, torch.Tensor):
@@ -585,14 +587,14 @@ def eq2top(location, time, ra, dec):
     icrs = ICRS(ra=ra * units.deg, dec=dec * units.deg)
     out = icrs.transform_to(altaz)
 
-    return out.alt.deg, out.az.deg
+    return out.zen.deg, out.az.deg
 
 
-def top2eq(location, time, alt, az):
+def top2eq(location, time, zen, az):
     """
     Convert topocentric (AltAz) coordinates
-    of altitude angle and azimuth [deg] to
-    ICRS (J200) coordinates of RA, Dec [deg].
+    of zenith angle and azimuth angle [deg] to
+    ICRS (J2000) coordinates of RA, Dec [deg].
 
     Parameters
     ----------
@@ -600,21 +602,21 @@ def top2eq(location, time, alt, az):
         Location of telescope
     time : float
         Observation Julian Date
-    alt, az : array
-        altitude and azimuth [deg]
+    zen, az : array
+        zenith and azimuth [deg]
 
     Returns
     -------
     ra, dec : array
         ra and dec in [deg]
     """
-    # if alt/az are tensors, then this is a lot slower
+    # if zen/az are tensors, then this is a lot slower
     if isinstance(alt, torch.Tensor):
-        alt = alt.detach().numpy()
+        zen = zen.detach().numpy()
     if isinstance(az, torch.Tensor):
         az = az.detach().numpy()
     altaz = AltAz(location=location, obstime=Time(time, format='jd'),
-                  alt=alt * units.deg, az=az * units.deg)
+                  zen=zen * units.deg, az=az * units.deg)
     icrs = ICRS()
     out = altaz.transform_to(icrs)
 

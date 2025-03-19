@@ -222,10 +222,11 @@ class PixelBeam(utils.Module):
             else:
                 cut = slice(None)
             if self.skycut_cache:
-                self.set_skycut_cache(zen, az, cut, device=self.skycut_device)
+                self.set_skycut_cache(zen, cut, device=self.skycut_device)
             zen, az = zen[cut], az[cut]
         else:
-            zen, az, cut = cache_output
+            cut = cache_output
+            zen, az = zen[cut], az[cut]
 
         # add prior model for params
         if self.p0 is None:
@@ -391,14 +392,12 @@ class PixelBeam(utils.Module):
             'angs' holds ra,dec and 'altaz' holds alt,az [deg]
         """
         # get coords
-        alt, az = telescope.eq2top(time, sky_comp.angs[0], sky_comp.angs[1],
+        zen, az = telescope.eq2top(time, sky_comp.angs[0], sky_comp.angs[1],
                                    store=False)
-        zen = utils.colat2lat(alt, deg=True)
 
         # evaluate beam
         beam, cut, zen, az = self.gen_beam(zen, az, prior_cache=prior_cache)
         sky = cut_sky_fov(sky_comp.data, cut)
-        alt = utils.colat2lat(zen, deg=True)
 
         # apply beam to sky to get perceived sky
         psky = self.apply_beam(beam, bls, sky)
@@ -406,7 +405,7 @@ class PixelBeam(utils.Module):
         out_comp = {}
         out_comp['sky'] = psky
         out_comp['angs'] = cut_sky_fov(sky_comp.angs, cut)
-        out_comp['altaz'] = torch.vstack([alt, az])
+        out_comp['zenaz'] = torch.vstack([zen, az])
 
         return out_comp
 
@@ -525,7 +524,7 @@ class PixelBeam(utils.Module):
         self.theta_x = theta_x
         self.theta_y = theta_y
 
-    def set_skycut_cache(self, zen, az, cut, device=None):
+    def set_skycut_cache(self, zen, cut, device=None):
         """
         Insert a sky cut index array into the cache
 
@@ -533,8 +532,6 @@ class PixelBeam(utils.Module):
         ----------
         zen : tensor
             zenith angle tensor
-        az : tensor
-            azimuth angle tensor
         cut : tensor
             indexing tensor of that sky model given zen < FOV/2
         device : str, optional
@@ -542,12 +539,9 @@ class PixelBeam(utils.Module):
         """
         h = utils.arr_hash(zen)
         if h not in self.cache:
-            cut_cpu = cut
-            if isinstance(cut, torch.Tensor):
-                cut_cpu = cut.cpu()
-                if device is not None and not utils.check_devices(cut.device, device):
-                    cut = cut.to(device)
-            self.cache[h] = (zen[cut_cpu], az[cut_cpu], cut)
+            if not utils.check_devices(cut.device, device):
+                cut = cut.to(device)
+            self.cache[h] = cut
 
     def query_cache(self, zen):
         """

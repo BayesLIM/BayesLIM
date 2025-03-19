@@ -1643,14 +1643,10 @@ def arr_hash(arr):
     """
     'Hash' an array or tensor by using its
     first value, last value and length as a
-    unique tuple identifier of the array. 
-    Note that if arr is a tensor/array the hash will be
-    assigned as arr._arr_hash for fast caching.
-    Also note, normally array hash is not allowed.
-    As a consquence, the hashing algorithm is somewhat
-    specific to BayesLIM applications. The hash is a tuple,
-    (int(arr[0] * 1000), int(arr[-1] * 1000), len(arr)).
-    This means the hash is also dependent on arr.device
+    unique tuple identifier of the array.
+    Note that this moves tensors to cpu, meaning
+    GPU synchronization will occur. To avoid this,
+    precompute the hash and store as arr._arr_hash.
 
     Parameters
     ----------
@@ -1658,19 +1654,22 @@ def arr_hash(arr):
 
     Returns
     -------
-    tuple
+    int or tuple
     """
     if hasattr(arr, '_arr_hash'):
         return arr._arr_hash
     if isinstance(arr, torch.Tensor):
         key = (arr[0].cpu().item(), arr[-1].cpu().item(), len(arr))
+        h = hash(key)
+        arr._arr_hash = h
     elif isinstance(arr, np.ndarray):
         key = (arr[0], arr[-1], len(arr))
+        h = hash(key)
     else:
         key = (arr[0], arr[-1], len(arr))
+        h = hash(key)
 
-    return hash(key)
-
+    return h
 
 def push(tensor, device, parameter=False):
     """
