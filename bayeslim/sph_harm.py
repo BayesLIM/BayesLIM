@@ -1503,7 +1503,7 @@ class AlmModel:
         h : int, optional
             The arr_hash for theta used in the Ylm_cache.
             If not provided will compute it using
-            utils.arr_hash()
+            utils.arr_hash(theta)
 
         Returns
         -------

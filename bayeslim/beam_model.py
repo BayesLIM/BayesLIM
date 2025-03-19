@@ -215,6 +215,7 @@ class PixelBeam(utils.Module):
             truncated zen and az tensors
         """
         # enact fov cut
+        zen_hash = zen._arr_hash if hasattr(zen, '_arr_hash') else None
         cache_output = self.query_cache(zen) if self.skycut_cache else None
         if cache_output is None:
             if self.fov < 360:
@@ -224,9 +225,15 @@ class PixelBeam(utils.Module):
             if self.skycut_cache:
                 self.set_skycut_cache(zen, cut, device=self.skycut_device)
             zen, az = zen[cut], az[cut]
+            # pass over arr_hash if present
+            if zen_hash:
+                zen._arr_hash = zen_hash
         else:
             cut = cache_output
             zen, az = zen[cut], az[cut]
+            # pass over arr_hash if present
+            if zen_hash:
+                zen._arr_hash = zen_hash
 
         # add prior model for params
         if self.p0 is None:
@@ -1194,7 +1201,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         p = self.lm_poly_forward(p)
 
         # get Ylms
-        Ylm, alm_mult = self.get_Ylm(zen, az, h=zen._arr_hash if hasattr(zen, '_arr_hash') else None)
+        key = utils.arr_hash(zen)
+        Ylm, alm_mult = self.get_Ylm(zen, az, h=key)
 
         # next forward to pixel space via slower dot product over Ncoeff
         # this also casts beam to real if real_beam

@@ -1671,6 +1671,7 @@ def arr_hash(arr):
 
     return h
 
+
 def push(tensor, device, parameter=False):
     """
     Push a tensor to a new device or dtype. If the tensor
