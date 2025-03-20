@@ -186,7 +186,7 @@ class RIME(utils.Module):
                     data_bls[i] = tuple(bl)
 
         self.sim_bl_groups = sim_bl_groups
-        self.all_sim_bls = utils.flatten(sim_bls.values())
+        self.all_sim_bls = utils.flatten(sim_bl_groups.values())
         self.Nbl_groups = len(self.sim_bl_groups)
         self.sim_blvec_groups = {k: self.array.get_blvecs(v) for k, v in self.sim_bl_groups.items()}
 
