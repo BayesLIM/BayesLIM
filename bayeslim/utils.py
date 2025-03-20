@@ -837,7 +837,7 @@ class PixInterp:
         nearest = m.index_select(-1, inds.view(-1)).view(m.shape[:-1] + inds.shape)
 
         # multiply by weights and sum
-        out = torch.sum(nearest * wgts, axis=-1)
+        out = torch.einsum('...i,...i->...', nearest, wgts)
 
         ## LEGACY
 #        if self.interp_mode == 'nearest':
