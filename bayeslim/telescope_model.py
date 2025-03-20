@@ -194,7 +194,6 @@ class ArrayModel(utils.Module, utils.AntposDict):
         # set location metadata
         self.cache_s = cache_s
         self.clear_cache()
-        self.parameter = parameter
         self.redtol = redtol
         self.device = device
         self.cache_depth = cache_depth

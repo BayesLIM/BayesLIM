@@ -114,9 +114,12 @@ class RIME(utils.Module):
         self.setup_freqs(freqs)
         self.setup_sim_bls(sim_bls, data_bls)
         self.setup_sim_times(times=times)
- 
+
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
+        self.sim_blvec_groups = {
+        k: v.to(self.device) for k, v in self.sim_blvec_groups.items()
+        }
         if not dtype:
             self.device = device
             for k, v in self._sim2data.items():
