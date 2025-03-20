@@ -352,8 +352,8 @@ class ArrayModel(utils.Module, utils.AntposDict):
         freqs = self.freqs
         if hasattr(self, '_freq_idx') and self._freq_idx is not None:
             freqs = freqs[self._freq_idx]
-        const = sign * torch.pi * freqs[:, None] / 2.99792458e8
-        fringe = torch.exp((blvecs @ s)[:, None, :] * const)
+        const = freqs[:, None] * (sign * torch.pi / 2.99792458e8)
+        fringe = ((blvecs @ s)[:, None, :] * const).exp_()
 
         return fringe
 
