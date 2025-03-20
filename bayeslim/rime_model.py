@@ -118,7 +118,7 @@ class RIME(utils.Module):
     def push(self, device):
         dtype = isinstance(device, torch.dtype)
         self.sim_blvec_groups = {
-        k: v.to(self.device) for k, v in self.sim_blvec_groups.items()
+        k: v.to(device) for k, v in self.sim_blvec_groups.items()
         }
         if not dtype:
             self.device = device
