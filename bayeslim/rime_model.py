@@ -341,8 +341,8 @@ class RIME(utils.Module):
                                              elapsed_time(start))
                     log(message, verbose=self.verbose, style=1)
 
-                # create unique key (aka hash) for this sky_mdl/obs_time combination
-                key = (i, j)
+                # create unique key for this sky_mdl/obs_time combination
+                key = (sky_comp.name, len(ra), j)
 
                 # convert sky pixels from ra/dec to alt/az
                 zen, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top, key=key)
