@@ -18,7 +18,7 @@ def setup_Array(N=5, freqs=None):
 	antnums, antvecs = ba.utils._make_hex(N, D=15)
 	antpos_d = ba.utils.AntposDict(antnums, antvecs)
 	array = ba.telescope_model.ArrayModel(
-		antpos_d, freqs=freqs, cache_s=False, redtol=1.0, parameter=False
+		antpos_d, freqs=freqs, cache_s=False, redtol=1.0,
 	)
 
 	return array
@@ -34,7 +34,7 @@ def test_Telescope():
 	angs = telescope.eq2top(time, ra, dec, store=True)
 
 	# check for caching
-	key = (time,) + ba.utils.arr_hash(ra) + ba.utils.arr_hash(dec)
+	key = telescope.hash(time, ra)
 	assert key in telescope.conv_cache
 
 
@@ -59,9 +59,10 @@ def test_Array():
 	array.cache_s = True
 
 	bls = [(0, 1), (1, 2), (0, 2)]
-	fringe1 = array.gen_fringe(bls, zen, az, conj=False)
-	fringe2 = array.gen_fringe(bls[0], zen, az, conj=False)
-	fringe3 = array.gen_fringe(bls[0], zen, az, conj=True)
+	blvecs = array.get_blvecs(bls)
+	fringe1 = array.gen_fringe(blvecs, zen, az, conj=False)
+	fringe2 = array.gen_fringe(blvecs[:1], zen, az, conj=False)
+	fringe3 = array.gen_fringe(blvecs[:1], zen, az, conj=True)
 
 	# test shape and dtype
 	assert fringe1.shape == (len(bls), len(freqs), len(zen))
