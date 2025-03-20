@@ -832,9 +832,12 @@ class PixInterp:
 
         # get nearest neighbors to use for interpolation
         # inds has shape (Nnearest, Nangles)
-        # nearest = m[..., inds]  # LEGACY: backprop slower than index_select
-        # note that legacy above is ~same for cpu but ~2-5x faster on GPU
-        nearest = m.index_select(-1, inds.view(-1)).view(m.shape[:-1] + inds.shape)
+        if m.requires_grad:
+            # in autodiff mode this leads to faster backprop
+            nearest = m.index_select(-1, inds.view(-1)).view(m.shape[:-1] + inds.shape)
+        else:
+            # in inference mode this is faster
+            nearest = m[..., inds]
 
         # multiply by weights and sum
         out = torch.einsum('...i,...i->...', nearest, wgts)
