@@ -170,24 +170,25 @@ class RIME(utils.Module):
             assert isinstance(sim_bls[0][0], _ints) or isinstance(sim_bls[0][0][0], _ints), \
                 "sim_bls must be list of 2-tuples or list of list of 2-tuples"
             if isinstance(sim_bls[0], tuple):
-                sim_bls = {0: sim_bls}
+                sim_bl_groups = {0: sim_bls}
             elif isinstance(sim_bls[0], list):
-                sim_bls = {i: sbl for i, sbl in enumerate(sim_bls)}
+                sim_bl_groups = {i: sbl for i, sbl in enumerate(sim_bls)}
 
         # type checks
-        for k in sim_bls:
-            for i, bl in enumerate(sim_bls[k]):
+        for k, v in sim_bl_groups.items():
+            for i, bl in enumerate(v):
                 if not isinstance(bl, tuple):
-                    sim_bls[k][i] = tuple(bl)
+                    sim_bl_groups[k][i] = tuple(bl)
+
         if data_bls is not None:
             for i, bl in enumerate(data_bls):
                 if not isinstance(bl, tuple):
                     data_bls[i] = tuple(bl)
 
-        self.sim_bl_groups = sim_bls
+        self.sim_bl_groups = sim_bl_groups
         self.all_sim_bls = utils.flatten(sim_bls.values())
         self.Nbl_groups = len(self.sim_bl_groups)
-        data_bls = None if self.array.parameter else data_bls
+        self.sim_blvec_groups = {k: self.array.get_blvecs(v) for k, v in self.sim_bl_groups.items()}
 
         # setup _sim2data
         if data_bls is None:
@@ -276,6 +277,7 @@ class RIME(utils.Module):
         """
         if hasattr(self, 'sim_bl_groups'):
             self.sim_bls = self.sim_bl_groups[self.bl_group_id]
+            self.sim_blvecs = self.sim_blvec_groups[self.bl_group_id]
             self.Nsim_bls = len(self.sim_bls)
             self.data_bls = self.data_bl_groups[self.bl_group_id]
             self.Ndata_bls = len(self.data_bls)
@@ -356,7 +358,7 @@ class RIME(utils.Module):
 
                 # apply beam and fringe for all bls to sky and sum into vis
                 sim2data_idx = self._sim2data[self.bl_group_id]
-                self._prod_and_sum(ant_beams, cut_sky, self.sim_bls,
+                self._prod_and_sum(ant_beams, cut_sky, self.sim_bls, self.sim_blvecs,
                                    zen, az, skyvis, sim2data_idx, j)
 
             # stack along 3rd dim (time axis)
@@ -369,7 +371,7 @@ class RIME(utils.Module):
         if len(vis) == 1:
             vis = vis[0]
         else:
-            vis = sum(vis)
+            vis = torch.sum(vis, dim=0)
 
         history = io.get_model_description(self)[0]
         vd.setup_meta(self.telescope, self.array.to_antpos())
@@ -378,7 +380,7 @@ class RIME(utils.Module):
 
         return vd
 
-    def _prod_and_sum(self, beam, cut_sky, bl, zen, az,
+    def _prod_and_sum(self, beam, cut_sky, bls, blvecs, zen, az,
                       vis, sim2data_idx, obs_ind):
         """
         Sky product and sum into vis inplace
@@ -390,9 +392,12 @@ class RIME(utils.Module):
             (Npol, Nvec, Nmodel, Nfreqs, Nsources)
         cut_sky : tensor
             Sky model (Nvec, Nvec, Nfreqs, Nsources)
-        bl : tuple or list of tuple
-            Baseline antenna pair e.g. (0, 1) or list
-            of such to operate on simultaneously
+        bls : list of 2-tuples
+            List of baseline tuples (antenna-pairs) to simulate,
+            corresponding to blvecs.
+        blvecs : tensor
+            Baseline vectors to simulate visibilities for
+            in ENU frame [meters] of shape (Nbls, 3)
         zen, az : tensor
             Zenith and azimuth angles of sky model [degrees]
         vis : list
@@ -407,18 +412,13 @@ class RIME(utils.Module):
         ### TODO: make apply_beam() -> (Npol, Npol, Nmodelpair, ...)
         ### and do (Nmodelpair) -> (Nbls) mapping here
         # first apply beam to sky: psky shape (Npol, Npol, Nbls, Nfreqs, Nsources)
-        psky = self.beam.apply_beam(beam, bl, cut_sky)
+        psky = self.beam.apply_beam(beam, bls, cut_sky)
 
-        # iterate over bls, compute fringe and perform sky summation
-        sum_sky = torch.zeros(psky.shape[:4], device=self.device, dtype=_cfloat())
+        # generate fringe: (Nbls, Nfreqs, Npix)
+        fringe = self.array.gen_fringe(blvecs, zen, az)
 
-        bls = bl if isinstance(bl, list) else [bl]
-        for i, bl in enumerate(bls):
-            # generate fringe: (1, Nfreqs, Npix)
-            fringe = self.array.gen_fringe(bl, zen, az)
-
-            # apply fringe to psky and perform sky summation
-            sum_sky[:, :, i] = (fringe * psky[:, :, i]).sum(-1)
+        # apply fringe to psky and perform sky summation
+        sum_sky = torch.sum(fringe * psky, dim=-1)
 
         # LEGACY: this seems to consume more memory...
         #beam1 = self.array.apply_fringe(fringe, beam1)

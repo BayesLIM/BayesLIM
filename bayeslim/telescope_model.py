@@ -139,7 +139,7 @@ class TelescopeModel:
                 self.conv_cache[key] = angs.to(device)
 
 
-class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
+class ArrayModel(utils.Module, utils.AntposDict):
     """
     A model for antenna layout and the baseline fringe
 
@@ -149,10 +149,9 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
     2. caching the fringe on the sky
         This interpolates an existing fringe (experimental)
     """
-    def __init__(self, antpos, freqs=None, pixtype='healpix', parameter=False,
-                 device=None, cache_s=True, cache_f=False, cache_f_angs=None,
-                 cache_blv=True, cache_depth=None, redtol=0.1,
-                 name=None, red_kwargs={}, pix_kwargs={}):
+    def __init__(self, antpos, freqs=None, device=None, cache_s=True,
+                 cache_depth=None, redtol=1.0, name=None,
+                 red_kwargs={}):
         """
         A model of an interferometric array
 
@@ -165,31 +164,12 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             centered at telescope location. See utils.AntposDict
         freqs : tensor, optional
             Frequencies to evaluate fringe [Hz]
-        pixtype : str, optional
-            If using the interpolation functionality of PixInterp
-            parent class, this is the pixelization scheme.
-            Only used if cache_f is True
-        parameter : bool, optional
-            If True, self.antvecs antenna positions become a parameter
-            to be fitted. If False (default) they are held fixed.
         device : str, optional
             device to hold antenna positions and associated cache.
         cache_s : bool, optional
             If True, cache the pointing unit vector s computation
-            in the fringe-term for each sky model zen, az combination,
+            in the fringe-term for each sky model zen array,
             but re-compute the fringe for each gen_fringe() call.
-            If cache_f then cache_s is ignored.
-        cache_f : bool, optional
-            Cache the fringe response, shape (Nfreqs, Npix),
-            for each baseline. Repeated calls to gen_fringe()
-            for the same baseline interpolates the cached fringe.
-            This only saves time and memory (if autodiff) if Ntimes >> 1.
-        cache_f_angs : tensor, optional
-            If cache_f, these are the sky angles (zen, az, [deg]) to
-            evaluate the fringe at and then cache.
-        cache_blv : bool, optional
-            If True, cache the baseline vectors to prevent repeated
-            calls to self.get_antpos(). Must be False if parameter=True.
         cache_depth : int, optional
             If provided, trim caches when N entries exceeds this number
             using FIFO. Default is no limit.
@@ -200,11 +180,9 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             Name for this object, stored as self.name
         red_kwargs : dict, optional
             Keyword arguments to pass to build_reds()
-        pix_kwargs : dict, optional
-            Keyword arguments to pass to PixInterp
         """
         # init Module
-        super(utils.PixInterp, self).__init__(name=name)
+        super().__init__(name=name)
         # init AntposDict
         if isinstance(antpos, utils.AntposDict):
             ants = antpos.ants
@@ -213,33 +191,18 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             ants = list(antpos.keys())
             antvecs = list(antpos.values())
         super(torch.nn.Module, self).__init__(ants, antvecs)
-        # init PixInterp
-        npix = cache_f_angs.shape[-1] if cache_f else None
-        super().__init__(pixtype, device=device, **pix_kwargs)
         # set location metadata
-        self.cache_s = cache_s if not cache_f else False
-        self.cache_f = cache_f
-        self.cache_f_angs = cache_f_angs
-        self.cache_blv = cache_blv
+        self.cache_s = cache_s
         self.clear_cache()
         self.parameter = parameter
         self.redtol = redtol
         self.device = device
         self.cache_depth = cache_depth
         self.set_freqs(freqs)
-        if parameter:
-            # make ant vecs a parameter if desired
-            # note this is highly experimental currently...
-            self.antvecs = torch.nn.Parameter(self.antvecs)
 
-        # TODO: enable clearing of fringe cache if parameter is True
-        if cache_f:
-            assert parameter is False, "fringe caching not yet implemented for parameter = True"
-
-        if parameter is False:
-            # build redundant info
-            (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
-             self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
+        # build redundant info
+        (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
+         self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
 
         if device:
             self.push(device)
@@ -255,6 +218,27 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         """
         # call AntposDict's getitem
         return super(torch.nn.Module, self).__getitem__(ant)
+
+    def get_blvecs(self, bls):
+        """
+        Get baseline vectors in ENU frame (meters)
+
+        Parameters
+        ----------
+        bls : tuple or list of tuples
+            Antenna-pair tuples e.g. [(0, 1), ]
+
+        Returns
+        -------
+        tensor
+        """
+        if isinstance(bls, tuple) or isinstance(bls[0], (int, np.integer)):
+            # single baseline
+            return torch.stack([self.get_antpos(bls[1]) - self.get_antpos(bls[0])])
+        else:
+            # list of baseline tuples
+            return torch.stack([self.get_antpos(bl[1]) - self.get_antpos(bl[0]) for bl in bls])
+
 
     def match_bl_len(self, bl, bls):
         """
@@ -278,7 +262,6 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         bool or tuple
             bl tuple if match, else False
         """
-        assert not self.parameter, "parameter must be False"
         match = False
         ang = 0
         bllen = self.redlens[self.bl2red[bl]]
@@ -295,20 +278,16 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
 
     def set_freqs(self, freqs):
         """
-        Set the frequency array. Note if self.cache_f
-        this clears all of self.fringe_cache()
+        Set the frequency array.
         """
         self.freqs = freqs
         if self.freqs is not None:
             self.freqs = torch.as_tensor(self.freqs, dtype=_float(), device=self.device)
-        if self.cache_f:
-            self.clear_cache()
 
     def set_freq_index(self, idx=None):
         """
         Set indexing of frequency axis.
         Note this is functionally the same as self.set_freqs(freqs[idx])
-        Note if self.cache_f this clears all of self.fringe_cache()
 
         Parameters
         ----------
@@ -316,110 +295,29 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
             Indexing along frequency axis
         """
         self._freq_idx = idx
-        if self.cache_f:
-            self.clear_cache()
 
     def clear_cache(self, depth=None):
         """
-        Overloads PixInterp.clear_cache
-        to clear both PixInterp and fringe_cache
+        Clear self.cache.
         If depth is provided, use FIFO to clear caches
         until depth is reached.
         """
-        # clear PiInterp cache
-        super(ArrayModel, self).clear_cache(depth=depth)
-
         # this is fringe cache
         if depth is None:
-            self.fringe_cache = {}
+            self.cache = {}
         else:
-            utils.clear_cache_depth(self.fringe_cache, depth)
+            utils.clear_cache_depth(self.cache, depth)
 
-    def _fringe(self, bl, zen, az, conj=False):
-        """compute fringe term. Returns fringe tensor
-        of shape (Nbls, Nfreqs, Nzen)
-        """
-        if not isinstance(bl, list):
-            bl = [bl]
-        # get angle and baseline hash
-        s_h = utils.arr_hash(zen)
-        b_h = utils.arr_hash(bl)
-        key = (b_h, s_h)
-        # s_h is used for pointing vector caching
-        # b_h is used for bl_vec caching
-        # key is used for complex fringe caching
-
-        # compute the pointing vector at all sky locations
-        if s_h not in self.fringe_cache and key not in self.fringe_cache:
-            _zen = zen * D2R
-            _az = az * D2R
-            s = torch.zeros(3, len(zen), dtype=_float(), device=self.device)
-            # az is East of North
-            s[0] = torch.sin(_zen) * torch.sin(_az)  # x
-            s[1] = torch.sin(_zen) * torch.cos(_az)  # y
-            s[2] = torch.cos(_zen)                   # z
-            if self.cache_s:
-                self.fringe_cache[s_h] = s
-        elif self.cache_s:
-            # s_h is in fringe_cache and cache_s is turned on
-            s = self.fringe_cache[s_h]
-        else:
-            # this is fringe caching
-            pass
-
-        if key not in self.fringe_cache:
-            # get baseline vectors: shape (Nbls, 3)
-            if self.cache_blv:
-                # antvecs is not a parameter, so cache the baseline vectors
-                if b_h not in self.fringe_cache:
-                    # construct bl vector
-                    bl_vec = self.get_antpos([b[1] for b in bl]) - self.get_antpos([b[0] for b in bl])
-                    bl_vec = bl_vec.to(self.device)
-                    self.fringe_cache[b_h] = bl_vec
-                else:
-                    bl_vec = self.fringe_cache[b_h]
-            else:
-                # antvecs is a parameter, so cache the antvec indexing tensors
-                if b_h not in self.fringe_cache:
-                    ant1 = torch.as_tensor([self.ants.index(b[0]) for b in bl])
-                    ant2 = torch.as_tensor([self.ants.index(b[1]) for b in bl])
-                    self.fringe_cache[b_h] = (ant1, ant2)
-                else:
-                    ant1, ant2 = self.fringe_cache[b_h]
-                # generate bl_vector
-                bl_vec = torch.index_select(self.antvecs, 0, ant2) - torch.index_select(self.antvecs, 0, ant1)
-                bl_vec = bl_vec.to(self.device)
-
-            # get fringe pattern: shape (Nbls, Nfreqs, Npix)
-            sign = -2j if conj else 2j
-            freqs = self.freqs
-            if hasattr(self, '_freq_idx') and self._freq_idx is not None:
-                freqs = freqs[self._freq_idx]
-            f = torch.exp(sign * torch.pi * (bl_vec @ s)[:, None, :] / 2.99792458e8 * freqs[:, None])
-
-            # if fringe caching, store the full fringe (this is large in memory!)
-            if self.cache_f:
-                self.fringe_cache[key] = f
-        else:
-            # interpolate cached fringe (not generally recommended)
-            f = self.interp(self.fringe_cache[key], zen, az)
-
-        # clear cache to depth if needed
-        if self.cache_depth is not None:
-            self.clear_cache(self.cache_depth)
-
-        return f
-
-    def gen_fringe(self, bl, zen, az, conj=False):
+    def gen_fringe(self, blvecs, zen, az, conj=False):
         """
         Generate a fringe-response given a baseline and
         collection of sky angles
 
         Parameters
         ----------
-        bl : 2-tuple or list of such
-            Baseline tuple, specifying the participating
-            antennas from self.ants, e.g. (1, 2)
+        blvecs : tensor
+            Baseline vector in ENU frame [meters]
+            (Nbls, 3)
         zen : tensor
             Zenith angle [degrees] of shape (Npix,).
         az : tensor
@@ -432,38 +330,46 @@ class ArrayModel(utils.PixInterp, utils.Module, utils.AntposDict):
         fringe : tensor
             Fringe response of shape (Nbls, Nfreqs, Npix)
         """
-        # do checks for fringe caching
-        if self.cache_f:
-            # first figure out if a bl with same len is cached
-            if not self.parameter and not isinstance(bl, list):
-                # this only works if feeding a single bl antpair
-                ang, match = self.match_bl_len(bl, self.fringe_cache.keys())
-                if match:
-                    # found a match, so swap this bl w/ existing
-                    # bl but rotate az angles
-                    bl = match
-                    az = (az + ang) % 360
+        # get angle hash for cache_s
+        key = utils.arr_hash(zen)
 
-            # if no cache for this bl, first generate it
-            if bl not in self.fringe_cache:
-                self._fringe(bl, *self.cache_f_angs, conj=conj)
+        # compute the pointing vector at all sky locations
+        if not self.cache_s or key not in self.cache:
+            _zen = zen * D2R
+            _az = az * D2R
+            s = torch.zeros(3, len(zen), dtype=_float(), device=self.device)
+            # az is East of North
+            s[0] = torch.sin(_zen) * torch.sin(_az)  # x
+            s[1] = torch.sin(_zen) * torch.cos(_az)  # y
+            s[2] = torch.cos(_zen)                   # z
+            if self.cache_s:
+                self.cache[key] = s
+        else:
+            # s_h is in cache and cache_s is turned on
+            s = self.cache[key]
 
-        return self._fringe(bl, zen, az, conj=conj)
+        # get fringe pattern: shape (Nbls, Nfreqs, Npix)
+        sign = -2j if conj else 2j
+        freqs = self.freqs
+        if hasattr(self, '_freq_idx') and self._freq_idx is not None:
+            freqs = freqs[self._freq_idx]
+        const = sign * torch.pi * freqs[:, None] / 2.99792458e8
+        fringe = torch.exp((blvecs @ s)[:, None, :] * const)
+
+        return fringe
 
     def push(self, device):
         """push model to a new device or dtype"""
         dtype = isinstance(device, torch.dtype)
         # AntposDict.push
         super(torch.nn.Module, self).push(device)
-        # use PixInterp push for its cache
-        super().push(device)
         if self.freqs is not None:
             self.freqs = self.freqs.to(device)
         if not dtype: self.device = device
         # push fringe cache
-        for k in self.fringe_cache:
-            if isinstance(self.fringe_cache[k], torch.Tensor):
-                self.fringe_cache[k] = utils.push(self.fringe_cache[k], device)
+        for k in self.cache:
+            if isinstance(self.cache[k], torch.Tensor):
+                self.cache[k] = utils.push(self.cache[k], device)
 
     def get_bls(self, uniq_bls=False, keep_autos=True,
                 min_len=None, max_len=None,
