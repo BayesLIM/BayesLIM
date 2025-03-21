@@ -17,7 +17,7 @@ class BaseResponse:
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
                  device=None, freq_kwargs={}, time_kwargs={}, LM=None,
-                 time_dim=3, freq_dim=4, projection_kwargs={}):
+                 time_dim=3, freq_dim=4, projection_kwargs={}, base0=None):
         """
         Parameters
         ----------
@@ -50,6 +50,10 @@ class BaseResponse:
             If passed, this creates an operation on the
             fully complex parameters after passing through
             the response. See setup_projection() for details.
+        base0 : tensor, optional
+            Starting response to add to self(params). This redefines
+            the forward model as a perturbation about base0. Must have
+            the same shape as self(params) output.
         """
         self.freq_mode = freq_mode
         self.time_mode = time_mode
@@ -63,6 +67,7 @@ class BaseResponse:
         self.setup_times(**time_kwargs)
         self.setup_projection(**projection_kwargs)
         self.LM = LM
+        self.base0 = base0
 
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
@@ -162,6 +167,9 @@ class BaseResponse:
             pass
         elif self.time_mode == 'linear':
             params = self.time_LM(params)
+
+        if hasattr(self, 'base0') and self.base0 is not None:
+            params = params + self.base0
 
         params = self.params2complex(params)
 
@@ -784,7 +792,7 @@ class JonesResponse(BaseResponse):
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
                  vis_type='com', antpos=None, device=None,
-                 freq_kwargs={}, time_kwargs={}, LM=None):
+                 freq_kwargs={}, time_kwargs={}, LM=None, base0=None):
         """
         Parameters
         ----------
@@ -825,7 +833,7 @@ class JonesResponse(BaseResponse):
         super().__init__(freq_mode=freq_mode, time_mode=time_mode,
                          param_type=param_type, device=device,
                          freq_kwargs=freq_kwargs, time_kwargs=time_kwargs,
-                         LM=LM)
+                         LM=LM, base0=base0)
         self.vis_type = vis_type
         self.antpos = antpos
 
@@ -1060,6 +1068,7 @@ class RedVisModel(utils.Module, IndexCache):
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
         self.params = utils.push(self.params, device)
+        self.R.push(device)
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         if not dtype:
@@ -1189,6 +1198,7 @@ class VisModel(utils.Module, IndexCache):
         """
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
+        self.R.push(device)
         self.params = utils.push(self.params, device)
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
@@ -1204,11 +1214,11 @@ class VisModel(utils.Module, IndexCache):
 class VisModelResponse(BaseResponse):
     """
     A response object for VisModel and RedVisModel, subclass of BaseResponse
-    taking params of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
+    taking params of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
     """
     def __init__(self, bls=None, freq_mode='channel', time_mode='channel',
                  param_type='real', device=None, time_dim=3, freq_dim=4,
-                 freq_kwargs={}, time_kwargs={}, LM=None):
+                 freq_kwargs={}, time_kwargs={}, LM=None, base0=None):
         """
         Parameters
         ----------
@@ -1233,7 +1243,8 @@ class VisModelResponse(BaseResponse):
         """
         super().__init__(freq_mode=freq_mode, time_mode=time_mode, time_dim=time_dim,
                          freq_dim=freq_dim, param_type=param_type, device=device,
-                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs, LM=LM)
+                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs, LM=LM,
+                         base0=base0)
 
     def forward(self, params, bls=None, times=None, **kwargs):
         """
@@ -1255,10 +1266,10 @@ class VisCoupling(utils.Module, IndexCache):
     all N^2 visibilities, then single-path mutual coupling
     including 1st and 2nd order terms can be described as 
 
-        Vc = M @ V @ M.H
+        Vc = X @ V @ X^T
 
-    where Vc is the coupled visibility and M is an
-    Nantenna x Nantenna matrix holding coupling
+    where Vc is the coupled visibility and X = I + E where E
+    is the Nantenna x Nantenna matrix holding coupling
     coefficients between antennas.
 
     Note that because params should be of shape
@@ -1268,7 +1279,7 @@ class VisCoupling(utils.Module, IndexCache):
     Currently only supports single-pol coupling.
     """
     def __init__(self, params, freqs, antpos, bls, R=None, parameter=True,
-                 p0=None, name=None, atol=1e-5, checks=True):
+                 p0=None, name=None, atol=1e-5, add_I=True, prod='both'):
         """
         Visibility coupling model. Note this does not support baseline
         minibatching (all baselines must exist in the input VisData object).
@@ -1302,8 +1313,12 @@ class VisCoupling(utils.Module, IndexCache):
             Name for this module, default is class name
         atol : float, optional
             Absolute tolerance for time index caching
-        checks : bool, optional
-            If True, run some type checks. Subclasses can turn this off
+        add_I : bool, optional
+            If True, (default) add identity to the coupling matrix (I + E)
+        prod : str, optional
+            If 'both' (default) form Vc = X V0 X^T
+            if 'left' form Vc = X V0
+            if 'right' form Vc = V0 X^T
         """
         super().__init__(name=name)
         ## TODO: support multi-pol coupling
@@ -1320,12 +1335,12 @@ class VisCoupling(utils.Module, IndexCache):
         self.device = params.device
         self.Npol = params.shape[0]
         assert self.Npol == 1, "multi-pol not currently supported"
+        self.add_I = add_I
+        self.prod = prod
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
         self.Nants = params.shape[2]
-        if checks:
-            assert len(antpos) == self.Nants
 
         if R is None:
             # default response is per freq channel and time bin
@@ -1338,22 +1353,23 @@ class VisCoupling(utils.Module, IndexCache):
                                               atol=atol)
         self.clear_cache()
 
-    def setup_coupling(self):
+    def setup_coupling(self, bls=None):
         """
         Setup coupling forward model metadata (e.g. delay term and matrix indexing)
         """
         # setup time delay phasor between coupled antennas
         self.dly = torch.ones(1, 1, self.Nants, self.Nants, 1, self.Nfreqs,
                               dtype=utils._cfloat(), device=self.device)
-        freqs = self.freqs.to(self.device)
-        freqs = freqs - freqs[0]
+        dfreqs = self.freqs - self.freqs[0]
         for i, ant1 in enumerate(self.antpos):
             for j, ant2 in enumerate(self.antpos):
-                vec_len = np.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
-                self.dly[0, 0, i, j, 0] = torch.exp(2j*np.pi*freqs/self.c*vec_len)
+                vec_len = torch.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
+                self.dly[0, 0, i, j, 0] = torch.exp(2j*torch.pi*dfreqs/self.c*vec_len)
 
         # setup indexing of input VisData and its reshaping into square matrix and back
         ## TODO: this assumes ant2 >= ant1 ordering of input bls. relax this assumption...
+        if bls is not None:
+            self.bls = bls
         mat_bls = [[(ant1, ant2) for ant2 in self.antpos] for ant1 in self.antpos]
         flat_data_idx = []
         flat_unconj_idx = []
@@ -1379,7 +1395,12 @@ class VisCoupling(utils.Module, IndexCache):
         _argsort_idx[self.flat_conj_idx] = 1e10  # set all conjugated elements to near-inf
         self.bls_idx = torch.argsort(_argsort_idx)[:len(self.flat_unconj_idx)]
 
-    def forward(self, vd, prior_cache=None, **kwargs):
+        # setup identity matrix (Npol, Npol, Nant, Nant, Ntime, Nfreq)
+        self.I = torch.eye(
+            self.Nants, dtype=utils._float(), device=self.device
+            )[None, None, :, :, None, None]
+
+    def forward(self, vd, prior_cache=None, add_I=None, prod=None, **kwargs):
         """
         Forward pass vd through visibility coupling
         model term.
@@ -1388,7 +1409,7 @@ class VisCoupling(utils.Module, IndexCache):
         ----------
         vd : VisData
             Starting model visibilities
-            of shape (Npol, Npol, Nbl, Ntimes, Nfreqs).
+            of shape (Npol, Npol, Nbls, Ntimes, Nfreqs).
         prior_cache : dict, optional
             Cache for storing computed priors on self.params
 
@@ -1425,6 +1446,11 @@ class VisCoupling(utils.Module, IndexCache):
         coupling = coupling * self.dly
         Nfreqs = coupling.shape[5]
 
+        # add identity
+        add_I = add_I if add_I is not None else self.add_I
+        if add_I:
+            coupling += self.I
+
         # reshape input data along bls axis
         flat_data = torch.index_select(vd.data, 2, self.flat_data_idx)
         # conjugate lower triangular component
@@ -1435,11 +1461,15 @@ class VisCoupling(utils.Module, IndexCache):
         reshaped_data = flat_data.reshape(new_shape)
 
         # take product of coupling matrix with visibility matrix
-        coupled_data = torch.einsum("ijkl...,ijl...->ijk...", coupling, reshaped_data)
-        coupled_data = torch.einsum("ijkl...,ijml...->ijkm...", coupled_data, coupling.conj())
+        prod = prod if prod is not None else self.prod
+        if prod in ['left', 'both']:
+            reshaped_data = torch.einsum("ijkl...,ijl...->ijk...", coupling, reshaped_data)
+        if prod in ['right', 'both']:
+            coupling.conj
+            reshaped_data = torch.einsum("ijkl...,ijml...->ijkm...", reshaped_data, coupling.conj())
 
         # unravel to flat along Nbls axis
-        flat_coupled = coupled_data.flatten(start_dim=2, end_dim=3)
+        flat_coupled = reshaped_data.flatten(start_dim=2, end_dim=3)
 
         # pick out original bls
         data = torch.index_select(flat_coupled, 2, self.bls_idx)
@@ -1475,6 +1505,8 @@ class VisCoupling(utils.Module, IndexCache):
 
         self.params = utils.push(self.params, device)
         self.dly = utils.push(self.dly, device)
+        self.freqs = utils.push(self.freqs, device)
+        self.R.push(device)
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
         # push prior functions
