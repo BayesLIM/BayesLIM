@@ -1002,10 +1002,10 @@ class VisData(TensorData):
             obj = out
 
         if pol is not None:
-            data = obj.get_data(pol=pol, try_view=try_view)
-            flags = obj.get_flags(pol=pol, try_view=try_view)
-            cov = obj.get_cov(pol=pol, try_view=try_view)
-            icov = obj.get_icov(pol=pol, try_view=try_view)
+            data = obj.get_data(pol=pol, try_view=try_view, squeeze=False)
+            flags = obj.get_flags(pol=pol, try_view=try_view, squeeze=False)
+            cov = obj.get_cov(pol=pol, try_view=try_view, squeeze=False)
+            icov = obj.get_icov(pol=pol, try_view=try_view, squeeze=False)
             out.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
                             data=data, flags=obj.flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
