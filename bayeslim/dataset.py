@@ -596,25 +596,32 @@ class VisData(TensorData):
 
     def _pol2ind(self, pol):
         """
-        Polarization to index
+        Polarization to index.
+        Does not support multi-pol indexing.
 
         Parameters
         ----------
         pol : str
-            Polarization to index
+            Dipole polarization to index ('ee' or 'nn')
         """
+        ## TODO: support other polarizations (e.g. circular, etc)
         if isinstance(pol, list):
+            # make sure we are only asking for 1 pol
             assert len(pol) == 1
             pol = pol[0]
         assert isinstance(pol, str)
         if self.pol is not None:
             if pol.lower() != self.pol.lower():
                 raise ValueError("cannot index pol from 1pol {}".format(self.pol))
-            return slice(0, 1)
+            return (slice(0, 1), slice(0, 1))
         if pol.lower() == 'ee':
-            return slice(0, 1)
+            return (slice(0, 1), slice(0, 1))
         elif pol.lower() == 'nn':
-            return slice(1, 2)
+            # check for special 2pol chase
+            if self.data.shape[;2] == (2, 1):
+                return (slice(1, 2), slice(0, 1))
+            else:
+                return (slice(1, 2), slice(1, 2))
         else:
             raise ValueError("cannot index cross-pols")
 
@@ -686,11 +693,11 @@ class VisData(TensorData):
             freq_inds = slice(None)
 
         if pol is not None:
-            pol_ind = self._pol2ind(pol)
+            pol_inds = self._pol2ind(pol)
         else:
-            pol_ind = slice(None)
+            pol_inds = (slice(None), slice(None))
 
-        inds = [pol_ind, pol_ind, bl_inds, time_inds, freq_inds]
+        inds = [pol_inds[0], pol_inds[1], bl_inds, time_inds, freq_inds]
         inds = tuple([utils._list2slice(ind) for ind in inds])
         slice_num = sum([isinstance(ind, slice) for ind in inds])
         assert slice_num > 3, "cannot fancy index more than 1 axis"
