@@ -618,7 +618,7 @@ class VisData(TensorData):
             return (slice(0, 1), slice(0, 1))
         elif pol.lower() == 'nn':
             # check for special 2pol chase
-            if self.data.shape[;2] == (2, 1):
+            if self.data.shape[:2] == (2, 1):
                 return (slice(1, 2), slice(0, 1))
             else:
                 return (slice(1, 2), slice(1, 2))
