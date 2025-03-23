@@ -594,7 +594,7 @@ class VisData(TensorData):
             return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
         return np.where(np.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
 
-    def _pol2ind(self, pol):
+    def _pol2ind(self, pol, data=None):
         """
         Polarization to index.
         Does not support multi-pol indexing.
@@ -618,7 +618,8 @@ class VisData(TensorData):
             return (slice(0, 1), slice(0, 1))
         elif pol.lower() == 'nn':
             # check for special 2pol chase
-            if self.data.shape[:2] == (2, 1):
+            data = data if data is not None else self.data
+            if data.shape[:2] == (2, 1):
                 return (slice(1, 2), slice(0, 1))
             else:
                 return (slice(1, 2), slice(1, 2))
@@ -626,7 +627,7 @@ class VisData(TensorData):
             raise ValueError("cannot index cross-pols")
 
     def get_inds(self, bl=None, times=None, freqs=None, pol=None,
-                 bl_inds=None, time_inds=None, freq_inds=None):
+                 bl_inds=None, time_inds=None, freq_inds=None, data=None):
         """
         Given data selections, return data indexing list
 
@@ -656,12 +657,18 @@ class VisData(TensorData):
             a list of freq indices if these
             are already known given location
             in self.freqs.
+        data : tensor, optional
+            Use this data instead of self.data.
+            Default is self.data. Only use this
+            when reading from an HDF5 and passing
+            the dataset handle.
 
         Returns
         -------
         list
             A 5-len list holding slices along axes.
         """
+        data = data if data is not None else self.data
         if bl is not None:
             assert bl_inds is None
             # special case for antpairpols
@@ -693,7 +700,7 @@ class VisData(TensorData):
             freq_inds = slice(None)
 
         if pol is not None:
-            pol_inds = self._pol2ind(pol)
+            pol_inds = self._pol2ind(pol, data=data)
         else:
             pol_inds = (slice(None), slice(None))
 
@@ -738,7 +745,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds)
+                             freq_inds=freq_inds, data=data)
         data = data[inds]
         if not try_view and all([isinstance(ind, slice) for ind in inds]):
             data = data.clone()
@@ -783,7 +790,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds)
+                             freq_inds=freq_inds, data=flags)
         flags = flags[inds]
         if not try_view and all([isinstance(ind, slice) for ind in inds]):
             flags = flags.clone()
@@ -829,7 +836,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds)
+                             freq_inds=freq_inds, data=cov)
 
         if self.cov_axis is None:
             # cov is same shape as data
@@ -1404,7 +1411,9 @@ class VisData(TensorData):
         else:
             print("{} exists, not overwriting...".format(fname))
 
-    def read_hdf5(self, fname, read_data=True, bl=None, times=None, freqs=None, pol=None,
+    def read_hdf5(self, fname, read_data=True,
+                  bl=None, times=None, freqs=None, pol=None,
+                  time_inds=None, freq_inds=None,
                   suppress_nonessential=False):
         """
         Read HDF5 VisData object
@@ -1416,6 +1425,7 @@ class VisData(TensorData):
         read_data : bool, optional
             If True, read data arrays as well as metadata
         bl, times, freqs, pol : read options. see self.select() for details
+        time_inds, freq_inds : read options. see self.select() for details
         suppress_nonessential : bool, optional
             If True, suppress reading-in flags and cov, as only data and icov
             are essential for inference.
@@ -1439,22 +1449,26 @@ class VisData(TensorData):
             data, flags, cov, icov = None, None, None, None
             if read_data:
                 data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
+                                     time_inds=time_inds, freq_inds=freq_inds,
                                      squeeze=False, data=f['data'], try_view=True)
                 data = torch.as_tensor(data)
                 if 'flags' in f and not suppress_nonessential:
                     flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
-                                          squeeze=False, flags=f['flags'], try_view=True)
+                                           time_inds=time_inds, freq_inds=freq_inds,
+                                           squeeze=False, flags=f['flags'], try_view=True)
                     flags = torch.as_tensor(flags)
                 else:
                     flags = None
                 if 'cov' in f and not suppress_nonessential:
                     cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
+                                       time_inds=time_inds, freq_inds=freq_inds,
                                        squeeze=False, cov=f['cov'], try_view=True)
                     cov = torch.as_tensor(cov)
                 else:
                     cov = None
                 if 'icov' in f:
                     icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
+                                         time_inds=time_inds, freq_inds=freq_inds,
                                          squeeze=False, icov=f['icov'], try_view=True)
                     icov = torch.as_tensor(icov)
                 else:
