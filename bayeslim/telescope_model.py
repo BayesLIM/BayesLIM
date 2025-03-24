@@ -684,7 +684,8 @@ def JD2LST(jd, longitude):
 
 
 def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
-               min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False):
+               min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False,
+               red_info=None):
     """
     Build redundant groups. Note that this currently has sub-optimal
     performance and probably scales ~O(N_bl^2), which could be improved.
@@ -729,6 +730,12 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     norm_vec : bool, optional
         If True, match redundancies based on total baseline
         length. Otherwise use full 3D XYZ vector (default).
+    red_info : tuple, optional
+        This holds pre-computed output of build_reds(). If passed,
+        this bypasses all operations and just returns red_info().
+        This is useful for high-performance VisData.inflate_by_redundancy(),
+        where one precomputes build_reds() and then just passes
+        this info as a kwarg.
 
     Returns
     -------
@@ -747,6 +754,10 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     redtags : list
         List of unique baseline length and angle str
     """
+    # return redinfo if passed
+    if redinfo is not None:
+        return redinfo
+
     ## TODO: improve performance of rgroup enumeration, probably can be improved over current O(N^2)
     # get antenna names and vectors
     ants = list(antpos.keys())
