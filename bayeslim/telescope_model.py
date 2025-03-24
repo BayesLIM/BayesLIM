@@ -755,8 +755,8 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
         List of unique baseline length and angle str
     """
     # return redinfo if passed
-    if redinfo is not None:
-        return redinfo
+    if red_info is not None:
+        return red_info
 
     ## TODO: improve performance of rgroup enumeration, probably can be improved over current O(N^2)
     # get antenna names and vectors
