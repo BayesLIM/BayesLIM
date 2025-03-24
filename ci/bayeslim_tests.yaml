@@ -11,7 +11,7 @@ dependencies:
   - pip
   - h5py
   - pytest
-  - "scipy=1.9.1"
+  - "scipy>=1.11.0"
   - pyyaml
   - psutil
   - pytest-cov
