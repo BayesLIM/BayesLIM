@@ -1,0 +1,19 @@
+name: BayesLIM
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - "numpy>=1.20"
+  - "torch>=2.0.0"
+  - "astropy>=4.3"
+  - sklearn
+  - healpy
+  - pip
+  - h5py
+  - pytest
+  - "scipy=1.9.1"
+  - pyyaml
+  - psutil
+  - pytest-cov
+  - coveralls
+  - mpmath
