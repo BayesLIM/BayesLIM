@@ -1336,15 +1336,13 @@ class VisData(TensorData):
             If provided, only inflate to these physical baselines. Note
             all baselines in bls must have a redundant dual in self.bls,
             otherwise its dropped.
+            Also note that if a bl in self.bls is not present in the
+            reds build by self.antpos, that bl is dropped from the output.
         redtol : float, optional
-            Redundancy tolerance in meters
+            Redundancy tolerance in meters when building reds.
         kwargs : dict, optional
-            Additional kwargs to pass to ArrayModel.get_bls(),
-            such as min_len, max_len, min_EW, max_EW, etc.
-        min_len : float, optional
-            Minimum baseline length to keep in meters
-        max_len : float, optional
-            Maximum baseline length to keep in meters
+            Additional kwargs to pass to telescope_model.build_reds() when
+            building the baseline redundancy groups.
 
         Returns
         -------
@@ -1352,23 +1350,23 @@ class VisData(TensorData):
         """
         # setup an array object
         from bayeslim import telescope_model
-        rk = dict(bls=bls)
-        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
+        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=kwargs)
 
         # get all new baselines
         if bls is None:
-            bls = array.get_bls(**kwargs)
+            bls = array.get_bls()
 
         # get redundant indices of current baselines
-        red_inds = [array.bl2red[bl] for bl in self.bls]
-        
+        red_inds = {array.bl2red.get(bl, None): bl for bl in self.bls}
+
+        # iterate over new_bls and get corresponding redundant baseline
         new_bls, red_bls = [], []
         for bl in bls:
-            red_idx = array.bl2red[bl]
+            red_idx = array.bl2red.get(bl, -1)
             if red_idx in red_inds:
                 new_bls.append(bl)
-                red_bls.append(self.bls[red_inds.index(red_idx)])
-        
+                red_bls.append(red_inds[red_idx])
+
         return self._inflate_by_redundancy(new_bls, red_bls)
 
     def write_hdf5(self, fname, overwrite=False):
