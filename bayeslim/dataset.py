@@ -1323,7 +1323,7 @@ class VisData(TensorData):
 
         return new_vis
 
-    def inflate_by_redundancy(self, bls=None, redtol=1.0, **kwargs):
+    def inflate_by_redundancy(self, bls=None, bl2red=None, **kwargs):
         """
         If current data only includes unique redundant baseline types,
         copy over redundant types to all physical baselines and return
@@ -1335,34 +1335,35 @@ class VisData(TensorData):
         bls : list, optional
             If provided, only inflate to these physical baselines. Note
             all baselines in bls must have a redundant dual in self.bls,
-            otherwise its dropped.
-            Also note that if a bl in self.bls is not present in the
-            reds build by self.antpos, that bl is dropped from the output.
-        redtol : float, optional
-            Redundancy tolerance in meters when building reds.
+            otherwise its dropped. Default is to use all baselines in bl2red.
+        bl2red : dict, optional
+            A {bl: int} dictionary mapping a physical baseline
+            to its redundant group index. If not passed, build this
+            using self.antpos.
         kwargs : dict, optional
-            Additional kwargs to pass to telescope_model.build_reds() when
-            building the baseline redundancy groups.
+            Keyword arguments to pass to telescope_model.build_reds() when
+            building the baseline redundancy groups if bl2red is not passed.
 
         Returns
         -------
         VisData
         """
-        # setup an array object
-        from bayeslim import telescope_model
-        array = telescope_model.ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=kwargs)
+        # check if bl2red is passed
+        if bl2red is None:
+            from bayeslim.telescope_model import build_reds
+            bl2red = build_reds(self.antpos, **kwargs)[2]
 
         # get all new baselines
         if bls is None:
-            bls = array.get_bls()
+            bls = list(bl2red.keys())
 
         # get redundant indices of current baselines
-        red_inds = {array.bl2red.get(bl, None): bl for bl in self.bls}
+        red_inds = {bl2red.get(bl, None): bl for bl in self.bls}
 
         # iterate over new_bls and get corresponding redundant baseline
         new_bls, red_bls = [], []
         for bl in bls:
-            red_idx = array.bl2red.get(bl, -1)
+            red_idx = bl2red.get(bl, -1)
             if red_idx in red_inds:
                 new_bls.append(bl)
                 red_bls.append(red_inds[red_idx])
