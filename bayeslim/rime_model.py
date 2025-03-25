@@ -344,7 +344,7 @@ class RIME(utils.Module):
                 # create unique key for this sky_mdl/obs_time combination
                 key = (sky_comp.name, len(ra), j)
 
-                # convert sky pixels from ra/dec to alt/az
+                # convert sky pixels from ra/dec to zen/az
                 zen, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top, key=key)
 
                 # add the key to zen where utils.arr_hash() will find it
@@ -556,9 +556,8 @@ class VisMapper:
         self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
         # build A matrix
         for i, time in enumerate(self.vis.times):
-            # get alt, az
-            alt, az = self.telescope.eq2top(time, self.ra, self.dec, store=True)
-            zen = 90 - alt
+            # get zen, az
+            zen, az = self.telescope.eq2top(time, self.ra, self.dec, store=True)
             # get beam and cut
             if self.beam is not None:
                 beam, cut, zen, az = self.beam.gen_beam(zen, az)
