@@ -2,10 +2,8 @@ name: BayesLIM
 channels:
   - conda-forge
   - defaults
-  - pytorch
 dependencies:
   - "numpy>=1.20"
-  - "torch==2.0.0"
   - "astropy>=4.3"
   - scikit-learn
   - healpy

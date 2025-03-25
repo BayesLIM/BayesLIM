@@ -4,11 +4,16 @@ conda config --set always_yes yes --set changeps1 no
 conda update -q conda
 conda info -a
 conda create --name=${ENV_NAME}  python=$PYTHON --quiet
-conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
 
 source ${HOME}/miniconda/etc/profile.d/conda.sh
 
 conda activate ${ENV_NAME}
+
+# install conda packages
+conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
+
+# pip install requirements
+pip3 install ci/bayeslim_tests.txt
 
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/miniconda/lib
 

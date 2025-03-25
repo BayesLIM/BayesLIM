@@ -1,0 +1,14 @@
+- torch>=2.0.0
+- numpy>=1.20
+- astropy>=4.3
+- scikit-learn
+- healpy
+- pip
+- h5py
+- pytest
+- scipy>=1.11.0
+- pyyaml
+- psutil
+- pytest-cov
+- coveralls
+- mpmath
