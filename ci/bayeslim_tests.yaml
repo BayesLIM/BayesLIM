@@ -5,7 +5,7 @@ channels:
   - pytorch
 dependencies:
   - "numpy>=1.20"
-  - "torch>=2.0.0"
+  - "torch==2.0.0"
   - "astropy>=4.3"
   - scikit-learn
   - healpy
