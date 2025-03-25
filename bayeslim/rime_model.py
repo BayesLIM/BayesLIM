@@ -512,6 +512,8 @@ class VisMapper:
         Parameters
         ----------
         vis : VisData object
+            Contains metadata for self.build_A(), and visibility
+            data for self.build_v()
         ra : array
             Right ascension [deg] of map pixels (Npix,)
         dec : array
@@ -571,7 +573,8 @@ class VisMapper:
                 zen, az = zen[cut], az[cut]
 
             # get conjugate of fringe (for vis simulation we use fr, for mapping we use fr.conj)
-            fr = self.array.gen_fringe(self.vis.bls, zen, az, conj=True)
+            blvecs = self.array.get_blvecs(self.vis.bls)
+            fr = self.array.gen_fringe(blvecs, zen, az, conj=True)
 
             # multiply in beam
             if beam is not None:
