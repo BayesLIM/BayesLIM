@@ -2,7 +2,7 @@ name: BayesLIM
 channels:
   - conda-forge
   - defaults
-  - https://download.pytorch.org/whl/cpu
+  - pytorch
 dependencies:
   - "numpy>=1.20"
   - "torch>=2.0.0"
