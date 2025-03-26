@@ -7,6 +7,7 @@ conda create --name=${ENV_NAME}  python=$PYTHON --quiet
 
 source ${HOME}/miniconda/etc/profile.d/conda.sh
 
+source activate base
 conda activate ${ENV_NAME}
 
 # install conda packages
