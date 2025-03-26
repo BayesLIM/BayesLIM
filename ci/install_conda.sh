@@ -15,7 +15,7 @@ conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
 # pip install requirements
 pip install -r ci/${ENV_NAME}.txt
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/miniconda/lib
+export LD_LIBRARY_PATH=${HOME}/miniconda/lib:$LD_LIBRARY_PATH
 
 conda list -n ${ENV_NAME}
 # check that the python version matches the desired one; exit immediately if not
