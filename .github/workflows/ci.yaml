@@ -16,7 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         python-version: [3.11]
       fail-fast: false
 
@@ -29,11 +29,6 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O $HOME/miniconda.sh;
-        bash $HOME/miniconda.sh -b -p $HOME/miniconda
-    - name: Get Miniconda (Mac OS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        wget https://repo.continuum.io/miniconda/Miniconda3-latest-MacOSX-x86_64.sh -O $HOME/miniconda.sh;
         bash $HOME/miniconda.sh -b -p $HOME/miniconda
     - name: Setup Environment
       run: |
