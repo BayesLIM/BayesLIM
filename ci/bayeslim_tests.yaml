@@ -3,14 +3,14 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - "numpy>=1.20"
-  - "astropy>=4.3"
+  - "numpy==1.24"
+  - "astropy==4.3"
   - scikit-learn
   - healpy
   - pip
   - h5py
   - pytest
-  - "scipy>=1.11.0"
+  - "scipy==1.11.0"
   - pyyaml
   - psutil
   - pytest-cov

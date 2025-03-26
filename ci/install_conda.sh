@@ -13,7 +13,7 @@ conda activate ${ENV_NAME}
 conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
 
 # pip install requirements
-pip install -r ci/bayeslim_tests.txt
+pip install -r ci/${ENV_NAME}.txt
 
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/miniconda/lib
 
