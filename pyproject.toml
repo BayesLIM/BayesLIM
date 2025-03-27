@@ -37,4 +37,3 @@ addopts = "--cov bayeslim --cov-config=.coveragerc --cov-report xml:./coverage.x
 testpaths = 'bayeslim/tests'
 filterwarnings = ["ignore::DeprecationWarning"]
 
-
