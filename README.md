@@ -2,9 +2,7 @@
 <img src="docs/source/_static/img/icon_dark.jpg" width=50% height=50%>
 </p>
 
-# BayesLIM
-
-### End-to-End, Differentiable Bayesian Forward Modeling for Cosmological Line Intensity Mapping
+# BayesLIM: Differentiable Bayesian Forward Models for Line Intensity Mapping
 
 BayesLIM is a tool for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian framework.
 It is built on PyTorch for its automatic differentiation engine and to easily enable GPU portability.
