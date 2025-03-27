@@ -25,12 +25,8 @@ def package_files(package_dir, subdirectory):
 data_files = package_files('bayeslim', 'data') + package_files('bayeslim', 'config')
 
 setup(
-    name            = 'bayeslim',
-    license         = 'MIT',
     version         = version,
-    description     = 'Bayesian Calibration and Signal Extraction for Line Intensity Mapping',
-    author          = 'Nicholas Kern',
-    url             = "http://github.com/nkern/BayesLIM",
+    license         = 'MIT',
     package_data    = {'bayeslim': data_files},
     include_package_data = True,
     packages        = ['bayeslim'],

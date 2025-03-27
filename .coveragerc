@@ -1,11 +1,14 @@
 [run]
 omit =
-     */tests/*
-     */data/*
-     */config/*
+    */tests/*
+    */data/*
+    */config/*
+    setup.py
 
 [report]
 omit =
-     */tests/*
-     */data/*
-     */config/*
+    */tests/*
+    */data/*
+    */config/*
+
+show_missing = true

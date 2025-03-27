@@ -1,0 +1,40 @@
+[build-system]
+requires = ['setuptools']
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bayeslim"
+description = 'Differentiable Bayesian Forward Models for Cosmological Line Intensity Mapping'
+authors = [{name="Nicholas Kern"}]
+classifiers = [
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "astropy",
+    "healpy",
+    "numpy",
+    "scipy",
+    "h5py",
+    "mpmath",
+    "matplotlib",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "coverage",
+]
+
+[project.urls]
+Repository = "https://github.com/BayesLIM/BayesLIM"
+
+[tool.pytest.ini_options]
+addopts = "--cov bayeslim --cov-config.coveragerc --cov-report xml:./coverage.xml"
+testpaths = 'bayeslim/tests'
+filterwarnings = ["ignore::DeprecationWarning"]
+
+
