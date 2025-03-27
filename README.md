@@ -34,21 +34,31 @@ cd BayesLIM
 pip install .
 ```
 
-If installed properly, you should be able import in in Python as:
+If installed properly, you should be able import it in Python as:
 ```python
-import baseslim as ba
+import bayeslim as ba
 ```
 
 # Dependencies
 See the `pyproject.toml` file for dependencies, listed under `[project.optional-dependences]`.
 I place them here because I don't like the fact that they are automatically installed when placed in
-`[project] dependencies=[]`, which often doesn't place nicely when other packages have installed pinned
+`[project]`, which often doesn't place nicely when other packages have installed pinned
 versions of common Python packages.
-If you'd like `pip` to automatically install dependecies anyways, then you can make this happen by installing the `dev` version,
+If you'd like `pip` to automatically install dependecies anyways, then you can make this happen by installing the `dev` version:
 ```bash
 pip install .[dev]
 ```
 
-PyTorch: there is currently not a great way to install different CPU/GPU versions of PyTorch from within a `pyproject.toml`, but I suspect this will change relatively soon. In the meantime, you should install `pytorch>=2.0.0` (and optionally CUDA) on your own (<https://pytorch.org/get-started/locally/>).
+**PyTorch**: there is currently not a great way to install different CPU/GPU versions of PyTorch from within a `pyproject.toml`, but I suspect this will change relatively soon. In the meantime, you should install `pytorch>=2.0.0` (and optionally CUDA) on your own (<https://pytorch.org/get-started/locally/>), before installing `BayesLIM.
 
+# Getting Started
+See the `notebooks/getting_started.ipynb` to get acquinted with model building, optimization, and inference with `BayesLIM`.
+Note that the API is still under development and may undergo changes if needed.
+
+For specific examples see the `notebooks` directory for:
+- radio interferometric calibration (`notebooks/radio_calibration.ipynb`)
+- radio visibility simulation (`notebooks/visibility_simulation.ipynb`)
+- spherical stripe harmonics (`notebooks/spherical_stripe_harmonics.ipynb`)
+- spherical Fourier Bessel power spectrum estimation (`notebooks/ssfb_power_spectra.ipynb`)
+- radio primary beam and point source modeling (`notebooks/radio_beam_and_pointsources.ipynb`)
 
