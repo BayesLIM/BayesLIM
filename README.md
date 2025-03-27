@@ -1,3 +1,7 @@
+<p align="center">
+<img src="docs/source/_static/img/icon_dark.jpg" width=75% height=75%>
+</p>
+
 # BayesLIM
 
 ### End-to-End, Differentiable Bayesian Forward Modeling for Cosmological Line Intensity Mapping
