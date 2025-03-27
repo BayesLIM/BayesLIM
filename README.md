@@ -1,5 +1,5 @@
 <p align="center">
-<img src="docs/source/_static/img/icon_dark.jpg" width=25% height=25%>
+<img src="docs/source/_static/img/icon_dark.jpg" width=50% height=50%>
 </p>
 
 # BayesLIM
