@@ -1,6 +1,6 @@
 # BayesLIM
 
-### A Framework for End-to-End, Bayesian Line Intensity Mapping Analysis
+### End-to-End, Differentiable Bayesian Forward Modeling for Cosmological Line Intensity Mapping
 
 BayesLIM is a tool for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian framework.
 It is built on PyTorch for its automatic differentiation engine and to easily enable GPU portability.
@@ -18,6 +18,11 @@ Together, these functionalities enable BayesLIM to constrain the joint posterior
 
 ![flowchart](https://github.com/nkern/bayescal/blob/main/docs/source/_static/img/flowchart.png)
 
+In addition to solving the LIM inverse problem of constraining the 3D cosmological field given an experiment's time-ordered dataset, BayesLIM can also be used for inverse design for experimental hardware or observational strategies.
+In other words, one can begin to answer the question, "How tight should my prior model on the instrumental beam pattern be to enable a 10\% constraint on the power spectrum?"
+Furthermore, one can use BayesLIM to seamlessly incorporate constraints from multiple experiments in different locations on Earth, taking data at different times, with different instrumental prior models.
+Enabling the wide-range of applications for high-redshift LIM science made possible by the BayesLIM framework is ongoing work.
+
 # Install
 
 Clone this repo and
@@ -25,6 +30,11 @@ Clone this repo and
 ```bash
 cd BayesLIM
 pip install .
+```
+
+If installed properly, you should be able import in in Python as:
+```python
+import baseslim as ba
 ```
 
 # Dependencies
