@@ -33,7 +33,7 @@ dev = [
 Repository = "https://github.com/BayesLIM/BayesLIM"
 
 [tool.pytest.ini_options]
-addopts = "--cov bayeslim --cov-config.coveragerc --cov-report xml:./coverage.xml"
+addopts = "--cov bayeslim --cov-config=.coveragerc --cov-report xml:./coverage.xml"
 testpaths = 'bayeslim/tests'
 filterwarnings = ["ignore::DeprecationWarning"]
 
