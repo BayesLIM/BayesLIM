@@ -108,7 +108,7 @@ class TelescopeModel:
 
         Returns
         -------
-        alt, az : array_like
+        zen, az : array_like
             alitude angle and azimuth vectors [degrees]
             oriented along East-North-Up frame
         """
@@ -516,12 +516,12 @@ def top2eq(location, time, zen, az):
         ra and dec in [deg]
     """
     # if zen/az are tensors, then this is a lot slower
-    if isinstance(alt, torch.Tensor):
+    if isinstance(zen, torch.Tensor):
         zen = zen.detach().numpy()
     if isinstance(az, torch.Tensor):
         az = az.detach().numpy()
     altaz = AltAz(location=location, obstime=Time(time, format='jd'),
-                  zen=zen * units.deg, az=az * units.deg)
+                  alt=(90 - zen) * units.deg, az=az * units.deg)
     icrs = ICRS()
     out = altaz.transform_to(icrs)
 
