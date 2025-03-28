@@ -4,23 +4,24 @@
 
 # BayesLIM: Differentiable Bayesian Forward Models for Line Intensity Mapping
 
-BayesLIM is a tool for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian framework.
-It is built on PyTorch for its automatic differentiation engine and to easily enable GPU portability.
-Currently, it is tuned for 21 cm intensity mapping, but future versions will support multi-line analyses.
+BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward mdoel framework.
+It is built on PyTorch for its automatic differentiation engine and for easily GPU portability.
+Currently, it is tuned for 21 cm intensity mapping, but future versions will support multi-spectral line analyses.
 
 Separately, BayesLIM is a 
 
-* fast and accurate forward model visibility simulator
-* generalized direction-dependent and direction-independent calibration solver
+* fast and accurate telescope forward model
+* generalized telescope calibration solver
 * interferometric sky imager
 * signal parameterization and modeling tool
 * posterior density estimator
 
 Together, these functionalities enable BayesLIM to constrain the joint posterior of a cosmological LIM signal in addition to the complex and often poorly constrained foregrounds and instrumental response.
+The flowchart below summarizes the BayesLIM forward modeling process for a 21 cm intensity mapping experiment.
 
 ![flowchart](https://github.com/nkern/bayescal/blob/main/docs/source/_static/img/flowchart.png)
 
-In addition to solving the LIM inverse problem of constraining the 3D cosmological field given an experiment's time-ordered dataset, BayesLIM can also be used for inverse design for experimental hardware or observational strategies.
+In addition to solving the LIM inverse problem of constraining a 3D cosmological field given an experiment's time-ordered dataset, BayesLIM can also be used for inverse design for experimental hardware or observational strategies.
 In other words, one can begin to answer the question, "How tight should my prior model on the instrumental beam pattern be to enable a 10\% constraint on the power spectrum?"
 Furthermore, one can use BayesLIM to seamlessly incorporate constraints from multiple experiments in different locations on Earth, taking data at different times, with different instrumental prior models.
 Enabling the wide-range of applications for high-redshift LIM science made possible by the BayesLIM framework is ongoing work.
@@ -53,12 +54,5 @@ pip install .[dev]
 
 # Getting Started
 See the `notebooks/getting_started.ipynb` to get acquinted with model building, optimization, and inference with `BayesLIM`.
-Note that the API is still under development and may undergo changes if needed.
-
-For specific examples see the `notebooks` directory for:
-- radio interferometric calibration (`notebooks/radio_calibration.ipynb`)
-- radio visibility simulation (`notebooks/visibility_simulation.ipynb`)
-- spherical stripe harmonics (`notebooks/spherical_stripe_harmonics.ipynb`)
-- spherical Fourier Bessel power spectrum estimation (`notebooks/ssfb_power_spectra.ipynb`)
-- radio primary beam and point source modeling (`notebooks/radio_beam_and_pointsources.ipynb`)
+Note that the core API is still under development and may undergo changes.
 
