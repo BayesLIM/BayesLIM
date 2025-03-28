@@ -38,14 +38,6 @@ except ImportError:
     def nullcontext(enter_result=None):
         yield enter_result
 
-# try to import sklearn
-try:
-    from sklearn.neighbors import BallTree
-    import_sklearn = True
-except ImportError:
-    import_sklearn = False
-    warnings.warn("could not import sklearn")
-
 # 2-real to complex, vice versa
 viewreal = torch.view_as_real
 viewcomp = torch.view_as_complex
