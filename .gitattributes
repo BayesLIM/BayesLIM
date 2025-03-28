@@ -1,2 +1,2 @@
-*.ipynb -linguist-detectable
+notebooks/*.ipynb -linguist-detectable
 
