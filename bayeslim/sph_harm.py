@@ -1490,7 +1490,7 @@ class AlmModel:
 
         Parameters
         ----------
-        theta, phi : ndarrays
+        theta, phi : tensor
             Zenith angle (co-latitude) and
             azimuth (longitude) [deg] for
             all sky pixels. If separable,
@@ -1564,8 +1564,8 @@ class AlmModel:
         h : int
             The key used to cache the inputs in Ylm_cache
         """
-        theta, phi = angs
-        h = h if h is not None else utils.arr_hash(theta)
+        zen, az = angs
+        h = h if h is not None else utils.arr_hash(zen)
         separable = isinstance(Ylm, (tuple, list))
         self.Ylm_cache[h] = dict(Ylm=Ylm, angs=angs, separable=separable,
                                  alm_mult=alm_mult)
