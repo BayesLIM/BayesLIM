@@ -28,6 +28,12 @@ dev = [
     "pytest-cov",
     "coverage",
 ]
+docs = [
+    "bayeslim[dev]",
+    "furo",
+    "nbsphinx",
+    "sphinx>=1.8,<7.2",
+]
 
 [project.urls]
 Repository = "https://github.com/BayesLIM/BayesLIM"
