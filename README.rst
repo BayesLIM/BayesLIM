@@ -1,8 +1,12 @@
-<p align="center">
-<img src="docs/source/_static/img/icon_dark.jpg" width=50% height=50%>
-</p>
+.. image:: docs/source/_static/img/icon_dark.jpg
+	:align: center
+	:width: 400
 
-# BayesLIM: Differentiable Bayesian Forward Models for Line Intensity Mapping
+BayesLIM 
+========
+
+Differentiable, End-to-End Bayesian Forward Models for Line Intensity Mapping Science
+~~~
 
 BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward model framework.
 It is built on PyTorch for its automatic differentiation engine and for easy GPU portability.
@@ -19,47 +23,52 @@ Separately, BayesLIM is a
 Together, these functionalities enable BayesLIM to constrain the joint posterior of a cosmological LIM signal in addition to the complex and often poorly constrained foregrounds and instrumental response.
 The flowchart below summarizes the BayesLIM forward modeling process for a 21 cm intensity mapping experiment.
 
-![flowchart](https://github.com/nkern/bayescal/blob/main/docs/source/_static/img/flowchart.png)
+.. image:: docs/source/_static/img/flowchart.png
+	:align: center
+	:width: 800
 
 In addition to solving the LIM inverse problem of constraining a 3D cosmological field given an experiment's time-ordered dataset, BayesLIM can also be used for inverse design for experimental hardware or observational strategies.
 In other words, one can begin to answer the question, "How tight should my prior model on the instrumental beam sidelobes be to enable a 10\% constraint on the 21 cm power spectrum?"
 Furthermore, one can use BayesLIM to seamlessly incorporate constraints from multiple experiments in different locations on Earth, taking data at different times, with different instrumental prior models.
 Enabling the wide-range of applications for high-redshift LIM science made possible by the BayesLIM framework is ongoing work.
 
-# Install
+See the documentation at `https://bayeslim.readthedocs.io <https://bayeslim.readthedocs.io>`_ for more details.
+
+Install
+-------
 
 Clone this repo and
 
-```bash
-cd BayesLIM
-pip install .
-```
+.. code-block:: bash
+	cd BayesLIM
+	pip install .
 
 If installed properly, you should be able import it in Python as:
-```python
-import bayeslim as ba
-```
+.. code-block:: python
+	import bayeslim as ba
 
-# Dependencies
-See the `pyproject.toml` file for dependencies, listed under `[project.optional-dependences]`.
-I place them here because I don't like the fact that they are automatically installed when placed under
-`[project]`, which doesn't always play nicely when packages have pinned
-versions of common Python packages.
-If you'd like `pip` to automatically install dependecies anyways, you can make this happen by installing the `dev` version:
-```bash
-pip install .[dev]
-```
+Dependencies
+------------
 
-**PyTorch**: there is currently not a great way to install different CPU/GPU versions of PyTorch from within a `pyproject.toml`, but I suspect this will change relatively soon. In the meantime, you should install `pytorch>=2.0.0` (and optionally CUDA) on your own (<https://pytorch.org/get-started/locally/>), before installing BayesLIM.
+See the ``pyproject.toml`` file for dependencies, listed under ``[project.optional-dependences]``.
+I place them here so that they are not automatically installed during ``pip install .``.
+If you'd like pip to automatically install dependencies anyways, you can make this happen by installing the ``dev`` version:
+.. code-block:: bash
+	pip install .[dev]
 
-# Getting Started
-See the `notebooks/getting_started.ipynb` to get acquinted with model building, optimization, and inference with `BayesLIM`.
+**PyTorch**: there is currently not a great way to install different CPU/GPU versions of PyTorch from within a ``pyproject.toml``, but I suspect this will change relatively soon. In the meantime, you should install ``pytorch>=2.0.0`` (and optionally CUDA) on your own (`https://pytorch.org/get-started/locally/ <https://pytorch.org/get-started/locally/>`_), before installing BayesLIM.
+
+Getting Started
+---------------
+See the ``notebooks/getting_started.ipynb`` to get acquinted with model building, optimization, and inference with BayesLIM.
 Note that the core API is still under development and may undergo changes.
 
-# Authors
+Authors
+-------
 Nicholas Kern, University of Michigan, MIT, NASA
 
-# Acknowledgements
+Acknowledgements
+-----------------
 Kern 2025 in prep.
-<br>
+
 Reonization simulation graphic: Alvarez et al. 2009 ApJ 703L.167A
