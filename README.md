@@ -42,10 +42,10 @@ import bayeslim as ba
 
 # Dependencies
 See the `pyproject.toml` file for dependencies, listed under `[project.optional-dependences]`.
-I place them here because I don't like the fact that they are automatically installed when placed in
-`[project]`, which often doesn't place nicely when other packages have installed pinned
+I place them here because I don't like the fact that they are automatically installed when placed under
+`[project]`, which doesn't always play nicely when packages have pinned
 versions of common Python packages.
-If you'd like `pip` to automatically install dependecies anyways, then you can make this happen by installing the `dev` version:
+If you'd like `pip` to automatically install dependecies anyways, you can make this happen by installing the `dev` version:
 ```bash
 pip install .[dev]
 ```
@@ -57,10 +57,9 @@ See the `notebooks/getting_started.ipynb` to get acquinted with model building, 
 Note that the core API is still under development and may undergo changes.
 
 # Authors
-Nicholas Kern, MIT, NASA, University of Michigan
-
+Nicholas Kern, University of Michigan, MIT, NASA
 
 # Acknowledgements
 Kern 2025 in prep.
 <br>
-Reonization Simulation: Alvarez et al. 2009 ApJ 703L.167A
+Reonization simulation graphic: Alvarez et al. 2009 ApJ 703L.167A
