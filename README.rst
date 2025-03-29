@@ -67,7 +67,7 @@ If you'd like pip to automatically install dependencies anyways, you can make th
 
 Getting Started
 ---------------
-See the ``notebooks/getting_started.ipynb`` to get acquinted with model building, optimization, and inference with BayesLIM.
+See the ``docs/notebooks/getting_started.ipynb`` to get acquinted with model building, optimization, and inference with BayesLIM.
 Note that the core API is still under development and may undergo changes.
 
 Authors
