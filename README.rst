@@ -6,7 +6,7 @@ BayesLIM
 ========
 
 Differentiable, End-to-End Bayesian Forward Models for Line Intensity Mapping Science
-~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward model framework.
 It is built on PyTorch for its automatic differentiation engine and for easy GPU portability.
@@ -40,11 +40,14 @@ Install
 Clone this repo and
 
 .. code-block:: bash
+
 	cd BayesLIM
 	pip install .
 
 If installed properly, you should be able import it in Python as:
+
 .. code-block:: python
+
 	import bayeslim as ba
 
 Dependencies
@@ -53,7 +56,9 @@ Dependencies
 See the ``pyproject.toml`` file for dependencies, listed under ``[project.optional-dependences]``.
 I place them here so that they are not automatically installed during ``pip install .``.
 If you'd like pip to automatically install dependencies anyways, you can make this happen by installing the ``dev`` version:
+
 .. code-block:: bash
+
 	pip install .[dev]
 
 **PyTorch**: there is currently not a great way to install different CPU/GPU versions of PyTorch from within a ``pyproject.toml``, but I suspect this will change relatively soon. In the meantime, you should install ``pytorch>=2.0.0`` (and optionally CUDA) on your own (`https://pytorch.org/get-started/locally/ <https://pytorch.org/get-started/locally/>`_), before installing BayesLIM.
