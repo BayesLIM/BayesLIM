@@ -23,5 +23,9 @@ def write_index_rst(readme_file, write_file=None):
 		"   examples\n"
 		)
 
+	txt.replace("\u2018", "'").replace("\u2019", "'").replace("\xa0", " ")
+
+	print(txt)
+
 	with open(write_file, "w") as F:
 		F.write(txt)
