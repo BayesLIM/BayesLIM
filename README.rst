@@ -1,12 +1,12 @@
-.. image:: docs/source/_static/img/icon_dark.jpg
-	:align: center
-	:width: 400
+.. raw:: html
 
-BayesLIM 
-========
+	<h3 align="center">
+	<a href="your href link"><img width="400" src="docs/source/_static/img/icon_dark.jpg" alt="text"></a>
+	</h3>
 
-Differentiable, End-to-End Bayesian Forward Models for Line Intensity Mapping Science
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	<h1 align="left">BayesLIM
+	</h1>
+	<h3>Differentiable, End-to-End Bayesian Forward Models for Line Intensity Mapping Cosmology</h3>
 
 BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward model framework.
 It is built on PyTorch for its automatic differentiation engine and for easy GPU portability.
@@ -23,9 +23,11 @@ Separately, BayesLIM is a
 Together, these functionalities enable BayesLIM to constrain the joint posterior of a cosmological LIM signal in addition to the complex and often poorly constrained foregrounds and instrumental response.
 The flowchart below summarizes the BayesLIM forward modeling process for a 21 cm intensity mapping experiment.
 
-.. image:: docs/source/_static/img/flowchart.png
-	:align: center
-	:width: 800
+.. raw:: html
+
+	<h3 align="center">
+	<a href="your href link"><img width="800" src="docs/source/_static/img/flowchart.png" alt="text"></a>
+	</h3>
 
 In addition to solving the LIM inverse problem of constraining a 3D cosmological field given an experiment's time-ordered dataset, BayesLIM can also be used for inverse design for experimental hardware or observational strategies.
 In other words, one can begin to answer the question, "How tight should my prior model on the instrumental beam sidelobes be to enable a 10\% constraint on the 21 cm power spectrum?"
