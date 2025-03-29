@@ -19,8 +19,6 @@ extensions = ['nbsphinx']
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
-
-
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
@@ -36,3 +34,22 @@ html_theme_options = {
         },
     ],
 }
+
+
+import os
+import sys
+
+readme_file = os.path.join(os.path.abspath("../"), "README.rst")
+index_file = os.path.join(os.path.abspath("../docs"), "index.rst")
+
+
+def build_custom_docs(app):
+    sys.path.append(os.getcwd())
+    import make_index
+
+    make_index.write_index_rst(readme_file, write_file=index_file)
+
+
+def setup(app):
+    app.connect("builder-inited", build_custom_docs)
+
