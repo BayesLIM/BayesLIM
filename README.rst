@@ -6,7 +6,7 @@
 
 	<h1 align="left">BayesLIM
 	</h1>
-	<h3>Differentiable, End-to-End Bayesian Forward Models for Line Intensity Mapping Cosmology</h3>
+	<h3>Differentiable, End-to-End Bayesian Forward Models for LIM Cosmology</h3>
 
 BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward model framework.
 It is built on PyTorch for its automatic differentiation engine and for easy GPU portability.
@@ -46,7 +46,7 @@ Clone this repo and
 	cd BayesLIM
 	pip install .
 
-If installed properly, you should be able import it in Python as:
+If installed properly, you should be able to import it in Python as:
 
 .. code-block:: python
 
