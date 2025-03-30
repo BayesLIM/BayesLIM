@@ -31,7 +31,7 @@ See the documentation at <https://bayeslim.readthedocs.io> for more details.
 
 ## Installation
 
-For installation, see <https://bayeslim.readthedocs.io/install.html>.
+For installation, see <https://bayeslim.readthedocs.io/en/latest/install.html>.
 
 ## Acknowledgements
 Kern 2025 in prep.
