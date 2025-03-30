@@ -4,13 +4,9 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-import bayeslim
-
 project = 'BayesLIM'
 copyright = '2025, Nicholas Kern'
 author = 'Nicholas Kern'
-release = bayeslim.__version__
-version = bayeslim.__version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
