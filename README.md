@@ -3,7 +3,7 @@
 </p>
 
 # BayesLIM
----
+
 <h3>Differentiable Bayesian Forward Modeling for LIM Cosmology</h3>
 
 BayesLIM is a toolbox for performing end-to-end analysis of line intensity mapping (LIM) datasets in a differentiable, Bayesian forward model framework.
@@ -25,8 +25,12 @@ The flowchart below, for example, summarizes the BayesLIM forward modeling proce
 <img src="docs/source/_static/img/flowchart.png" width=100% height=100%>
 </p>
 
+## Documentation
 
 See the documentation at <https://bayeslim.readthedocs.io> for more details.
+
+## Installation
+
 For installation, see <https://bayeslim.readthedocs.io/install.html>.
 
 ## Acknowledgements
