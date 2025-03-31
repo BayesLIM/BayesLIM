@@ -2308,7 +2308,7 @@ class CalData(TensorData):
         ant : integer or list of ints
             Antenna number(s) to index
         """
-        if isinstance(ant (int, np.integer)):
+        if isinstance(ant, (int, np.integer)):
             return self.ants.index(ant)
         else:
             return [self._ant2ind(a) for a in ant]
