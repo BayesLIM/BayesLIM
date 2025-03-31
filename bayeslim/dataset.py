@@ -2308,9 +2308,10 @@ class CalData(TensorData):
         ant : integer or list of ints
             Antenna number(s) to index
         """
-        if isinstance(ant, list):
+        if isinstance(ant (int, np.integer)):
+            return self.ants.index(ant)
+        else:
             return [self._ant2ind(a) for a in ant]
-        return self.ants.index(ant)
 
     def _ant2uniq_antpol(self, ant):
         """
@@ -2330,7 +2331,7 @@ class CalData(TensorData):
             for a in ant:
                 _ant, _pol = self._ant2uniq_antpol(a)
                 if _ant not in ant_list:
-                    ant_list.extend(_ant_list)
+                    ant_list.extend(_ant)
                 if _pol not in pol_list:
                     pol_list.append(_pol)
             ant = ant_list
