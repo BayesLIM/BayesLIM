@@ -2317,8 +2317,19 @@ class CalData(TensorData):
         """
         Given a antenna or antenna-pol tuple "ant",
         or list of such, return unique ants and pols
+
+        Parameters
+        ----------
+        ant : int, tuple, list
+            Antenna int e.g. 2
+            Ant-pol pair e.g. (2, 'Jee')
+            or list of such e.g. [2, ...] or [(2, 'Jee'), ...]
+
+        Returns
+        -------
+        ant : list of int
+        pol : str
         """
-        pol = None
         if isinstance(ant, tuple):
             # this is a single ant or antpol
             if len(ant) == 1:
@@ -2329,9 +2340,10 @@ class CalData(TensorData):
             # this is a list of ants or antpols
             ant_list, pol_list = [], []
             for a in ant:
+                # [ant], pol
                 _ant, _pol = self._ant2uniq_antpol(a)
-                if _ant not in ant_list:
-                    ant_list.extend(_ant)
+                if _ant[0] not in ant_list:
+                    ant_list.append(_ant[0])
                 if _pol not in pol_list:
                     pol_list.append(_pol)
             ant = ant_list
@@ -2340,6 +2352,10 @@ class CalData(TensorData):
                 pol.remove(None)
             assert len(pol) == 1, "can only index 1 pol at a time"
             pol = pol[0]
+        else:
+            # ant is already an integer
+            ant = [ant]
+            pol = None
 
         return ant, pol
 
@@ -2416,7 +2432,7 @@ class CalData(TensorData):
         ----------
         ant : int or list of ints, optional
             Antenna number, or list of such. Can also be
-            ant-pol, with limitations.
+            ant-pol e.g. (2, 'Jee') or [(2, 'Jee'), ...]
         times : tensor or float, optional
             Time(s) to index
         freqs : tensor or float, optional
@@ -2430,7 +2446,7 @@ class CalData(TensorData):
             A 5-len list holding slices along data axes.
         """
         if ant is not None:
-            # special case for antpols
+            # separate ant from pol
             ant, _pol = self._ant2uniq_antpol(ant)
             ant_inds = self._ant2ind(ant)
             if pol is not None:
