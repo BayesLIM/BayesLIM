@@ -92,7 +92,7 @@ class FFT(utils.Module):
         if device is not None:
             self.push(device)
 
-    def forward(self, inp, **kwargs):
+    def forward(self, inp, ifft=None):
         """
         Take the FFT of the inp and return
         """
@@ -107,15 +107,17 @@ class FFT(utils.Module):
         if self.win is not None:
             inp = inp * self.win
 
-        if self.fftshift and self.ifft:
+        ifft = ifft if ifft is not None else self.ifft
+
+        if self.fftshift and ifft:
             inp = torch.fft.ifftshift(inp, dim=self.dim)
 
-        if self.ifft:
+        if ifft:
             inp_fft = torch.fft.ifft(inp, norm=self.norm, dim=self.dim)
         else:
             inp_fft = torch.fft.fft(inp, norm=self.norm, dim=self.dim)
 
-        if self.fftshift and not self.ifft:
+        if self.fftshift and not ifft:
             inp_fft = torch.fft.fftshift(inp_fft, dim=self.dim)
 
         if self.abs:
