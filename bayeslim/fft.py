@@ -13,7 +13,7 @@ class FFT(utils.Module):
     A 1D FFT block for tensors, VisData, MapData or CalData
     """
     def __init__(self, dim=0, abs=False, peaknorm=False, N=None, dx=None,
-                 ndim=None, window=None, fftshift=True, ifft=False,
+                 ndim=None, window=None, fftshift=True, ifft=False, norm=None,
                  edgecut=None, square=False, device=None, **kwargs):
         """
         Parameters
@@ -36,8 +36,12 @@ class FFT(utils.Module):
             Windowing to use before FFT across dim.
         fftshift : bool, optional
             if True, fftshift along dim after fft.
-        inv : bool, optional
-            if True, use the ifft convention instead of fft.
+        ifft : bool, optional
+            If True use the ifft instead of fft. If fftshift
+            is set to True, then perform ifftshift *BEFORE* ifft()
+        norm : str, optional
+            The FFT convention. 'forward', 'backward', or 'ortho'.
+            Default is torch.fft.fft default.
         edgecut : tuple of int, optional
             Number of channels to give zero weight on either end of
             the FFT (edgecut_start, edgecut_end). If providing
@@ -55,6 +59,8 @@ class FFT(utils.Module):
         self.peaknorm = peaknorm
         self.dx = dx if dx is not None else 1.0
         self.fftshift = fftshift
+        self.ifft = ifft
+        self.norm = norm
         self.square = square
         if N is not None:
             self.freqs = torch.fft.fftfreq(N, d=self.dx)
@@ -101,9 +107,15 @@ class FFT(utils.Module):
         if self.win is not None:
             inp = inp * self.win
 
-        inp_fft = torch.fft.fft(inp, dim=self.dim)
+        if self.fftshift and self.ifft:
+            inp = torch.fft.ifftshift(inp, dim=self.dim)
 
-        if self.fftshift:
+        if self.ifft:
+            inp_fft = torch.fft.ifft(inp, norm=self.norm, dim=self.dim)
+        else:
+            inp_fft = torch.fft.fft(inp, norm=self.norm, dim=self.dim)
+
+        if self.fftshift and not self.ifft:
             inp_fft = torch.fft.fftshift(inp_fft, dim=self.dim)
 
         if self.abs:
