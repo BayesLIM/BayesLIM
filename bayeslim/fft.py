@@ -92,7 +92,7 @@ class FFT(utils.Module):
         if device is not None:
             self.push(device)
 
-    def forward(self, inp, ifft=None):
+    def forward(self, inp, ifft=None, **kwargs):
         """
         Take the FFT of the inp and return
         """
