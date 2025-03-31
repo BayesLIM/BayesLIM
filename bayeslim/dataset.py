@@ -1474,7 +1474,8 @@ class VisData(TensorData):
                     icov = None
 
             # downselect metadata to selection
-            self.select(bl=bl, times=times, freqs=freqs, pol=pol)
+            self.select(bl=bl, times=times, freqs=freqs, pol=pol,
+                        time_inds=time_inds, freq_inds=freq_inds)
 
             # setup downselected metadata and data
             ants = f.attrs['ants'].tolist()
