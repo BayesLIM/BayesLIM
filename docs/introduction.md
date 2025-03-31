@@ -4,7 +4,7 @@
 
 Here we will introduce some core concepts for building a differentiable Bayesian forward model in `BayesLIM`.
 
-At a high-level, the basic API pattern for a component in a multi-component `BayesLIM` forward model is the "Module" (or the component) and it's associated "Response" function. You can think of the "Response" function as any linear or non-linear mapping that maps the parameters of that component from its native space (e.g. spherical harmonic coefficients) to the space required by the forward model (e.g. a pixelized sky distribution).
+Any component in a `BayesLIM` forward model must be a subclass of `ba.utils.Module` (itself a subclass of `torch.nn.Module`), which holds the parameter vector for that component and associated metadata. Each component also has its own "response function." You can think of the response function as any linear or non-linear mapping that maps the parameters of that component from its native space (e.g. spherical harmonic coefficients) to the space required by the forward model (e.g. a pixelized sky distribution).
 This holds for any component because any component, be it the sky distribution, calibration gains as a function of frequency and time, or the antenna beam pattern with respect to angle and frequency, can have a native parameterization that is defined in a compressed space. If it isn't, it can just take an identity responese.
 
 Therefore, every component of the forward model will at some point do this:
@@ -15,7 +15,7 @@ output = Response(parameters)
 
 and in `BayesLIM` (currently) the user is given lots of flexibility on how to create their chosen `Response` function given the application at hand.
 
-We can then chain together multiple of components to create our forward model, which is then simulated and compared against "real" data to compute a loss, which we then backpropagate against to derive gradients. Therefore, conceptually, a simple forward model might look something like this:
+We can then chain together multiple components to create our forward model, which is then simulated and compared against real data to compute a loss. In typical PyTorch fasion, we would then backpropagate against the loss to derive gradients. Therefore, conceptually, a simple forward model might look something like this:
 
 ```python
 # get the sky brightness distribution
@@ -37,7 +37,11 @@ loss.backward()
 grads = (sky_params.grad, beam_params.grad)
 ```
 
-Ultimately, the goal is to compute the gradients of the loss function with respect to the input parameters, which is where the autodiff engine comes into play. Where does the Bayesian part of the Bayesian forward model come in? Well, that comes in by optimizing a posterior distribution as our loss, as opposed to any old loss function. To create a posterior distribution, we need to specify a likelihood and **priors**. Currently, only Gaussian likelihoods are supported.
+Generally, the parameter vectors are actually multi-dimensional tensors in both their input and output spaces.
+For a sky model, for example, `sky_pixels.shape = (N_stokes, 1, N_frequencies, N_pixels)`, and for a beam model `beam_pixels.shape = (N_feed_polarizations, N_polarization_vectors, N_beam_models, N_frequencies, N_pixels)`.
+The parameter tensor, then, could be `sky_params.shape = (N_stokes, 1, N_freq_coeffs, N_pix_coeffs)` where `N_freq_coeffs < N_frequencies` and `N_pix_coeffs < N_pixels`.
+
+Ultimately, the goal is to compute the gradients of the loss function with respect to the input parameters, which is where the autodiff engine comes into play. Where does the Bayesian part of the forward model come in? Well, that comes from optimizing a posterior distribution as our loss, as opposed to any old loss function. To create a posterior distribution, we need to specify a likelihood and **priors**. Currently, only Gaussian likelihoods are supported.
 
 ## Specifying Priors
 
@@ -78,4 +82,43 @@ logpost.backward()
 grads = (model.params.grad,)
 ```
 
-<div class="alert alert-block alert-info"><b>Note: </b>The parameters of an instantiated model are <b>always</b> stored as <code>model.params</code></div> 
+```{admonition} Note
+:class: note
+
+The parameters of an instantiated model are <b>always</b> stored as `model.params`
+```
+
+Formally, this is only computing the log-posterior distribution as
+
+\begin{align}
+\large
+\ln P(\theta|y) \propto \ln L(y|\theta) + \ln\pi(\theta)
+\end{align}
+
+meaning we are missing the normalizing factor that turns the posterior into a proper probability distribution. For the purpose of standard optimization it is not needed (we can still optimize to the MAP), however, this piece (the Bayesian evidence) will hopefully be added in future versions as it is important for performing model selection. Also note that a Gaussian likelihood defined as
+
+\begin{align}
+\large
+\ln L(y|\theta) \propto (y-m_\theta)^T\Sigma^{-1}(y-m_\theta)
+\end{align}
+
+where $m_\theta = F(\theta)$ is the output of our forward model, requires knowledge of the *covariance* $\Sigma$, which in the above workflow is actually defined as metadata attached to the data (so that the data and its covariance always travel hand-in-hand).
+
+Note the `ba.optim.LogProb(..., compute='post')` keyword argument. One can change this after-the-fact to easily switch between computing the likelihood, posterior, or prior, which can be useful when comparing optimization.
+
+```python
+# switch between 'like', 'prior', and 'post'
+prob.compute = 'post'
+prob().backward()  # posterior gradients
+
+prob.compute = 'like'
+prob().backward()  # likelihood gradients
+
+prob.compute = 'prior'
+prob().backward()  # prior gradients
+```
+
+To make life a little easier, the `LogProb` object comes equipped with a `LogProb.closure()` method.
+This method evalues the forward model, computes the likelihood and prior to from the posterior, runs backpropagation to derive gradients and then returns the log-posterior as a (detached) scalar.
+
+
