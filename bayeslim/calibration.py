@@ -396,7 +396,7 @@ class IndexCache:
         else:
             # compute time indices
             assert hasattr(self, '_times')
-            idx = [np.where(np.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0][0] for t in times]
+            idx = [torch.where(torch.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0][0] for t in times]
             idx = utils._list2slice(idx)
             # store in cache and return
             self.cache_tidx[h] = idx
@@ -1330,6 +1330,7 @@ class VisCoupling(utils.Module, IndexCache):
         self.freqs = freqs
         self.Nfreqs = len(freqs)
         self.antpos = antpos
+        self.Nants = len(antpos)
         self.bls = bls
         self.c = 2.99792458e8
         self.device = params.device
@@ -1372,28 +1373,47 @@ class VisCoupling(utils.Module, IndexCache):
             self.bls = bls
         mat_bls = [[(ant1, ant2) for ant2 in self.antpos] for ant1 in self.antpos]
         flat_data_idx = []
+        flat_data_null = []
         flat_unconj_idx = []
         flat_conj_idx = []
         k = 0
         for row in mat_bls:
             for mbl in row:
                 if mbl[1] >= mbl[0]:
-                    idx = self.bls.index(mbl)
+                    try:
+                        idx = self.bls.index(mbl)
+                        flat_data_null.append(False)
+                    except ValueError:
+                        # mbl not in self.bls
+                        idx = 0  # placeholder
+                        flat_data_null.append(True)
                     flat_unconj_idx.append(k)
+
                 else:
-                    idx = self.bls.index(mbl[::-1])
+                    try:
+                        idx = self.bls.index(mbl[::-1])
+                        flat_data_null.append(False)
+                    except ValueError:
+                        # mbl[::-1] not in self.bls
+                        idx = 0  # placeholder
+                        flat_data_null.append(True)
                     flat_conj_idx.append(k)
-                k += 1
+
                 flat_data_idx.append(idx)
+
+                k += 1
 
         self.flat_data_idx = torch.tensor(flat_data_idx)
         self.flat_conj_idx = torch.tensor(flat_conj_idx)
         self.flat_unconj_idx = torch.tensor(flat_unconj_idx)
+        self.flat_data_null = torch.tensor(flat_data_null)
 
         # now get indexing from square-flattened data back to bls ordering
         _argsort_idx = self.flat_data_idx.clone()
         _argsort_idx[self.flat_conj_idx] = 1e10  # set all conjugated elements to near-inf
         self.bls_idx = torch.argsort(_argsort_idx)[:len(self.flat_unconj_idx)]
+
+        # TODO: turn flat_data_idx, bls_idx, flat_data_null into slice objects if possible
 
         # setup identity matrix (Npol, Npol, Nant, Nant, Ntime, Nfreq)
         self.I = torch.eye(
@@ -1453,8 +1473,13 @@ class VisCoupling(utils.Module, IndexCache):
 
         # reshape input data along bls axis
         flat_data = torch.index_select(vd.data, 2, self.flat_data_idx)
+
+        # for bls that don't exist in vd.data, null them out
+        flat_data[:, :, self.flat_data_null] = 0.0
+
         # conjugate lower triangular component
         flat_data[:, :, self.flat_conj_idx] = flat_data[:, :, self.flat_conj_idx].conj()
+
         # reshape to (..., Nant, Nant, ...) size
         shape = vd.data.shape
         new_shape = shape[:2] + (self.Nants, self.Nants) + shape[3:]
