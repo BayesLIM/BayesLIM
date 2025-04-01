@@ -1247,10 +1247,10 @@ class VisData(TensorData):
             if rephase:
                 # get phasor
                 from bayeslim import telescope_model
-                lon, lat = self.telescope.location
-                lsts = telescope_model.JD2LST(self.times[times], lon) # rad
+                loc = self.telescope.location
+                lsts = telescope_model.JD2LST(self.times[times], loc[0]) # rad
                 dlst = lsts[obj.Ntimes//2] - lsts
-                phs = telescope_model.vis_rephase(dlst, lat, self.get_bl_vecs(self.bls), self.freqs)
+                phs = telescope_model.vis_rephase(dlst, loc[1], self.get_bl_vecs(self.bls), self.freqs)
                 data = obj.data * phs
 
             else:

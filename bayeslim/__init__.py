@@ -24,7 +24,7 @@ from . import hmat
 from . import bfgs
 
 from .paramdict import ParamDict
-from .dataset import VisData, Dataset
+from .dataset import CalData, MapData, VisData, Dataset
 from .utils import _float, _cfloat, viewreal, viewcomp, D2R, log2ten
 
 from .version import __version__
