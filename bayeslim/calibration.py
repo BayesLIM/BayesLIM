@@ -1385,7 +1385,7 @@ class VisCoupling(utils.Module, IndexCache):
                         flat_data_null.append(False)
                     except ValueError:
                         # mbl not in self.bls
-                        idx = 0  # placeholder
+                        idx = -1  # placeholder
                         flat_data_null.append(True)
                     flat_unconj_idx.append(k)
 
@@ -1395,7 +1395,7 @@ class VisCoupling(utils.Module, IndexCache):
                         flat_data_null.append(False)
                     except ValueError:
                         # mbl[::-1] not in self.bls
-                        idx = 0  # placeholder
+                        idx = -1  # placeholder
                         flat_data_null.append(True)
                     flat_conj_idx.append(k)
 
@@ -1411,7 +1411,8 @@ class VisCoupling(utils.Module, IndexCache):
         # now get indexing from square-flattened data back to bls ordering
         _argsort_idx = self.flat_data_idx.clone()
         _argsort_idx[self.flat_conj_idx] = 1e10  # set all conjugated elements to near-inf
-        self.bls_idx = torch.argsort(_argsort_idx)[:len(self.flat_unconj_idx)]
+        _argsort_idx[self.flat_data_null] = 1e10  # set all null elements to near-inf
+        self.bls_idx = torch.argsort(_argsort_idx)[:len(self.bls)]
 
         # TODO: turn flat_data_idx, bls_idx, flat_data_null into slice objects if possible
 
@@ -1490,7 +1491,6 @@ class VisCoupling(utils.Module, IndexCache):
         if prod in ['left', 'both']:
             reshaped_data = torch.einsum("ijkl...,ijl...->ijk...", coupling, reshaped_data)
         if prod in ['right', 'both']:
-            coupling.conj
             reshaped_data = torch.einsum("ijkl...,ijml...->ijkm...", reshaped_data, coupling.conj())
 
         # unravel to flat along Nbls axis
