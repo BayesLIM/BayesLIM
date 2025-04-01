@@ -1385,7 +1385,7 @@ class VisCoupling(utils.Module, IndexCache):
                         flat_data_null.append(False)
                     except ValueError:
                         # mbl not in self.bls
-                        idx = -1  # placeholder
+                        idx = 0  # placeholder
                         flat_data_null.append(True)
                     flat_unconj_idx.append(k)
 
@@ -1395,7 +1395,7 @@ class VisCoupling(utils.Module, IndexCache):
                         flat_data_null.append(False)
                     except ValueError:
                         # mbl[::-1] not in self.bls
-                        idx = -1  # placeholder
+                        idx = 0  # placeholder
                         flat_data_null.append(True)
                     flat_conj_idx.append(k)
 
