@@ -51,7 +51,7 @@ class BFGS:
     [2] https://pytorch.org/docs/stable/_modules/torch/optim/lbfgs.html
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
-                 tolerance_grad=1e-10, tolerance_change=1e-12, line_search_fn='strong_wolfe',
+                 tolerance_grad=1e-14, tolerance_change=1e-16, line_search_fn='strong_wolfe',
                  store_Hy=False):
         """
         Parameters
@@ -378,7 +378,7 @@ class LBFGS(BFGS):
         - all parameters must be on a single device
     """
     def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
-                 history_size=100, tolerance_grad=1e-10, tolerance_change=1e-12,
+                 history_size=100, tolerance_grad=1e-14, tolerance_change=1e-16,
                  line_search_fn='strong_wolfe', store_Hy=False,
                  update_Hdiag=True, update_diag_idx=None):
         """
@@ -443,7 +443,7 @@ class LBFGS(BFGS):
                 dtype=utils._float()
             )
         else:
-            self._Hdiag = self.H.diagonal().real
+            self._Hdiag = self.H.diagonal().real.clone()
             if isinstance(self.H, (hmat.SolveMat, hmat.SolveHierMat)):
                 # we actually manipulate Hdiag^.5
                 self._Hdiag  = self._Hdiag**.5
@@ -510,6 +510,10 @@ class LBFGS(BFGS):
                     # divide by (geometric) average of existing diagonal
                     Hdiag = self._Hdiag[idx]
                     new_Hdiag[idx] = update / Hdiag.pow(1/len(Hdiag)).prod()
+
+                    ### TODO: investigate if we can change the above to
+                    # update = 1. / (_rho * (_y.conj() @ (self._Hdiag[idx] * _y)).real)
+                    # new_Hdiag[idx] *= update
 
                 # check if self.H is an implicit Cholesky-solve representation (SolveMat or SolveHierMat)
                 if (hasattr(self.H, 'chol') and self.H.chol) or (hasattr(self.H, 'trans_solve') and self.H.trans_solve):
