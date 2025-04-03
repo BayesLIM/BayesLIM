@@ -507,7 +507,7 @@ class VisMapper:
     metadata (irrespective of the visibility data itself), then
     run self.build_v() 
     """
-    def __init__(self, vis, ra, dec, beam=None, fov=180):
+    def __init__(self, vis, ra, dec, beam=None, fov=180, dtype=None):
         """
         Parameters
         ----------
@@ -523,6 +523,10 @@ class VisMapper:
         fov : int, optional
             fov parameter if beam is None, otherwise
             use beam.fov value
+        dtype : torch.dtype
+            Use torch.float32 or torch.float64 when building
+            imaging matrices. Default (None) is to use
+            torch.get_default_dtype().
         """
         ## TODO: add on-the-fly vis loading
         self.vis = vis
@@ -534,6 +538,7 @@ class VisMapper:
         self.beam = beam
         self.fov = fov
         self.device = vis.data.device
+        self.dtype = dtype if dtype is not None else _float()
         self.clear_cache()
 
     def clear_cache(self):
@@ -692,6 +697,52 @@ class VisMapper:
         dm = torch.einsum("ijk,ik->ij", self.Dinv, m)
 
         return dm
+
+    def compute_P(self, m=None, freq_inds=None):
+        """
+        Compute the PSF tensor, assuming self.DI normalization.
+
+        Warning: this tensor can get REALLY BIG.
+
+        Can also choose to feed a map "m" and just
+        compute the matrix-vector product Pm, which
+        is faster and requires less memory.
+
+        P = D A^T w A
+
+        or
+
+        P m = D A^T w (A m)
+
+        Parameters
+        ----------
+        m : tensor, optional
+            Map tensor of shape (..., Nfreqs, Npix).
+            If fed this returns the matrix-vector
+            product: Pm
+        freq_inds : tensor, optional
+            Compute P for a select frequency indices
+        """
+        idx = freq_inds if freq_inds is not None else slice(None)
+        if m is not None:
+            # compute matrix-vector product: P @ m
+            # compute w * (A @ m): (Nbl_times, Nfreqs)
+            wAm = self.w[:, idx] * torch.einsum("...i,...i->...", self.A[:, idx], m[..., idx, :])
+
+            # multiply by A^T: (Nfreqs, Npix)
+            AtwAm = torch.einsum("i...,i...->...", self.A[:, idx].conj(), wAm[..., None])
+
+            # normalize by DI: (Nfreqs, Npix)
+            P = self.DI[idx] * AtwAm
+
+        else:
+            # compute full matrix
+            P = torch.einsum(
+                "ijk,ijl->kjl",
+                self.A[:, idx].conj(), (self.DI[idx, :, None] * self.w[:, idx, None]) * self.A[:, idx]
+            )
+
+        return P
 
     def push(self, device):
         """
