@@ -800,7 +800,7 @@ class LogProb(utils.Module):
             # this sends main_params back to leaf tensors, making them leaf views
             self.send_main_params()
 
-    def send_main_params(self, inplace=True, main_params=None,
+    def send_main_params(self, main_params=None, inplace=True,
                          fill=None, main_p0=None):
         """
         Take existing value of self.main_params and using
@@ -809,13 +809,13 @@ class LogProb(utils.Module):
 
         Parameters
         ----------
+        main_params : tensor, optional
+            Use this main_params tensor instead of self.main_params
+            when sending to sub-params. Default is self.main_params
         inplace : bool, optional
             If True (default) send main_params to sub-params
             on the module. Otherwise return the re-shaped tensors
             in a dictionary.
-        main_params : tensor, optional
-            Use this main_params tensor instead of self.main_params
-            when sending to sub-params. Default is self.main_params
         fill : float, optional
             If None (default) keep un-indexed elements in params
             with their existing values. Otherwise, fill them with
