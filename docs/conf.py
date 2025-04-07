@@ -33,7 +33,7 @@ html_static_path = ["source/_static"]
 html_logo = "source/_static/img/icon_dark.jpg"
 html_theme_options = {
     "source_directory": "docs/",
-    "source_repository": "https://github.com/nkern/BayesLIM",
+    "source_repository": "https://github.com/BayesLIM/BayesLIM",
     "source_branch": "main",
 }
 

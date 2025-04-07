@@ -2,7 +2,7 @@
 
 # Installation
 
-Clone the GitHub repo: <https://github.com/nkern/BayesLIM>
+Clone the GitHub repo: <https://github.com/BayesLIM/BayesLIM>
 and then 
 
 ```bash
@@ -18,7 +18,7 @@ import bayeslim as ba
 
 ## Dependencies
 
-See the [`pyproject.toml`](https://github.com/nkern/BayesLIM/blob/main/pyproject.toml) file for dependencies, listed under `[project.optional-dependencies]`. I placed them here so that they won't automatically install during a `pip install .` by default, which doesn't always play nicely with software sharing similar dependencies. If you'd like to have pip install the dependencies anyways, you can make this happen by installing the `[dev]` version:
+See the [`pyproject.toml`](https://github.com/BayesLIM/BayesLIM/blob/main/pyproject.toml) file for dependencies, listed under `[project.optional-dependencies]`. I placed them here so that they won't automatically install during a `pip install .` by default, which doesn't always play nicely with software sharing similar dependencies. If you'd like to have pip install the dependencies anyways, you can make this happen by installing the `[dev]` version:
 
 ```bash
 pip install .[dev]
