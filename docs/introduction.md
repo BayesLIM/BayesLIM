@@ -99,7 +99,7 @@ meaning we are missing the normalizing factor that turns the posterior into a pr
 
 \begin{align}
 \large
-\ln L(y|\theta) \propto (y-m_\theta)^T\Sigma^{-1}(y-m_\theta)
+\ln L(y|\theta) \propto -\frac{1}{2}(y-m_\theta)^T\Sigma^{-1}(y-m_\theta)
 \end{align}
 
 where $m_\theta = F(\theta)$ is the output of our forward model, requires knowledge of the *covariance* $\Sigma$, which in the above workflow is actually defined as metadata attached to the data (so that the data and its covariance always travel hand-in-hand).
