@@ -63,9 +63,9 @@ def _float(numpy=False):
             return np.float64
 
 
-def _cfloat(numpy=False):
+def _cfloat(float_type=None, numpy=False):
     """Manipulate with torch.set_default_dtype()"""
-    float_type = torch.get_default_dtype()
+    float_type = float_type if float_type is not None else torch.get_default_dtype()
     if not numpy:
         if float_type == torch.float64:
             return torch.complex128
@@ -80,6 +80,7 @@ def _cfloat(numpy=False):
             return np.complex64
         elif float_type == torch.float16:
             return np.complex32
+
 
 _float_resol = {
     torch.float16: 0,
@@ -96,6 +97,11 @@ _cfloat2float = {
     torch.complex128: torch.float64,
 }
 
+_float2cfloat = {
+    torch.float16: torch.complex32,
+    torch.float32: torch.complex64,
+    torch.float64: torch.complex128,
+}
 
 ######################################
 ######### Sky Modeling Tools #########
