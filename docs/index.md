@@ -39,8 +39,27 @@ tutorials
 
 Nicholas Kern
 
+## Citation
+
+[Kern 2025](https://arxiv.org/abs/2504.07090)
+
+```
+@ARTICLE{Kern2025,
+       author = {{Kern}, Nicholas},
+        title = "{A Differentiable, End-to-End Forward Model for 21 cm Cosmology: Estimating the Foreground, Instrument, and Signal Joint Posterior}",
+      journal = {arXiv e-prints},
+     keywords = {Astrophysics - Cosmology and Nongalactic Astrophysics, Astrophysics - Instrumentation and Methods for Astrophysics},
+         year = 2025,
+        month = apr,
+          eid = {arXiv:2504.07090},
+        pages = {arXiv:2504.07090},
+          doi = {10.48550/arXiv.2504.07090},
+archivePrefix = {arXiv},
+       eprint = {2504.07090},
+ primaryClass = {astro-ph.CO},
+}
+```
+
 ## Acknowledgements
 
-Kern 2025
-<br>
 Reionization simulation graphic: Alvarez et al. 2009 ApJ 703L.167A
