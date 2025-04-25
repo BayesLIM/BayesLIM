@@ -996,7 +996,7 @@ class RedVisModel(utils.Module, IndexCache):
             the redundant visibility model.
         """
         # push to device
-        if self.device is not None:
+        if not utils.check_devices(self.device, vd.data.device):
             vd.push(self.device)
 
         # setup predicted visibility
@@ -1526,12 +1526,14 @@ class VisCoupling(utils.Module, IndexCache):
         Push to a new device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype:
+        if not dtype and hasattr(self, "bls_idx"):
             self.device = device
             self.flat_data_idx = self.flat_data_idx.to(device)
             self.flat_conj_idx = self.flat_conj_idx.to(device)
             self.flat_unconj_idx = self.flat_unconj_idx.to(device)
             self.bls_idx = self.bls_idx.to(device)
+        if hasattr(self, 'I'):
+            self.I = utils.push(self.I, device)
 
         self.params = utils.push(self.params, device)
         self.dly = utils.push(self.dly, device)
