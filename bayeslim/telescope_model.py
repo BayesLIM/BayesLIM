@@ -373,7 +373,7 @@ class ArrayModel(utils.Module, utils.AntposDict):
     def get_bls(self, uniq_bls=False, keep_autos=True,
                 min_len=None, max_len=None,
                 min_EW=None, max_EW=None, min_NS=None, max_NS=None,
-                min_deg=None, max_deg=None):
+                min_deg=None, max_deg=None, xants=None):
         """
         Query all baselines associated with this array. Optionally
         select on baseline vector
@@ -403,6 +403,8 @@ class ArrayModel(utils.Module, utils.AntposDict):
             Sets min baseline angle (north of east) [deg]
         max_deg : float, optional
             Sets max baseline angle (north of east) [deg]
+        xants : list, optional
+            List of bad antennas to exclude from bls
 
         Returns
         -------
@@ -450,7 +452,12 @@ class ArrayModel(utils.Module, utils.AntposDict):
         if uniq_bls:
             reds = [red[:1] for red in reds]
 
-        return utils.flatten(reds)
+        bls = utils.flatten(reds)
+
+        if xants is not None:
+            bls = [bl for bl in bls if bl[0] not in xants and bl[1] not in xants]
+
+        return bls
 
     def to_antpos(self):
         """
