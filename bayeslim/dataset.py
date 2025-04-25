@@ -1169,6 +1169,10 @@ class VisData(TensorData):
             else:
                 avg_icov = None
 
+            # get rid of cov if not present in obj
+            if obj.cov is not None:
+                avg_cov = None
+
             # setup data
             obj.setup_data(red[:1], obj.times, obj.freqs, pol=obj.pol,
                            data=avg_data, flags=avg_flags, cov=avg_cov,
@@ -1270,6 +1274,10 @@ class VisData(TensorData):
             else:
                 avg_icov = None
 
+            # get rid of cov if not present in obj
+            if obj.cov is not None:
+                avg_cov = None
+
             # get new time
             new_time = torch.atleast_1d(obj.times[obj.Ntimes//2])
 
@@ -1359,16 +1367,7 @@ class VisData(TensorData):
         if bls is None:
             bls = list(bl2red.keys())
 
-        # get redundant indices of current baselines
-        red_inds = {bl2red.get(bl, None): bl for bl in self.bls}
-
-        # iterate over new_bls and get corresponding redundant baseline
-        new_bls, red_bls = [], []
-        for bl in bls:
-            red_idx = bl2red.get(bl, -1)
-            if red_idx in red_inds:
-                new_bls.append(bl)
-                red_bls.append(red_inds[red_idx])
+        new_bls, red_bls = utils.inflate_bls(self.bls, bl2red, bls)
 
         return self._inflate_by_redundancy(new_bls, red_bls)
 
