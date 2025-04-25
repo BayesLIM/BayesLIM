@@ -1357,6 +1357,11 @@ class VisCoupling(utils.Module, IndexCache):
     def setup_coupling(self, bls=None):
         """
         Setup coupling forward model metadata (e.g. delay term and matrix indexing)
+
+        Parameters
+        ----------
+        bls : list of ant-pair tuples
+            The baselines of the input data
         """
         # setup time delay phasor between coupled antennas
         self.dly = torch.ones(1, 1, self.Nants, self.Nants, 1, self.Nfreqs,
@@ -1922,6 +1927,56 @@ class RedVisCoupling(VisCoupling):
             hits[ct] = Nhit
 
         return hits
+
+
+class CouplingExpand:
+    """
+    Take a coupling vector and expand to an Nants x Nants
+    coupling matrix.
+    """
+    def __init__(self, vecs, antpos, redtol=1.0):
+        raise NotImplementedError
+        self.vecs = vecs
+        self.antpos = antpos
+        self.ants = list(antpos.keys())
+        Nants = len(antpos)
+        self.redtol = redtol
+        self.shape = (Nants, Nants)
+
+        idx = torch.zeros(self.shape, dtype=torch.int64)
+        zeros = torch.zeros(self.shape, dtype=torch.bool)
+
+        # iterate over antenna-pairs
+        for i in range(Nants):
+            for j in range(Nants):
+                vec = antpos[self.ants[j]] - antpos[self.ants[i]]
+                norm = (vecs - vec).norm(dim=1).isclose(torch.tensor(0.), atol=redtol)
+                if norm.any():
+                    idx[i, j] = i * Nants + j
+                else:
+                    zeros[i, j] = True
+
+        self.idx = idx.ravel()
+        self.zeros = zeros.ravel()
+
+    def __call__(self, params):
+        # params = (Npol, Npol, Nvec, Ntimes, Nfreqs)
+        shape = params.shape[:2] + self.shape + params.shape[-2:]
+
+        # params = (Npol, Npol, Nant^2, Ntimes, Nfreqs)
+        params = params[:, :, self.idx]
+
+        # zero-out missing vectors
+        params[:, :, self.zeros] = 0.0
+
+        # params = (Npol, Npol, Nant, Nant, Ntimes, Nfreqs)
+        params = params.reshape(shape)
+
+        return params
+
+    def push(self, device):
+        self.idx = utils.push(self.idx, device)
+        self.zeros = utils.push(self.zeros, device)
 
 
 def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
