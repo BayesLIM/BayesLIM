@@ -1469,7 +1469,7 @@ class VisCoupling(utils.Module, IndexCache):
         Ntimes = coupling.shape[3]
 
         # multiply by delay term
-        coupling = coupling * self.dly
+        coupling *= self.dly
         Nfreqs = coupling.shape[5]
 
         # add identity
@@ -1550,7 +1550,7 @@ class VisCoupling(utils.Module, IndexCache):
                 pr.push(device)
 
 
-class RedVisCoupling(VisCoupling):
+class RedVisCoupling(utils.Module, IndexCache):
     """
     A visibility coupling matrix assuming input visibilities
     are a redundant model and the output is a set of full visibilities.
@@ -1558,10 +1558,10 @@ class RedVisCoupling(VisCoupling):
     If Vr is a redundant visibility column vector, then the coupled
     (non-redundant visibilities) are 
 
-        Vc = M @ Vr + M @ Vr.conj()
+        Vc = A @ Vr + B @ Vr.conj()
 
     where Vr is a column vector of length Nredbl and
-    M is a matrix of shape (Nbl, Nredbls).
+    A, B are matrices of shape (Nbls, Nredbls).
 
     In contrast to VisCoupling, the params tensor of
     RedVisCoupling should be of shape
@@ -1580,7 +1580,7 @@ class RedVisCoupling(VisCoupling):
         Parameters
         ----------
         params : tensor
-            (Npol, Npol, Nantenna, Nantenna, Ntime_coeff, Nfreq_coeff) tensor
+            (Npol, Npol, Ncoupling, Ntime_coeff, Nfreq_coeff) tensor
             describing coupling between antennas
         freqs : tensor
             Observing frequencies [Hz]
@@ -1621,8 +1621,35 @@ class RedVisCoupling(VisCoupling):
         atol : float, optional
             Absolute tolerance for time index caching
         """
-        super().__init__(params, freqs, antpos, None, R=R, parameter=parameter,
-                         p0=p0, name=name, atol=atol, checks=False)
+        ## TODO: support multi-pol coupling
+        ## TODO: support frequency batching (for IndexCache and beam, sky objects too)
+        ## TODO: support multi-path coupling
+        ## TODO: support OWL-QN LBFGS optimization for sparse-priors on coupling terms
+        super().__init__()
+        self.params = params
+        self.p0 = p0
+        self.freqs = freqs
+        self.Nfreqs = len(freqs)
+        self.antpos = antpos
+        self.Nants = len(antpos)
+        self.c = 2.99792458e8
+        self.device = params.device
+        self.Npol = params.shape[0]
+        assert self.Npol == 1, "multi-pol not currently supported"
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
+
+        if R is None:
+            # default response is per freq channel and time bin
+            R = VisModelResponse(time_dim=3, freq_dim=4)
+        self.R = R
+
+        # IndexCache.__init__
+        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
+                                              bls=R.bls if hasattr(R, 'bls') else None,
+                                              atol=atol)
+        self.clear_cache()
+
         self.coupling_terms = coupling_terms
         if coupling_idx is None:
             coupling_idx = {c: i for i, c in enumerate(coupling_terms)}
@@ -1635,7 +1662,7 @@ class RedVisCoupling(VisCoupling):
     def setup_coupling(self, use_reds=True, redtol=1.0, no_auto_coupling=True,
                        include_second_order=True, min_len=None, max_len=None,
                        max_EW=None, max_NS=None, second_max_len=None, second_max_EW=None,
-                       second_max_NS=None):
+                       second_max_NS=None, Nproc=None, Ntask=5, use_pathos=True):
         """
         Setup fixed coupling parameters (e.g. delay term and matrix indexing)
 
@@ -1661,7 +1688,12 @@ class RedVisCoupling(VisCoupling):
         second_max_* : float, optional
             Max length/EW/NS parameters for second order coupling terms, if
             include_second_order is True.
-
+        Nproc : int, optional
+            If not None, launch multiprocessing of Nprocesses
+        Ntask : int, optional
+            Number of jobs to solve for for each process
+        use_pathos : bool, optional
+            Use pathos multiproc instead of multiprocessing
         """
         if use_reds:
             # build redundancies
@@ -1680,7 +1712,7 @@ class RedVisCoupling(VisCoupling):
         freqs = self.freqs.to(self.device)
         freqs = freqs - freqs[0]
         for i, (ant1, ant2) in enumerate(self.coupling_terms):
-            bl_len = np.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
+            bl_len = torch.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
             self.dly[0, 0, i, 0] = torch.exp(2j*np.pi*freqs/self.c*bl_len)
 
         # get the rows of the A matrix, mapping input bls to output bls
@@ -1689,7 +1721,8 @@ class RedVisCoupling(VisCoupling):
                                                      min_len=min_len, max_len=max_len, max_EW=max_EW,
                                                      max_NS=max_NS, no_auto_coupling=no_auto_coupling,
                                                      second_max_len=second_max_len,
-                                                     second_max_EW=second_max_EW, second_max_NS=second_max_NS)
+                                                     second_max_EW=second_max_EW, second_max_NS=second_max_NS,
+                                                     Nproc=Nproc, Ntask=Ntask, use_pathos=use_pathos)
         if use_reds: 
             self.red_bls = [bl2red[bl] for bl in self.bls_out]
         else:
@@ -2685,10 +2718,16 @@ def chisq(raw_data, forward_model, wgts, axis=None, dof=None, cov_axis=None, mod
     return chisq
 
 
+def _configure_coupling_matrix_singlepath_multiproc(job):
+    args, kwargs = job
+    return configure_coupling_matrix_singlepath(*args, **kwargs)
+
+
 def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupling=True,
                                          include_second_order=True, min_len=None, max_len=None,
                                          max_EW=None, max_NS=None, second_max_len=None,
-                                         second_max_EW=None, second_max_NS=None):
+                                         second_max_EW=None, second_max_NS=None,
+                                         Nproc=None, Ntask=5, use_pathos=True):
     """
     Configure the visibility bl-to-bl coupling matrix for single path
     mutual coupling terms.
@@ -2721,6 +2760,12 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
     second_max_* : float, optional
         Max length/EW/NS parameters for second order coupling terms, if
         include_second_order is True.
+    Nproc : int, optional
+        If not None, launch multiprocessing of Nprocesses
+    Ntask : int, optional
+        Number of jobs to solve for for each process
+    use_pathos : bool, optional
+        Use pathos multiproc instead of multiprocessing
 
     Returns
     -------
@@ -2731,6 +2776,41 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
         terms for each input baseline.
     """
     assert isinstance(antpos, dict)
+
+    # run multiproc mode
+    if Nproc is not None:
+        # setup multiprocessing
+        if use_pathos:
+            import multiprocess as mproc
+        else:
+            import multiprocessing as mproc
+        start_method = mproc.get_start_method(allow_none=True)
+        if start_method is None: mproc.set_start_method('spawn') 
+        Njobs = len(bls) / Ntask
+        if Njobs % 1 > 0:
+            Njobs = np.floor(Njobs) + 1
+        Njobs = int(Njobs)
+        jobs = []
+        for i in range(Njobs):
+            jobs.append([(antpos, bls[i*Ntask:(i+1)*Ntask]),
+                         dict(bl2red=bl2red, no_auto_coupling=no_auto_coupling,
+                              include_second_order=include_second_order, min_len=min_len, max_len=max_len,
+                              max_EW=max_EW, max_NS=max_NS, second_max_len=second_max_len,
+                              second_max_EW=second_max_EW, second_max_NS=second_max_NS,)
+                         ])
+
+        # run jobs
+        with mproc.Pool(Nproc) as pool:
+            output = pool.map(_configure_coupling_matrix_singlepath_multiproc, jobs)
+
+        # combine
+        keys, vals = [], []
+        for out in output:
+            keys.extend(out.keys())
+            vals.extend(out.values())
+
+        return dict(zip(keys, vals))
+
     # build rows of A for each bl output
     Arows = {}
     bl_vecs = {}
@@ -2866,7 +2946,7 @@ def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
             if no_auto_coupling and ant_i == ant_j: continue
             if ants is not None and ant_j not in ants: continue
             vec = antpos[ant_j] - antpos[ant_i]
-            vlen = np.linalg.norm(vec)
+            vlen = torch.linalg.norm(vec)
             if min_len is not None and vlen < min_len:
                 continue
             elif max_len is not None and vlen > max_len:
@@ -2894,10 +2974,10 @@ def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
                 continue
 
             # look for a match for this vector
-            match = np.linalg.norm(np.array(red_vecs) - c_vec, axis=1) < redtol
+            match = torch.linalg.norm(torch.stack(red_vecs) - c_vec, dim=1) < redtol
             if match.any():
                 # ct belongs to an existing red group
-                k = np.where(match)[0][0]
+                k = torch.where(match)[0][0]
                 red_grps[k].append(ct)
                 red_idx.append(k)
             else:
@@ -2954,7 +3034,7 @@ def cut_bl(bl, antpos, bl_vecs=None, min_len=None, max_len=None,
         vec, vec_len = bl_vecs[bl]
     else:
         vec = antpos[bl[1]] - antpos[bl[0]]
-        vec_len = np.linalg.norm(vec)
+        vec_len = torch.linalg.norm(vec)
         if bl_vecs is not None:
             bl_vecs[bl] = vec, vec_len
     if min_len is not None and vec_len < min_len:
