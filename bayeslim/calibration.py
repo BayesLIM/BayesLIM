@@ -1568,6 +1568,9 @@ class RedVisCoupling(utils.Module, IndexCache):
     (Npol, Npol, Ncoupling, Ntimes, Nfreqs), where
     Ncoupling is the total number of coupling terms
     one wants to model.
+
+    Notation: eps_0_1 is the coupling of voltage v_1 -> v_0,
+    such that v_0 <- v_0 + eps_0_1 * v_1
     """
     def __init__(self, params, freqs, antpos, coupling_terms, bls_in, bls_out,
                  coupling_idx=None, R=None, parameter=True, p0=None, name=None,
@@ -1659,12 +1662,13 @@ class RedVisCoupling(utils.Module, IndexCache):
         self.bls_out = bls_out
         self.Nants = len(antpos)
 
-    def setup_coupling(self, use_reds=True, redtol=1.0, no_auto_coupling=True,
+    def setup_coupling(self, use_reds=True, redtol=1.0,
                        include_second_order=True, min_len=None, max_len=None,
                        max_EW=None, max_NS=None, second_max_len=None, second_max_EW=None,
                        second_max_NS=None, Nproc=None, Ntask=5, use_pathos=True):
         """
-        Setup fixed coupling parameters (e.g. delay term and matrix indexing)
+        Setup fixed coupling parameters (e.g. delay term and matrix indexing).
+        Assumes bl = (ant1, ant2) where ant1 <= ant2 ordering.
 
         Parameters
         ----------
@@ -1673,8 +1677,6 @@ class RedVisCoupling(utils.Module, IndexCache):
             otherwise assume it represents physical baselines
         redtol : float, optional
             Red tolerance for use_reds in meters
-        no_auto_coupling : bool, optional
-            If True, exclude all ant_i -> ant_i coupling terms (i.e. signal chain reflections)
         include_second_order : bool, optional
             If True, include second order (single-path) coupling terms.
         min_len : float, optional
@@ -1719,95 +1721,149 @@ class RedVisCoupling(utils.Module, IndexCache):
         Arows = configure_coupling_matrix_singlepath(self.antpos, bls=self.bls_out, bl2red=bl2red,
                                                      include_second_order=include_second_order,
                                                      min_len=min_len, max_len=max_len, max_EW=max_EW,
-                                                     max_NS=max_NS, no_auto_coupling=no_auto_coupling,
+                                                     max_NS=max_NS,
                                                      second_max_len=second_max_len,
                                                      second_max_EW=second_max_EW, second_max_NS=second_max_NS,
                                                      Nproc=Nproc, Ntask=Ntask, use_pathos=use_pathos)
-        if use_reds: 
+        if use_reds:
             self.red_bls = [bl2red[bl] for bl in self.bls_out]
         else:
             self.red_bls = self.bls_out
         self.mat_shape = (len(self.bls_out), len(self.bls_in))
         self.mat_len = np.prod(self.mat_shape)
 
-        # Create indexing lists for the two matrix operations that need to be performed
-        # 1. (coupling + coupling.conj) @ vis, 2. (coupling + coupling.conj) @ vis.conj.
-        # Below, the first list indexes the raveled coupling matrix
-        # the second list indexes params tensor along its Ncoupling axis.
-        # the sq_param holds an extra list for accessing along Ncoupling
-        # for its unconj and conj form.
-        unconj_param_unconj_vis = ([], [])
-        unconj_param_conj_vis = ([], [])
-        conj_param_unconj_vis = ([], [])
-        conj_param_conj_vis = ([], [])
-        sq_param_unconj_vis = ([], [], [])
-        sq_param_conj_vis = ([], [], [])
+        # Create indexing lists for matrix operations that need to be performed:
+        # 1. (coupling + coupling.conj + coupling * coupling.conj) @ vis
+        # 2. (coupling + coupling.conj + coupling * coupling.conj) @ vis.conj
 
+        # Below, the first two lists index the rows & cols of A matrix, respectively
+        # the third list indexes params tensor along its Ncoupling axis.
+        # the sq_param holds an extra lists
+        # 3. index of unique element in A_ij
+        # 4. indexing of coupling along Ncoupling dim for coupling
+        # 5. indexing of coupling along Ncoupling dim for coupling.conj()
+        unconj_param_unconj_vis = ([], [], [])
+        unconj_param_conj_vis = ([], [], [])
+        conj_param_unconj_vis = ([], [], [])
+        conj_param_conj_vis = ([], [], [])
+        sq_param_unconj_vis = ([], [], [], [], [])
+        sq_param_conj_vis = ([], [], [], [], [])
+
+        k, l = 0, 0
+        unconj_inds = set()
+        conj_inds = set()
         for i, blo in enumerate(self.bls_out):
             Arow = Arows[blo]
             for j, bli in enumerate(self.bls_in):
-                k = i * len(self.bls_in) + j
+                # setup for unconj_vis bli
                 if bli in Arow:
-                    # an unconj coupled vis is in this row
-                    conj_param = conj_param_unconj_vis
-                    unconj_param = unconj_param_unconj_vis
-                    square_param = sq_param_unconj_vis
-                    _bli = bli
+                    for eps in Arow[bli]:
+                        if ',' in eps:
+                            # this is a second order term: eps_0_1,eps_1_2_conj
+                            terms = eps.split(',')
+                            # turn eps_0_1 -> (0, 1), note that conj term is always second
+                            c_id1 = tuple(int(a) for a in terms[0].split("_")[1:3])
+                            c_id2 = tuple(int(a) for a in terms[1].split("_")[1:3])
+                            if c_id1 not in self.coupling_idx or c_id2 not in self.coupling_idx:
+                                continue
+                            c_idx1 = self.coupling_idx[c_id1]
+                            c_idx2 = self.coupling_idx[c_id2]
+                            if (i, j) not in unconj_inds:
+                                # append unique A_ij indices
+                                unconj_inds.add((i, j))
+                                sq_param_unconj_vis[0].append(i)
+                                sq_param_unconj_vis[1].append(j)
+                            sq_param_unconj_vis[2].append(k)
+                            sq_param_unconj_vis[3].append(c_idx1)  # unconj term
+                            sq_param_unconj_vis[4].append(c_idx2)  # conj term
 
-                elif bli[::-1] in Arow:
-                    # a conj coupled vis is in this row
-                    conj_param = conj_param_conj_vis
-                    unconj_param = unconj_param_conj_vis
-                    square_param = sq_param_conj_vis
-                    _bli = bli[::-1]
-
-                else:
-                    continue
-
-                # iterate over all coefficient terms
-                for eps in Arow[_bli]:
-                    if ',' in eps:
-                        # this is a second order term
-                        terms = eps.split(',')
-                        # turn eps_0_1 -> (0, 1)
-                        c_id1 = tuple(int(a) for a in terms[0].split("_")[1:3])
-                        c_id2 = tuple(int(a) for a in terms[1].split("_")[1:3])
-                        if c_id1 not in self.coupling_idx or c_id2 not in self.coupling_idx:
-                            continue
-                        c_idx1 = self.coupling_idx[c_id1]
-                        c_idx2 = self.coupling_idx[c_id2]
-                        square_param[0].append(k)
-                        square_param[1].append(c_idx1)
-                        square_param[2].append(c_idx2)
-
-                    else:
-                        # this is a first order term
-                        c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
-                        if c_id not in self.coupling_idx: continue
-                        c_idx = self.coupling_idx[c_id]
-                        if 'conj' in eps:
-                            # this is conj_param
-                            conj_param[1].append(c_idx)
-                            conj_param[0].append(k)
                         else:
-                            # this is unconj_param
-                            unconj_param[1].append(c_idx)
-                            unconj_param[0].append(k)
+                            # this is a first order term
+                            # there is only one conj & unconj first-order term per Arow[bli]
+                            c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
+                            if c_id not in self.coupling_idx: continue
+                            c_idx = self.coupling_idx[c_id]
+                            if 'conj' in eps:
+                                # this is conj_param
+                                conj_param_unconj_vis[0].append(i)
+                                conj_param_unconj_vis[1].append(j)
+                                conj_param_unconj_vis[2].append(c_idx)
+                            else:
+                                # this is unconj_param
+                                unconj_param_unconj_vis[0].append(i)
+                                unconj_param_unconj_vis[1].append(j)
+                                unconj_param_unconj_vis[2].append(c_idx)
+                    k += 1
 
-        self.unconj_param_unconj_vis = (torch.tensor(unconj_param_unconj_vis[0]),
-                                        torch.tensor(unconj_param_unconj_vis[1]))
-        self.unconj_param_conj_vis = (torch.tensor(unconj_param_conj_vis[0]),
-                                      torch.tensor(unconj_param_conj_vis[1]))
-        self.conj_param_unconj_vis = (torch.tensor(conj_param_unconj_vis[0]),
-                                      torch.tensor(conj_param_unconj_vis[1]))
-        self.conj_param_conj_vis = (torch.tensor(conj_param_conj_vis[0]),
-                                    torch.tensor(conj_param_conj_vis[1]))
-        self.sq_param_unconj_vis = (torch.tensor(sq_param_unconj_vis[0]),
-                                    torch.tensor(sq_param_unconj_vis[1]),
-                                    torch.tensor(sq_param_unconj_vis[2]))
-        self.sq_param_conj_vis = (torch.tensor(sq_param_conj_vis[0]),
-                                  torch.tensor(sq_param_conj_vis[1]),
-                                  torch.tensor(sq_param_conj_vis[2]))
+                # setup for conj_vis bli[::-1]
+                if (bli[0] != bli[1]) and (bli[::-1] in Arow):
+                    for eps in Arow[bli[::-1]]:
+                        if ',' in eps:
+                            # this is a second order term: eps_0_1,eps_1_2_conj
+                            terms = eps.split(',')
+                            # turn eps_0_1 -> (0, 1), note that conj term is always second
+                            c_id1 = tuple(int(a) for a in terms[0].split("_")[1:3])
+                            c_id2 = tuple(int(a) for a in terms[1].split("_")[1:3])
+                            if c_id1 not in self.coupling_idx or c_id2 not in self.coupling_idx:
+                                continue
+                            c_idx1 = self.coupling_idx[c_id1]
+                            c_idx2 = self.coupling_idx[c_id2]
+                            if (i, j) not in conj_inds:
+                                # append unique A_ij indices
+                                conj_inds.add((i, j))
+                                sq_param_conj_vis[0].append(i)
+                                sq_param_conj_vis[1].append(j)
+                            sq_param_conj_vis[2].append(l)
+                            sq_param_conj_vis[3].append(c_idx1)  # unconj term
+                            sq_param_conj_vis[4].append(c_idx2)  # conj term
+
+                        else:
+                            # this is a first order term
+                            # there is only one conj & unconj first-order term per Arow[bli]
+                            c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
+                            if c_id not in self.coupling_idx: continue
+                            c_idx = self.coupling_idx[c_id]
+                            if 'conj' in eps:
+                                # this is conj_param
+                                conj_param_conj_vis[0].append(i)
+                                conj_param_conj_vis[1].append(j)
+                                conj_param_conj_vis[2].append(c_idx)
+                            else:
+                                # this is unconj_param
+                                unconj_param_conj_vis[0].append(i)
+                                unconj_param_conj_vis[1].append(j)
+                                unconj_param_conj_vis[2].append(c_idx)
+                    l += 1
+
+
+        self.unconj_param_unconj_vis = (torch.as_tensor(unconj_param_unconj_vis[0]),
+                                        torch.as_tensor(unconj_param_unconj_vis[1]),
+                                        torch.as_tensor(unconj_param_unconj_vis[2]),
+                                        )
+        self.unconj_param_conj_vis = (torch.as_tensor(unconj_param_conj_vis[0]),
+                                      torch.as_tensor(unconj_param_conj_vis[1]),
+                                      torch.as_tensor(unconj_param_conj_vis[2]),
+                                      )
+        self.conj_param_unconj_vis = (torch.as_tensor(conj_param_unconj_vis[0]),
+                                      torch.as_tensor(conj_param_unconj_vis[1]),
+                                      torch.as_tensor(conj_param_unconj_vis[2]),
+                                      )
+        self.conj_param_conj_vis = (torch.as_tensor(conj_param_conj_vis[0]),
+                                    torch.as_tensor(conj_param_conj_vis[1]),
+                                    torch.as_tensor(conj_param_conj_vis[2]),
+                                    )
+        self.sq_param_unconj_vis = (torch.as_tensor(sq_param_unconj_vis[0]),
+                                    torch.as_tensor(sq_param_unconj_vis[1]),
+                                    torch.as_tensor(sq_param_unconj_vis[2]),
+                                    torch.as_tensor(sq_param_unconj_vis[3]),
+                                    torch.as_tensor(sq_param_unconj_vis[4]),
+                                    )
+        self.sq_param_conj_vis = (torch.as_tensor(sq_param_conj_vis[0]),
+                                  torch.as_tensor(sq_param_conj_vis[1]),
+                                  torch.as_tensor(sq_param_conj_vis[2]),
+                                  torch.as_tensor(sq_param_conj_vis[3]),
+                                  torch.as_tensor(sq_param_conj_vis[4]),
+                                  )
 
     def forward(self, vd, prior_cache=None, **kwargs):
         """
@@ -1856,45 +1912,70 @@ class RedVisCoupling(utils.Module, IndexCache):
         Nfreqs = coupling.shape[4]
 
         # construct coupling matrix for unconjugated data
-        mat_shape = (1, 1, self.mat_shape[0], self.mat_shape[1], Ntimes, Nfreqs)
         if len(self.unconj_param_unconj_vis[0]) > 0 or len(self.conj_param_unconj_vis[0]) > 0:
-            mat = torch.zeros((1, 1, self.mat_len, Ntimes, Nfreqs), dtype=vd.data.dtype, device=self.device)
+            mat = torch.zeros(
+                (1, 1, len(self.bls_out), len(self.bls_in), Ntimes, Nfreqs),
+                dtype=vd.data.dtype,
+                device=self.device
+            )
 
             # add in first order unconjugated params and conjugated params
             if len(self.unconj_param_unconj_vis[0]) > 0:
-                mat[:, :, self.unconj_param_unconj_vis[0]] += torch.index_select(coupling, 2, self.unconj_param_unconj_vis[1])
+                prms = torch.index_select(coupling, 2, self.unconj_param_unconj_vis[2])
+                mat[:, :, self.unconj_param_unconj_vis[0], self.unconj_param_unconj_vis[1]] += prms
 
             if len(self.conj_param_unconj_vis[0]) > 0:
-                mat[:, :, self.conj_param_unconj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_unconj_vis[1])
+                prms = torch.index_select(coupling.conj(), 2, self.conj_param_unconj_vis[2])
+                mat[:, :, self.conj_param_unconj_vis[0], self.conj_param_unconj_vis[1]] += prms
 
             # add in second order params
             if len(self.sq_param_unconj_vis[0]) > 0:
-                prms = torch.index_select(coupling, 2, self.sq_param_unconj_vis[1]) \
-                       * torch.index_select(coupling, 2, self.sq_param_unconj_vis[2]).conj()
-                mat[:, :, self.sq_param_unconj_vis[0]] += prms
+                # index all necesary squared combinations
+                _prms = torch.index_select(coupling, 2, self.sq_param_unconj_vis[3]) \
+                       * torch.index_select(coupling.conj(), 2, self.sq_param_unconj_vis[4])
+                # index_add() to unique elements in A_ij
+                prms = torch.zeros(
+                    _prms.shape[:2] + self.sq_param_unconj_vis[0].shape + _prms.shape[3:],
+                    device=_prms.device,
+                    dtype=_prms.dtype
+                )
+                prms.index_add_(2, self.sq_param_unconj_vis[2], _prms)
+                mat[:, :, self.sq_param_unconj_vis[0], self.sq_param_unconj_vis[1]] += prms
 
             # take product with vis and add to output
-            mat = mat.reshape(mat_shape)
             vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat, vd.data)
 
         # construct coupling matrix for conjugated data
         if len(self.unconj_param_conj_vis[0]) > 0 or len(self.conj_param_conj_vis[0]) > 0:
-            mat = torch.zeros((1, 1, self.mat_len, Ntimes, Nfreqs), dtype=vd.data.dtype, device=self.device)
+            mat = torch.zeros(
+                (1, 1, len(self.bls_out), len(self.bls_in), Ntimes, Nfreqs),
+                dtype=vd.data.dtype,
+                device=self.device
+            )
 
             # add in unconjugated params and conjugated params
             if len(self.unconj_param_conj_vis[0]) > 0:
-                mat[:, :, self.unconj_param_conj_vis[0]] += torch.index_select(coupling, 2, self.unconj_param_conj_vis[1])
+                prms = torch.index_select(coupling, 2, self.unconj_param_conj_vis[2])
+                mat[:, :, self.unconj_param_conj_vis[0], self.unconj_param_conj_vis[1]] += prms
             if len(self.conj_param_conj_vis[0]) > 0:
-                mat[:, :, self.conj_param_conj_vis[0]] += torch.index_select(coupling.conj(), 2, self.conj_param_conj_vis[1])
+                prms = torch.index_select(coupling.conj(), 2, self.conj_param_conj_vis[2])
+                mat[:, :, self.conj_param_conj_vis[0], self.conj_param_conj_vis[1]] += prms
 
             # add in second order params
             if len(self.sq_param_conj_vis[0]) > 0:
-                prms = torch.index_select(coupling, 2, self.sq_param_conj_vis[1]) \
-                       * torch.index_select(coupling, 2, self.sq_param_conj_vis[2]).conj()
-                mat[:, :, self.sq_param_conj_vis[0]] += prms
+                # index all necesary squared combinations
+                _prms = torch.index_select(coupling, 2, self.sq_param_conj_vis[3]) \
+                       * torch.index_select(coupling.conj(), 2, self.sq_param_conj_vis[4])
+                # index_add() to unique elements in A_ij
+                prms = torch.zeros(
+                    _prms.shape[:2] + self.sq_param_conj_vis[0].shape + _prms.shape[3:],
+                    device=_prms.device,
+                    dtype=_prms.dtype
+                )
+                prms.index_add_(2, self.sq_param_conj_vis[2], _prms)
+                mat[:, :, self.sq_param_conj_vis[0], self.sq_param_conj_vis[1]] += prms
 
             # take product with vis and add to output
-            mat = mat.reshape(mat_shape)
             vout.data += torch.einsum("ijkl...,ijl...->ijk...", mat, vd.data.conj())
 
         return vout
@@ -2723,7 +2804,7 @@ def _configure_coupling_matrix_singlepath_multiproc(job):
     return configure_coupling_matrix_singlepath(*args, **kwargs)
 
 
-def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupling=True,
+def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupling=False,
                                          include_second_order=True, min_len=None, max_len=None,
                                          max_EW=None, max_NS=None, second_max_len=None,
                                          second_max_EW=None, second_max_NS=None,
@@ -2731,6 +2812,28 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
     """
     Configure the visibility bl-to-bl coupling matrix for single path
     mutual coupling terms.
+
+    For the voltage stream for ant0 : v_0, single-path coupling is defined as
+    the mixing of neighboring antenna voltages:
+
+    v_0 <- v_0 + eps_0_1*v_1 + eps_0_2*v_2 ...
+
+    where eps_0_1 defines the mixing of ant1 into the ant0 voltage stream.
+    If the (uncoupled) visibility is V = <v v^T>, then the coupled visibility
+    matrix can be defined as
+
+    Vc = <vc vc^T>
+
+    where vc = v + X @ v and 
+
+        | e_0_0  e_0_1  e_0_2 |
+    X = | e_1_0  e_1_1  e_1_2 |
+        | e_2_0  e_2_1  e_2_2 |
+
+    for a 3-element array. Defining the matrix E = I + X,
+    we can write this in compact form as
+
+    Vc = E @ V @ E^T
 
     Parameters
     ----------
@@ -2816,23 +2919,24 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
     bl_vecs = {}
     for bl in bls:
         # for each baseline, iterate over coupling of all antennas
-        # into each of the two antennas into this baseline
-        # coupling vector is ant -> ant_i
-        # coupled visibility is (ant_j, ant) or (ant, ant_j) or its redundant representative
+        # into each of the two antennas into this baseline.
+        # For bl = (0, 1) and ant = i, define:
+        # v_0 <- v_0 + eps_0_i v_i, mixing the visibility (i, 1)
+        # v_1 <- v_1 + eps_1_i v_i, mixing the visibility (0, i)
         row = {}
 
-        # iterate over first order coupling terms
-        for i, ant1 in enumerate(antpos):
+        # iterate over first-order coupling terms
+        for i, ant in enumerate(antpos):
 
             # first order coupling term into bl[0] antenna
-            eps1 = (ant1, bl[0])
+            eps1 = (bl[0], ant)
             skip_eps = cut_bl(eps1, antpos, bl_vecs=bl_vecs, min_len=min_len,
                               max_len=max_len, max_EW=max_EW, max_NS=max_NS)
             skip_eps = skip_eps or (no_auto_coupling and eps1[0] == eps1[1])
 
-            # get first order term eps1 with vis (ant1, bl[1])
+            # get first order term eps1 with vis (ant, bl[1])
             if not skip_eps:
-                coupled_vis = (ant1, bl[1])
+                coupled_vis = (ant, bl[1])
                 if bl2red:
                     try:
                         coupled_vis = bl2red[coupled_vis]
@@ -2845,14 +2949,14 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
                     row[coupled_vis].append(coeff)
 
             # get first order coupling term into bl[1] antenna
-            eps2 = (ant1, bl[1])
+            eps2 = (bl[1], ant)
             skip_eps = cut_bl(eps2, antpos, bl_vecs=bl_vecs, min_len=min_len,
                                max_len=max_len, max_EW=max_EW, max_NS=max_NS)
             skip_eps = skip_eps or (no_auto_coupling and eps2[0] == eps2[1])
 
-            # get first order term eps2 with vis (ant1, bl[0])
+            # get first order term eps2 with vis (bl[0], ant)
             if not skip_eps:
-                coupled_vis = (bl[0], ant1)
+                coupled_vis = (bl[0], ant)
                 if bl2red:
                     try:
                         coupled_vis = bl2red[coupled_vis]
@@ -2861,14 +2965,14 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
                 if coupled_vis:
                     if coupled_vis not in row:
                         row[coupled_vis] = []
-                    # this coeff is conjugated b/c ant1 -> bl[1]
+                    # this coeff is conjugated b/c ant -> bl[1]
                     coeff = "eps_{}_{}_conj".format(*eps2)
                     row[coupled_vis].append(coeff)
 
             if include_second_order:
                 # iterate over second order coupling terms
                 for j, ant2 in enumerate(antpos):
-                    eps2 = (ant2, bl[1])
+                    eps2 = (bl[1], ant2)
                     skip_eps1 = cut_bl(eps1, antpos, bl_vecs=bl_vecs, min_len=min_len,
                                        max_len=second_max_len, max_EW=second_max_EW,
                                        max_NS=second_max_NS)
@@ -2879,7 +2983,7 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
 
                     # get second order eps1 with eps2
                     if not skip_eps:
-                        coupled_vis = (ant1, ant2)
+                        coupled_vis = (ant, ant2)
                         if bl2red:
                             try:
                                 coupled_vis = bl2red[coupled_vis]
@@ -2897,7 +3001,7 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
 
 
 def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=None,
-                       ants=None, no_auto_coupling=True, compress_to_red=False, redtol=1.0):
+                       ants=None, no_auto_coupling=False, compress_to_red=False, redtol=1.0):
     """
     Given a dict of antennas and antenna vectors, generate a list of ant1->ant2 coupling
     pairs to model. Assumes single pol.
@@ -2934,7 +3038,7 @@ def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
     --------
     coupling_terms : list
         List of coupling terms, e.g. [(0, 1), (1, 0), (0, 2), (2, 0), ...]
-        where (0, 1) denotes coupling of ant0 -> ant1
+        where (0, 1) denotes coupling of ant1 -> ant0
     coupling_idx : dict
         Keys are coupling term tuples and values are the index of this term
         in the coupling_terms list.
@@ -2977,7 +3081,7 @@ def gen_coupling_terms(antpos, min_len=None, max_len=None, max_EW=None, max_NS=N
             match = torch.linalg.norm(torch.stack(red_vecs) - c_vec, dim=1) < redtol
             if match.any():
                 # ct belongs to an existing red group
-                k = torch.where(match)[0][0]
+                k = torch.where(match)[0][0].item()
                 red_grps[k].append(ct)
                 red_idx.append(k)
             else:
