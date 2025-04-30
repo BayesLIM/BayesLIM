@@ -1729,23 +1729,26 @@ class RedVisCoupling(utils.Module, IndexCache):
             self.red_bls = [bl2red[bl] for bl in self.bls_out]
         else:
             self.red_bls = self.bls_out
-        self.mat_shape = (len(self.bls_out), len(self.bls_in))
-        self.mat_len = np.prod(self.mat_shape)
 
         # Create indexing lists for matrix operations that need to be performed:
         # 1. (coupling + coupling.conj + coupling * coupling.conj) @ vis
         # 2. (coupling + coupling.conj + coupling * coupling.conj) @ vis.conj
 
-        # Below, the first two lists index the rows & cols of A matrix, respectively
-        # the third list indexes params tensor along its Ncoupling axis.
-        # the sq_param holds an extra lists
-        # 3. index of unique element in A_ij
-        # 4. indexing of coupling along Ncoupling dim for coupling
-        # 5. indexing of coupling along Ncoupling dim for coupling.conj()
+        # Below, the first two lists index the rows & cols of A matrix, respectively,
+        # and the third list indexes coupling tensor along its Ncoupling axis.
         unconj_param_unconj_vis = ([], [], [])
         unconj_param_conj_vis = ([], [], [])
         conj_param_unconj_vis = ([], [], [])
         conj_param_conj_vis = ([], [], [])
+
+        # Below the first two lists index the rows & cols of A matrix, respectively.
+        # Then we have indices of unique elements in A_ij, and indices of coupling
+        # and coupling.conj(), respectively:
+        # 1. Index A_i
+        # 2. Index A_j
+        # 3. Counter of unique elements mapped to A_ij used in torch.index_add()
+        # 4. indexing of coupling along Ncoupling dim for coupling
+        # 5. indexing of coupling along Ncoupling dim for coupling.conj()
         sq_param_unconj_vis = ([], [], [], [], [])
         sq_param_conj_vis = ([], [], [], [], [])
 
@@ -1757,6 +1760,7 @@ class RedVisCoupling(utils.Module, IndexCache):
             for j, bli in enumerate(self.bls_in):
                 # setup for unconj_vis bli
                 if bli in Arow:
+                    sq_appended = False
                     for eps in Arow[bli]:
                         if ',' in eps:
                             # this is a second order term: eps_0_1,eps_1_2_conj
@@ -1776,12 +1780,14 @@ class RedVisCoupling(utils.Module, IndexCache):
                             sq_param_unconj_vis[2].append(k)
                             sq_param_unconj_vis[3].append(c_idx1)  # unconj term
                             sq_param_unconj_vis[4].append(c_idx2)  # conj term
+                            sq_appended = True
 
                         else:
                             # this is a first order term
                             # there is only one conj & unconj first-order term per Arow[bli]
                             c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
-                            if c_id not in self.coupling_idx: continue
+                            if c_id not in self.coupling_idx:
+                                continue
                             c_idx = self.coupling_idx[c_id]
                             if 'conj' in eps:
                                 # this is conj_param
@@ -1793,10 +1799,13 @@ class RedVisCoupling(utils.Module, IndexCache):
                                 unconj_param_unconj_vis[0].append(i)
                                 unconj_param_unconj_vis[1].append(j)
                                 unconj_param_unconj_vis[2].append(c_idx)
-                    k += 1
+
+                    if sq_appended:
+                        k += 1
 
                 # setup for conj_vis bli[::-1]
                 if (bli[0] != bli[1]) and (bli[::-1] in Arow):
+                    sq_appended = False
                     for eps in Arow[bli[::-1]]:
                         if ',' in eps:
                             # this is a second order term: eps_0_1,eps_1_2_conj
@@ -1816,12 +1825,14 @@ class RedVisCoupling(utils.Module, IndexCache):
                             sq_param_conj_vis[2].append(l)
                             sq_param_conj_vis[3].append(c_idx1)  # unconj term
                             sq_param_conj_vis[4].append(c_idx2)  # conj term
+                            sq_appended = True
 
                         else:
                             # this is a first order term
                             # there is only one conj & unconj first-order term per Arow[bli]
                             c_id = tuple(int(a) for a in eps.split("_")[1:3])  # turn eps_0_1 -> (0, 1)
-                            if c_id not in self.coupling_idx: continue
+                            if c_id not in self.coupling_idx:
+                                continue
                             c_idx = self.coupling_idx[c_id]
                             if 'conj' in eps:
                                 # this is conj_param
@@ -1833,7 +1844,9 @@ class RedVisCoupling(utils.Module, IndexCache):
                                 unconj_param_conj_vis[0].append(i)
                                 unconj_param_conj_vis[1].append(j)
                                 unconj_param_conj_vis[2].append(c_idx)
-                    l += 1
+
+                    if sq_appended:
+                        l += 1
 
 
         self.unconj_param_unconj_vis = (torch.as_tensor(unconj_param_unconj_vis[0]),
@@ -2878,8 +2891,6 @@ def configure_coupling_matrix_singlepath(antpos, bls, bl2red=None, no_auto_coupl
         baseline tuple. The values hold the appropriate coupling
         terms for each input baseline.
     """
-    assert isinstance(antpos, dict)
-
     # run multiproc mode
     if Nproc is not None:
         # setup multiprocessing
