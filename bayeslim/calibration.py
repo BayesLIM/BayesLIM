@@ -205,6 +205,8 @@ class BaseResponse:
         """
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
+        if hasattr(self, 'LM') and self.LM is not None:
+            self.LM.push(device)
         if self.freq_mode == 'linear':
             self.freq_LM.push(device)
         if self.time_mode == 'linear':
@@ -2018,7 +2020,7 @@ class RedVisCoupling(utils.Module, IndexCache):
                       'sq_param_unconj_vis',
                       'sq_param_conj_vis']:
                 arr = getattr(self, k)
-                arr = (a.to(device) for a in arr)
+                arr = tuple(a.to(device) for a in arr)
                 setattr(self, k, arr)
         self.params = utils.push(self.params, device)
         self.dly = utils.push(self.dly, device)
