@@ -2017,7 +2017,7 @@ class RedVisCoupling(utils.Module, IndexCache):
                       'conj_param_conj_vis',
                       'sq_param_unconj_vis',
                       'sq_param_conj_vis']:
-                arr = getattr(k)
+                arr = getattr(self, k)
                 arr = (a.to(device) for a in arr)
                 setattr(self, k, arr)
         self.params = utils.push(self.params, device)
