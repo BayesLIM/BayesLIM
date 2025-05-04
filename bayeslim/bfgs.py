@@ -377,7 +377,7 @@ class LBFGS(BFGS):
     Notes:
         - all parameters must be on a single device
     """
-    def __init__(self, params, H0=None, lr=1.0, max_iter=20, max_ls_eval=10,
+    def __init__(self, params, H0=None, lr=1.0, max_iter=10, max_ls_eval=10,
                  history_size=100, tolerance_grad=1e-14, tolerance_change=1e-16,
                  line_search_fn='strong_wolfe', store_Hy=False,
                  update_Hdiag=True, update_diag_idx=None):
@@ -542,6 +542,70 @@ class LBFGS(BFGS):
         tensor
         """
         return two_loop_recursion(vec, self._s, self._y, self._rho, self.H)
+
+
+def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
+    """
+    Compute the LBFGS approximate covariance heuristic,
+    Eqn 6.20 from Nocedal & Wright, for each parameter
+    subset in prob.main_params. Assumes that
+    prob.set_main_params() has already been set.
+
+    Note that this will update the parameter values
+    during the optimization process. If you want to
+    return to the original parameter state you should
+    checkpoint the model before running this function.
+
+    Parameters
+    ----------
+    prob : LogProb object
+        LogProb object with prob.set_main_params()
+        already set. Will ignore prob._main_LM
+        if it exists.
+    Nsteps : int, optional
+        Number of LBFGS steps to run for each parameter
+        when estimating H0. Note that the total number
+        of iterations is Nsteps * max_iter, where
+        default is max_iter=10 in LBFGS().
+    **kwargs : dict, optional
+        Kwargs to pass LBFGS(**kwargs)
+
+    Returns
+    -------
+    H0 : DiagMat
+        Approximate inverse-Hessian of each
+        parameter along its diagonal.
+    """
+    assert prob.main_params is not None
+
+    main_index = list(prob._main_index.items())
+    diags = []
+
+    # iterate over param groups
+    for param, idx in main_index:
+        # set this param
+        prob.set_main_params()
+        prob.unset_param(prob.named_params)
+        prob.set_main_params([(param, idx)])
+
+        # create LBFGS
+        opt = LBFGS((prob.main_params,), update_Hdiag=True, **kwargs)
+
+        # iterate
+        for i in range(Nsteps):
+            opt.step(prob.closure)
+
+        # get Hdiag
+        diags.append(opt._Hdiag)
+
+
+    # set main_params back to original state
+    prob.set_main_params()
+    prob.unset_param(prob.named_params)
+    prob.set_main_params(main_index)
+
+    # collect diagonals and insert into DiagMat
+    return hmat.DiagMat(torch.cat(diags))
 
 
 def two_loop_recursion(vec, s, y, rho, H0=None):
