@@ -205,6 +205,8 @@ class BaseResponse:
         """
         dtype = isinstance(device, torch.dtype)
         if not dtype: self.device = device
+        if hasattr(self, 'base0') and self.base0 is not None:
+            self.base0 = utils.push(base0, device)
         if hasattr(self, 'LM') and self.LM is not None:
             self.LM.push(device)
         if self.freq_mode == 'linear':
