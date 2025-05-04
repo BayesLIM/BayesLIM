@@ -701,7 +701,9 @@ class JonesModel(utils.Module, IndexCache):
         Push params and other attrs to new device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype: self.device = device
+        if not dtype:
+            self.clear_cache()
+            self.device = device
         self.params = utils.push(self.params, device)
         self.R.push(device)
         if self.p0 is not None:
