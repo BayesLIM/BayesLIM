@@ -136,7 +136,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             out.data += other
         else:
-            assert self.data.shape == other.data.shape
             out.data += other.data
             self._propflags(out, other)
         return out
@@ -145,7 +144,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             self.data += other
         else:
-            assert self.data.shape == other.data.shape
             self.data += other.data
             self._propflags(self, other)
         return self
@@ -155,7 +153,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             out.data -= other
         else:
-            assert self.data.shape == other.data.shape
             out.data -= other.data
             self._propflags(out, other)
         return out
@@ -164,7 +161,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             self.data -= other
         else:
-            assert self.data.shape == other.data.shape
             self.data -= other.data
             self._propflags(self, other)
         return self
@@ -174,7 +170,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             out.data *= other
         else:
-            assert self.data.shape == other.data.shape
             out.data *= other.data
             self._propflags(out, other)
         return out
@@ -183,7 +178,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             self.data *= other
         else:
-            assert self.data.shape == other.data.shape
             self.data *= other.data
             self._propflags(self, other)
         return self
@@ -193,7 +187,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             out.data /= other
         else:
-            assert self.data.shape == other.data.shape
             out.data /= other.data
             self._propflags(out, other)
         return out
@@ -202,7 +195,6 @@ class TensorData:
         if isinstance(other, (float, int, complex)):
             self.data /= other
         else:
-            assert self.data.shape == other.data.shape
             self.data /= other.data
             self._propflags(self, other)
         return self
