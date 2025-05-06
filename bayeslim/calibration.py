@@ -2027,6 +2027,7 @@ class RedVisCoupling(utils.Module, IndexCache):
                 arr = tuple(a.to(device) for a in arr)
                 setattr(self, k, arr)
         self.params = utils.push(self.params, device)
+        self.R.push(device)
         self.dly = utils.push(self.dly, device)
         if self.p0 is not None:
             self.p0 = utils.push(self.p0, device)
