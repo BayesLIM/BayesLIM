@@ -1311,6 +1311,9 @@ class LogProb(utils.Module):
         if not dtype: self.device = device
         for d in self.target.data:
             d.push(device)
+        if self.start_inp is not None:
+            for d in self.start_inp.data:
+                d.push(device)
 
     def clear_prior_cache(self):
         """
