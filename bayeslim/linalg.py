@@ -616,7 +616,7 @@ def least_squares(A, y, dim=0, mode='matrix', norm='inv', pinv=True,
             A = A.conj()
         # weight A by Ninv cholesky if needed
         if Ninv is not None:
-            if not Ndiag
+            if not Ndiag:
                 A = L @ A
             else:
                 A = A * Ninv[:, None]
