@@ -603,7 +603,7 @@ def least_squares(A, y, dim=0, mode='matrix', norm='inv', pinv=True,
             # weight y by Ninv
             if Ninv.ndim == 1:
                 shape = [1 for i in range(y.ndim)]
-                shape[ndim] = y.shape[dim]
+                shape[dim] = y.shape[dim]
                 y = Ninv.reshape(shape) * y
             else:
                 y = Ninv * y
