@@ -985,13 +985,11 @@ class RedVisModel(utils.Module, IndexCache):
             (Npol, Npol, Nredbl, Ntimes, Nfreqs). In the general case,
             this should be a zero tensor so that the
             predicted visibilities are simply the redundant
-            model. However, if you have a model of per-baseline
-            non-redundancies, these could be included by putting
-            them into vd. If this holds zero tensor as data, then
-            this is mainly used to propagate important metadata
-            downstream.
+            model. However, if you have a starting model, or
+            a model of per-baseline non-redundancies, these can be
+            included by putting them into vd.
         undo : bool, optional
-            If True, push vd backwards through the model.
+            If True, subtract redvis from vd, otherwise add it.
         prior_cache : dict, optional
             Cache for holding computed priors.
 
@@ -1032,11 +1030,11 @@ class RedVisModel(utils.Module, IndexCache):
             index = self.get_bl_idx(vd.bls)
             redvis = torch.index_select(redvis, 2, index)
 
-        # apply redvis model
+        # apply redvis model: not inplace b/c vout is not deepcopy
         if not undo:
-            vout.data += redvis
+            vout.data = vout.data + redvis
         else:
-            vout.data -= redvis
+            vout.data = vout.data + redvis
 
         return vout
 
