@@ -1640,7 +1640,7 @@ def white_noise(*args):
     return n / np.sqrt(2)
 
 
-def arr_hash(arr):
+def arr_hash(arr, pntr=False):
     """
     'Hash' an array or tensor by using its
     first value, last value and length as a
@@ -1652,11 +1652,18 @@ def arr_hash(arr):
     Parameters
     ----------
     arr : ndarray or tensor
+    pntr : bool, optional
+        If True, hash arr by its memory id. This can
+        lead to erroneous results if arr is mutable.
+        If False (default), hash by values in the array.
 
     Returns
     -------
     int or tuple
     """
+    if pntr:
+        return id(arr)
+
     if hasattr(arr, '_arr_hash'):
         return arr._arr_hash
     if isinstance(arr, torch.Tensor):
@@ -2204,7 +2211,9 @@ class AntposDict:
     def __getitem__(self, key):
         if isinstance(key, (int, np.integer)):
             return self.antvecs[self._ant_idx[key]]
-        elif isinstance(key, (list, tuple, np.ndarray)):
+        elif isinstance(key, (list, tuple, np.ndarray, torch.Tensor)):
+            if isinstance(key, torch.Tensor):
+                key = key.tolist()
             return self.antvecs[[self._ant_idx[k] for k in key]]
 
     def __setitem__(self, key, value):
@@ -2227,62 +2236,89 @@ class AntposDict:
         self.antvecs = push(self.antvecs, device)
 
 
-def bl_to_antnums(blint):
+def blnum2ants(blnum):
     """
     Convert baseline integer to tuple of antenna numbers.
-    From hera_pspec.
 
     Parameters
     ----------
-    blint : <i6 integer
-        baseline integer
+    blnum : integer or ndarray
+        baseline integers, e.g. 102103 -> (2, 3)
 
     Returns
     -------
     antnums : tuple
         tuple containing baseline antenna numbers. Ex. (ant1, ant2)
     """
+    if isinstance(blnum, tuple):
+        # assumed already antnums tuple
+        return blnum
+    elif isinstance(blnum, list) and isinstance(blnum[0], tuple):
+        # assumed already list of antnum tuples
+        return blnum
+
     # get antennas
-    if isinstance(blint, torch.Tensor):
-        ant1 = torch.floor(blint / 1e3).to(torch.int64)
-        ant2 = torch.floor(blint - ant1*1e3).to(torch.int64)
-    else:
-        ant1 = int(np.floor(blint / 1e3))
-        ant2 = int(np.floor(blint - ant1*1e3))
+    if isinstance(blnum, (int, np.integer)):
+        ant1 = int(np.floor(blnum / 1e3))
+        ant2 = blnum - ant1 * 1000
+        ant1 -= 100
+        ant2 -= 100
 
-    ant1 -= 100
-    ant2 -= 100
+        return (ant1, ant2)
 
-    # form antnums tuple
-    antnums = (ant1, ant2)
+    elif isinstance(blnum, np.ndarray):
+        ant1 = np.floor(blnum / 1e3).astype(np.int64)
+        ant2 = blnum - ant1 * 1000
+        ant1 -= 100
+        ant2 -= 100
 
-    return antnums
+        return list(zip(ant1, ant2))
+
+    elif isinstance(blnum, torch.Tensor):
+        blnum = blnum.cpu()
+        ant1 = torch.floor(blnum / 1e3).to(torch.int64)
+        ant2 = blnum - ant1 * 1000
+        ant1 -= 100
+        ant2 -= 100
+
+        return list(zip(ant1.tolist(), ant2.tolist()))
 
 
-def antnums_to_bl(antnums):
+def ants2blnum(antnums):
     """
     Convert tuple of antenna numbers to baseline integer.
     A baseline integer is the two antenna numbers + 100
     directly (i.e. string) concatenated. Ex: (1, 2) -->
     101 + 102 --> 101102.
-    From hera_pspec.
 
     Parameters
     ----------
-    antnums : tuple
+    antnums : tuple or list
         tuple containing integer antenna numbers for a baseline.
         Ex. (ant1, ant2)
 
     Returns
     -------
-    bl : <i6 integer
+    blnum : integer or ndarray
         baseline integer
     """
-    # get antennas
-    ant1 = antnums[0] + 100
-    ant2 = antnums[1] + 100
+    if isinstance(antnums, tuple):
+        # get antennas
+        ant1 = antnums[0] + 100
+        ant2 = antnums[1] + 100
 
-    # form bl
-    bl = int(ant1*1e3 + ant2)
+        # form bl
+        bl = int(ant1*1000 + ant2)
+
+    elif isinstance(antnums, list) and isinstance(antnums[0], tuple):
+        # assumed list of antnum tuples
+        bl = np.asarray(antnums) + 100
+        bl = bl[:, 0] * 1000 + bl[:, 1]
+
+    else:
+        # assumed antnums already a blnum
+        bl = antnums
 
     return bl
+
+
