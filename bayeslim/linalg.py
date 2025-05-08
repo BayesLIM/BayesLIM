@@ -478,9 +478,9 @@ def invert_matrix(A, inv='pinv', rcond=1e-15, hermitian=False, eps=None,
     return iA
 
 
-def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
-                  pinv=True, eps=0, rcond=1e-15, hermitian=True, D=None,
-                  preconj=False, pretran=False, driver=None):
+def least_squares(A, y, dim=0, mode='matrix', norm='inv', pinv=True,
+                  eps=0, rcond=1e-15, hermitian=True, D=None, preconj=False,
+                  pretran=False, driver=None, Ninv=None, Ndiag=True):
     """
     Solve a linear equation via generalized least squares.
     For the linear system of equations
@@ -524,11 +524,6 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
         where ... are batch dimensions
     dim : int, optional
         Dimension in y to multiply into A. Default is 0th axis.
-    Ninv : tensor, optional
-         Inverse of noise matrix used for weighting
-         of shape (N, N), or just its diagonal of shape (N,),
-         where N = Nsamples.
-         Default is identity matrix.
     mode : str, optional
         Whether to use iterative least-squares to solve normal equations for x_hat,
         or to compute D via matrix operations to get x_hat. Default is matrix mode.
@@ -568,6 +563,14 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
     driver : str, optional
         If norm = 'lstsq', this is
         driver option for torch.linalg.lstsq()
+    Ninv : tensor, optional
+         Inverse of noise matrix used for weighting
+         of shape (N, N) if Ndiag==True, or just the
+         inverse of its diagonal with Ninv.ndim == 1
+         or Ninv.ndim == y.ndim
+    Ndiag : bool, optional
+        If True, Ndiag represents diagonal of N,
+        otherwise it's assumed to be NxN matrix.
 
     Returns
     -------
@@ -587,17 +590,23 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
 
     # weight the data vector by inverse covariance
     if Ninv is not None:
-        if Ninv.ndim == 2:
+        if not Ndiag:
             # turn Ninv into cholesky if in lstsq mode
             if mode == 'lstsq': Ninv = torch.linalg.cholesky(Ninv)
             # Ninv is a matrix
             y = torch.einsum("ki,{}->{}".format(y_ein, y_ein.replace('i', 'k')), Ninv, y)
         else:
             # Ninv is diagonal
-            shape = [1 for i in range(y.ndim)]
-            shape[dim] = len(Ninv)
-            if mode == 'lstsq': Ninv = torch.sqrt(Ninv)
-            y = Ninv.reshape(shape) * y
+            if mode == 'lstsq':
+                Ninv = torch.sqrt(Ninv)
+
+            # weight y by Ninv
+            if Ninv.ndim == 1:
+                shape = [1 for i in range(y.ndim)]
+                shape[ndim] = y.shape[dim]
+                y = Ninv.reshape(shape) * y
+            else:
+                y = Ninv * y
 
     # check if we are in lstsq mode
     if mode == 'lstsq':
@@ -607,7 +616,7 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
             A = A.conj()
         # weight A by Ninv cholesky if needed
         if Ninv is not None:
-            if Ninv.ndim == 2:
+            if not Ndiag
                 A = L @ A
             else:
                 A = A * Ninv[:, None]
@@ -647,12 +656,13 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
                 Dinv = torch.einsum("{},{}->jk".format(A_ein, A_ein2),
                                     Aconj, A)
             else:
-                if Ninv.ndim == 2:
+                if not Ndiag:
                     # Ninv is a matrix
                     Dinv = torch.einsum("{},il,{}->jk".format(A_ein, A_ein2.replace('i', 'l')),
                                         Aconj, Ninv, A)
                 else:
                     # Ninv is diagonal
+                    assert Ninv.ndim == 1
                     Dinv = torch.einsum("{},i,{}->jk".format(A_ein, A_ein2),
                                         Aconj, Ninv, A)
 
@@ -676,14 +686,19 @@ def least_squares(A, y, dim=0, Ninv=None, mode='matrix', norm='inv',
             if Ninv is None:
                 Dinv = A.norm(dim=0 if not pretran else 1).pow(2)
             else:
-                if Ninv.ndim == 2:
+                if not Ndiag:
                     # Ninv is a matrix
                     Dinv = torch.einsum("{},il,{}->jk".format(A_ein, A_ein2.replace('i', 'l')),
                                         Aconj, Ninv, A)
                     Dinv = torch.diag(Dinv)
                 else:
                     # Ninv is diagonal
-                    Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0 if not pretran else 1)
+                    if Ninv.ndim == 1:
+                        Dinv = (Ninv[:, None] * torch.abs(A)**2).sum(dim=0 if not pretran else 1)
+                    else:
+                        Dinv = torch.einsum("{},{}->{}".format(y_ein, A_ein, y_ein.replace('i', 'j')),
+                            Ninv, A.abs().pow(2),
+                        )
             if torch.is_complex(Dinv):
                 Dinv = Dinv.real
             D = 1 / Dinv
