@@ -579,6 +579,7 @@ def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
     assert prob.main_params is not None
 
     main_index = list(prob._main_index.items())
+    main_names = prob._main_names
     diags = []
 
     # iterate over param groups
@@ -586,7 +587,7 @@ def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
         # set this param
         prob.set_main_params()
         prob.unset_param(prob.named_params)
-        prob.set_main_params([(param, idx)])
+        prob.set_main_params([(main_names[param], idx, param)])
 
         # create LBFGS
         opt = LBFGS((prob.main_params,), update_Hdiag=True, **kwargs)
@@ -597,7 +598,6 @@ def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
 
         # get Hdiag
         diags.append(opt._Hdiag)
-
 
     # set main_params back to original state
     prob.set_main_params()
