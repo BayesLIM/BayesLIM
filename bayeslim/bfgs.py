@@ -602,7 +602,7 @@ def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
     # set main_params back to original state
     prob.set_main_params()
     prob.unset_param(prob.named_params)
-    prob.set_main_params(main_index)
+    prob.set_main_params([(main_names[param], idx, param) for param, idx in main_index])
 
     # collect diagonals and insert into DiagMat
     return hmat.DiagMat(torch.cat(diags))
