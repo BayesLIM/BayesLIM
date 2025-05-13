@@ -1994,7 +1994,7 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
         icov = 1 / cov
     elif cov_axis == 'full':
         # invert full covariance
-        icov = linalg.invert_matrix(cov, inv=inv, **kwargs)
+        icov = linalg.invert_matrix(cov, inv=inv, hermitian=True, **kwargs)
 
     return icov
 
