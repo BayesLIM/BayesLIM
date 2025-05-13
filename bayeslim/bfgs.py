@@ -96,14 +96,22 @@ class BFGS:
         self._rho = None
         self._s, self._y, self._g, self._Hy = None, None, None, None
         self._exit = None
+        self._init_H(H0)
 
-        if H0 is not None:
-            if isinstance(H0, torch.Tensor) and H0.ndim < 2:
-                H0 = H0 * torch.eye(
-                    self._numel(),
-                    dtype=self.params[0].dtype,
-                    device=self.params[0].device
-                )
+    def _init_H(self, H0):
+        """
+        Initialize starting approximate covariance, H0, for BFGS
+        """
+        if H0 is None:
+            H0 = torch.tensor(1.0)
+
+        if isinstance(H0, torch.Tensor) and H0.ndim < 2:
+            H0 = H0 * torch.eye(
+                self._numel(),
+                dtype=self.params[0].dtype,
+                device=self.params[0].device
+            )
+        assert (H0.ndim == 2) and (len(H0) == self._numel())
         self.H = H0
 
     def gather_flat_grad(self):
@@ -271,7 +279,7 @@ class BFGS:
             # peform line search: alpha
             #############################
             # use self.lr as first-guess to alpha
-            if self.n_iter == 0:
+            if self.n_iter == 0 and self.line_search_fn is None:
                 alpha = float(min(1., 1. / flat_grad.abs().sum())) * self.lr
             else:
                 alpha = self.lr
@@ -380,7 +388,7 @@ class LBFGS(BFGS):
     def __init__(self, params, H0=None, lr=1.0, max_iter=10, max_ls_eval=10,
                  history_size=100, tolerance_grad=1e-14, tolerance_change=1e-16,
                  line_search_fn='strong_wolfe', store_Hy=False,
-                 update_Hdiag=True, update_diag_idx=None):
+                 update_Hdiag=True):
         """
         Parameters
         ----------
@@ -415,28 +423,55 @@ class LBFGS(BFGS):
         update_Hdiag : bool, optional
             If True, update the starting inverse Hessian (H0) with Eqn. 7.20 of [1]
             at every step.
-        update_diag_idx : list, optional
-            If update_Hdiag: List of slice objects choosing the windows over
-            which to compute Eqn. 7.20 of [1] and assign to new H diagonal.
-            Note that the inner products s @ y for the LBFGS updates are still
-            computed over the full parameter length.
         """
-        assert not isinstance(H0, torch.Tensor), "H0 should be a hmat.BaseMat subclass"
+        # LBFGS-specific attrs
+        self.update_Hdiag = update_Hdiag
+        self.history_size = history_size
+
+        # do BFGS init
         super().__init__(params, H0=H0, lr=lr, max_iter=max_iter,
                          max_ls_eval=max_ls_eval, tolerance_grad=tolerance_grad, store_Hy=store_Hy,
                          tolerance_change=tolerance_change, line_search_fn=line_search_fn)
-        self.history_size = history_size
+
+        # update BFGS attrs to LBFGS lists
         # deque has O(1) popleft() and append(), but O(n) index, good for storing s, y
         self._s, self._y, self._Hy = deque(), deque(), deque()
         # rho and alpha will be float-lists, so performance isn't as critical
         self._rho, self._alpha = [], []
-        self.update_Hdiag = update_Hdiag
-        if update_diag_idx is None:
-            update_diag_idx = [slice(None)]
-        self.update_diag_idx = update_diag_idx
+
+    def _init_H(self, H0):
+        """
+        Initialize starting covariance, H0, for LBFGS
+        """
+        if H0 is None:
+            # just use I
+            self.H = hmat.DiagMat(
+                torch.ones(self._numel(),
+                device=self.params[0].device,
+                dtype=utils._float())
+            )
+
+        elif isinstance(H0, torch.Tensor) and H0.numel() > 1:
+            # assume this is diagonal vector
+            self.H = hmat.DiagMat(
+                H0,
+                device=self.params[0].device,
+                dtype=utils._float()
+            )
+
+        elif isinstance(H0, torch.Tensor) and H0.numel() == 1:
+            # assume this is a scalar
+            self.H = hmat.HadamardMat(
+                H0,
+                device=self.params[0].device,
+                dtype=utils._float()
+            )
+
+        else:
+            self.H = H0
 
         # compute starting Hdiag
-        if self.H is None or not update_Hdiag:
+        if not self.update_Hdiag:
             self._Hdiag = torch.ones(
                 self._numel(),
                 device=self.params[0].device,
@@ -465,13 +500,6 @@ class LBFGS(BFGS):
         # compute rho
         rho = 1 / (y.conj() @ s).real
 
-        # check if starting Hessian needs defining
-        if self.H is None:
-            # just use I
-            self.H = hmat.DiagMat(torch.ones(self._numel(),
-                                  device=self.params[0].device,
-                                  dtype=utils._float()))
-
         # only update if sufficient curvature
         if (1. / rho) > self.tolerance_grad:
             # compute hvp
@@ -498,35 +526,21 @@ class LBFGS(BFGS):
 
             # check if we should update the inv H diagonal
             if self.update_Hdiag:
-                # iterate over parameter blocks, compute Eqn. 7.20 from [1]
-                new_Hdiag = torch.ones_like(self._Hdiag)
-                for idx in self.update_diag_idx:
-                    # compute Eqn 7.20
-                    _s = s[idx]
-                    _y = y[idx]
-                    _rho = 1 / (_y.conj() @ _s).real
-                    update = 1. / (_rho * (_y.conj() @ _y).real)
-
-                    # divide by (geometric) average of existing diagonal
-                    Hdiag = self._Hdiag[idx]
-                    new_Hdiag[idx] = update / Hdiag.pow(1/len(Hdiag)).prod()
-
-                    ### TODO: investigate if we can change the above to
-                    # update = 1. / (_rho * (_y.conj() @ (self._Hdiag[idx] * _y)).real)
-                    # new_Hdiag[idx] *= update
+                # compute Eqn 7.20 [1], but use current Hdiag as normalization
+                update = 1. / (rho * (y.conj() @ (self._Hdiag * y)).real)
 
                 # check if self.H is an implicit Cholesky-solve representation (SolveMat or SolveHierMat)
                 if (hasattr(self.H, 'chol') and self.H.chol) or (hasattr(self.H, 'trans_solve') and self.H.trans_solve):
-                    # TODO: this may be wrong now that /= Hdiag[idx] is above..
+                    # TODO: this may be wrong now that /= Hdiag is above..
                     # write a unit-test to check it works...
-                    new_Hdiag = new_Hdiag**.5
+                    update = update**.5
 
                 # update diagonal inplace
-                self.H.scalar_mul(new_Hdiag)
+                self.H.scalar_mul(update)
 
                 # store Hdiag b/c in some cases diag of H0 is implicit and
                 # not easy to compute. easy to index this at next iteration
-                self._Hdiag *= new_Hdiag
+                self._Hdiag *= update
 
     def hvp(self, vec):
         """
