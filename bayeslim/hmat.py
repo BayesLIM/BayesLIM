@@ -322,7 +322,7 @@ class DiagMat(BaseMat):
         self.diag *= scalar
 
     def diagonal(self):
-        return self.diag
+        return self.diag.expand((self.size,))
 
     def least_squares(self, y, **kwargs):
         """

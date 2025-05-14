@@ -457,7 +457,7 @@ class LBFGS(BFGS):
 
         elif isinstance(H0, torch.Tensor) and H0.numel() == 1:
             # assume this is a scalar
-            self.H = hmat.HadamardMat(H0)
+            self.H = hmat.DiagMat(H0, self._numel())
 
         else:
             self.H = H0
