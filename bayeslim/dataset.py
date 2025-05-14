@@ -1538,7 +1538,10 @@ class VisData(TensorData):
         with h5py.File(fname, 'r') as f:
             # load metadata
             assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
-            _blnums = f['blnums'][:]
+            if 'blnums' in f:
+                _blnums = f['blnums'][:]
+            elif 'bls' in f:
+                _blnums = utils.ants2blnum(list(zip(*f['bls'][:].T)))
             _times = f['times'][:]
             _freqs = torch.as_tensor(f['freqs'][:])
             _pol = f.attrs['pol'] if 'pol' in f.attrs else None
