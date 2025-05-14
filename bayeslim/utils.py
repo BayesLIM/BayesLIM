@@ -2236,7 +2236,7 @@ class AntposDict:
         self.antvecs = push(self.antvecs, device)
 
 
-def blnum2ants(blnum):
+def blnum2ants(blnum, separate=False):
     """
     Convert baseline integer to tuple of antenna numbers.
 
@@ -2244,6 +2244,9 @@ def blnum2ants(blnum):
     ----------
     blnum : integer or ndarray
         baseline integers, e.g. 102103 -> (2, 3)
+    separate : bool, optional
+        If True, return ant1, ant2 lists, otherwise
+        return them as tuples (ant1, ant2) (default)
 
     Returns
     -------
@@ -2255,7 +2258,10 @@ def blnum2ants(blnum):
         return blnum
     elif isinstance(blnum, list) and isinstance(blnum[0], tuple):
         # assumed already list of antnum tuples
-        return blnum
+        if separate:
+            return list(zip(*blnum))
+        else:
+            return blnum
 
     # get antennas
     if isinstance(blnum, (int, np.integer)):
@@ -2272,7 +2278,10 @@ def blnum2ants(blnum):
         ant1 -= 100
         ant2 -= 100
 
-        return list(zip(ant1, ant2))
+        if separate:
+            return ant1, ant2
+        else:
+            return list(zip(ant1, ant2))
 
     elif isinstance(blnum, torch.Tensor):
         blnum = blnum.cpu()
@@ -2281,10 +2290,13 @@ def blnum2ants(blnum):
         ant1 -= 100
         ant2 -= 100
 
-        return list(zip(ant1.tolist(), ant2.tolist()))
+        if separate:
+            return ant1.numpy(), ant2.numpy()
+        else:
+            return list(zip(ant1.tolist(), ant2.tolist()))
 
 
-def ants2blnum(antnums):
+def ants2blnum(antnums, separate=False):
     """
     Convert tuple of antenna numbers to baseline integer.
     A baseline integer is the two antenna numbers + 100

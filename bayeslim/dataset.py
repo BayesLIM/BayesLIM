@@ -106,6 +106,11 @@ class TensorData:
             if torch.is_complex(cov_logdet):
                 cov_logdet = cov_logdet.real
 
+        elif icov is not None:
+            # only icov provided, try to get cov_logdet
+            if cov_axis is None:
+                cov_logdet = torch.sum(-torch.log(icov))
+
         # set covariance
         if cov is not None: cov = cov.clone()
         if icov is not None: icov = icov.clone()
@@ -113,7 +118,7 @@ class TensorData:
         self.icov = icov
         self.cov_axis = cov_axis
         self.cov_ndim = sum(self.data.shape) if self.data is not None else None
-        self.cov_logdet = cov_logdet
+        self.cov_logdet = cov_logdet if cov_logdet is not None else torch.tensor(0.0)
 
     def compute_icov(self, inv='pinv', **kwargs):
         """
@@ -131,9 +136,43 @@ class TensorData:
         from bayeslim import optim
         self.icov = optim.compute_icov(self.cov, self.cov_axis, inv=inv, **kwargs)
 
+    def copy(self, deepcopy=False, detach=True):
+        """
+        Copy and return self. This is equivalent
+        to a detach and clone. Detach is optional
+
+        Parameters
+        ----------
+        deepcopy : bool, optional
+            If True (default) also make a copy of metadata
+            in addition to data.
+        detach : bool, optional
+            If True (default) detach self.data for new object
+        """
+        flags, cov, icov = self.flags, self.cov, self.icov
+        history = self.history
+
+        # clone data
+        data = self.data
+        if data is not None:
+            if detach:
+                data = data.detach()
+            data = data.clone()
+
+        if deepcopy:
+            if flags is not None: flags = flags.clone()
+            if cov is not None: cov = cov.clone()
+            if icov is not None: icov = icov.clone()
+
+        td = TensorData()
+        td.setup_data(data=data, flags=flags, cov=cov,
+                      cov_axis=self.cov_axis, icov=icov, history=history)
+
+        return td
+
     def __add__(self, other):
         out = self.copy()
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             out.data += other
         else:
             out.data += other.data
@@ -141,7 +180,7 @@ class TensorData:
         return out
 
     def __iadd__(self, other):
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             self.data += other
         else:
             self.data += other.data
@@ -150,7 +189,7 @@ class TensorData:
 
     def __sub__(self, other):
         out = self.copy()
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             out.data -= other
         else:
             out.data -= other.data
@@ -158,7 +197,7 @@ class TensorData:
         return out
 
     def __isub__(self, other):
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             self.data -= other
         else:
             self.data -= other.data
@@ -167,7 +206,7 @@ class TensorData:
 
     def __mul__(self, other):
         out = self.copy()
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             out.data *= other
         else:
             out.data *= other.data
@@ -175,7 +214,7 @@ class TensorData:
         return out
 
     def __imul__(self, other):
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             self.data *= other
         else:
             self.data *= other.data
@@ -184,7 +223,7 @@ class TensorData:
 
     def __truediv__(self, other):
         out = self.copy()
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             out.data /= other
         else:
             out.data /= other.data
@@ -192,7 +231,7 @@ class TensorData:
         return out
 
     def __itruediv__(self, other):
-        if isinstance(other, (float, int, complex)):
+        if isinstance(other, (float, int, complex, torch.Tensor)):
             self.data /= other
         else:
             self.data /= other.data
@@ -216,6 +255,7 @@ class VisData(TensorData):
     """
     def __init__(self):
         # init empty object
+        self.data = None
         self.atol = 1e-10
         self.setup_meta()
 
@@ -223,6 +263,7 @@ class VisData(TensorData):
         """
         Push data to a new device
         """
+        dtype = isinstance(device, torch.dtype)
         # TensorData.push
         super().push(device)
         # and push antpos if needed
@@ -232,6 +273,10 @@ class VisData(TensorData):
         if self.telescope:
             self.telescope.push(device)
         self.freqs = utils.push(self.freqs, device)
+        if not dtype:
+            self._blnums = self._blnums.to(device)
+            if hasattr(self._blnums, '_arr_hash'):
+                del self._blnums._arr_hash
         if return_obj:
             return self
 
@@ -268,9 +313,10 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bls : list
+        bls : list or array
             List of baseline tuples (antpairs) matching
-            ordering of Nbl axis of data.
+            ordering of Nbls axis of data, or a blnums
+            int-array of shape (2, Nbls).
         times : tensor
             Julian date of unique times in the data.
         freqs : tensor
@@ -307,25 +353,61 @@ class VisData(TensorData):
         history : str, optional
             data history string
         """
-        self.Nbls = len(bls)
-        self.ant1 = np.array([bl[0] for bl in bls])
-        self.ant2 = np.array([bl[1] for bl in bls])
-        self.times = times
+        # set the data
+        self.data = data
+        # deal with baselines
+        self._set_bls(bls)
+        self.times = torch.as_tensor(times)
         self.Ntimes = len(times)
-        self.freqs = freqs
+        self.freqs = torch.as_tensor(freqs)
         self.Nfreqs = len(freqs)
         self.pol = pol
         if isinstance(pol, str):
             assert pol.lower() in ['ee', 'nn'], "pol must be 'ee' or 'nn' for 1pol mode"
         self.Npol = 2 if self.pol is None else 1
-        self.data = data
         self.flags = flags
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
+    def _set_bls(self, bls):
+        """
+        Set the blnums tensor for all
+        baselines in the data.
+
+        Note:
+        self.blnums is numpy on cpu
+        self._blnums is pytorch on self.data.device.
+
+        Parameters
+        ----------
+        bls : list or array
+            List of baseline tuples (antpairs) matching
+            ordering of Nbls axis of data, or a blnums
+            int-array of shape (2, Nbls).
+        """
+        if isinstance(bls, torch.Tensor):
+            # bls is an blnums tensor
+            self._blnums = bls.clone()
+            if hasattr(self._blnums, '_arr_hash'):
+                delattr(self._blnums, '_arr_hash')
+        elif isinstance(bls, np.ndarray):
+            # blnums in numpy
+            self._blnums = torch.as_tensor(bls.copy())
+        else:
+            # bls is a tuple or list of tuples
+            self._blnums = torch.as_tensor(utils.ants2blnum(bls))
+
+        # check device
+        if self.data is not None:
+            if not utils.check_devices(self._blnums.device, self.data.device):
+                self._blnums = self._blnums.to(self.data.device)
+
+        self.blnums = self._blnums.cpu().numpy()
+        self.Nbls = len(self.blnums)
+
     @property
     def bls(self):
-        return [(ant1, ant2) for ant1, ant2 in zip(self.ant1, self.ant2)]
+        return utils.blnum2ants(self.blnums)
 
     def get_bls(self, uniq_bls=False, keep_autos=True,
                 min_len=None, max_len=None,
@@ -416,16 +498,20 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bls : list
+        bls : list or array
             List of baseline tuples e.g. [(0, 1), (1, 2), ...]
-            to compute baseline vectors
+            to compute baseline vectors, or a blnums array.
 
         Returns
         -------
         tensor
         """
-        ant1, ant2 = zip(*bls)
-        return self.antpos[ant1] - self.antpos[ant2]
+        if isinstance(bls, (np.ndarray, torch.Tensor)):
+            ant1, ant2 = utils.blnum2ants(bls, separate=True)
+        else:
+            ant1, ant2 = zip(*bls)
+
+        return self.antpos[ant2] - self.antpos[ant1]
 
     def copy(self, deepcopy=False, detach=True):
         """
@@ -445,7 +531,7 @@ class VisData(TensorData):
         """
         vd = VisData()
         telescope, antpos = self.telescope, self.antpos
-        times, freqs, bls = self.times, self.freqs, self.bls
+        times, freqs, blnums = self.times, self.freqs, self.blnums
         flags, cov, icov = self.flags, self.cov, self.icov
         history = self.history
 
@@ -464,13 +550,13 @@ class VisData(TensorData):
                 antpos = antpos.__class__(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
             times = copy.deepcopy(times)
             freqs = copy.deepcopy(freqs)
-            bls = copy.copy(bls)
+            blnums = blnums.clone()
             if flags is not None: flags = flags.clone()
             if cov is not None: cov = cov.clone()
             if icov is not None: icov = icov.clone()
 
         vd.setup_meta(telescope=telescope, antpos=antpos)
-        vd.setup_data(bls, times, freqs, pol=self.pol,
+        vd.setup_data(blnums, times, freqs, pol=self.pol,
                       data=data, flags=flags, cov=cov, icov=icov,
                       cov_axis=self.cov_axis, history=history)
         return vd
@@ -481,14 +567,22 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple or list of tuple
-            Baseline antpair or list of such
+        bl : tuple, list of tuple, or array
+            Antenna pair (1, 2) tuple, or lists of such,
+            or blnums array.
         """
-        if isinstance(bl, list):
-            return [self._bl2ind(b) for b in bl]
-        idx = np.where((self.ant1==bl[0])&(self.ant2==bl[1]))[0]
+        if isinstance(bl, (list, np.ndarray, torch.Tensor)):
+            if isinstance(bl, torch.Tensor):
+                bl = bl.cpu().numpy()
+            elif isinstance(bl, list):
+                bl = utils.ants2blnum(bl)
+
+            return [self._bl2ind(_bl) for _bl in bl]
+
+        idx = np.where(self.blnums == bl)[0]
         if len(idx) == 0:
-            raise ValueError("Couldn't find {}".format(bl))
+            raise ValueError("Couldn't find bl {}".format(bl))
+
         return idx[0]
 
     def _bl2blpol(self, bl):
@@ -497,12 +591,20 @@ class VisData(TensorData):
         or a list of such, return all separated bls
         and pols
         """
-        assert isinstance(bl, (tuple, list))
         if isinstance(bl, tuple):
             # this is a single antpair or antpairpol
             return self._bl2uniq_blpol(bl)
 
+        elif isinstance(bl, np.ndarray):
+            # this is blnums array
+            return bl, None
+
+        elif isinstance(bl, torch.Tensor):
+            # this is blnums tensor
+            return bl.cpu().numpy(), None
+
         else:
+            # list of tuples
             bls, pols = [], []
             for _bl in bl:
                 b, p = self._bl2uniq_blpol(_bl)
@@ -627,9 +729,9 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple or list of tuples, optional
-            Baseline antpair, or list of such. Can also be
-            antpair-pol, with limitations.
+        bl : tuple, list, ndarray, optional
+            Baseline number array, or list of antpair tuples.
+            Can be antpair-pols, with only 1 unique pol.
         times : tensor or float, optional
             Time(s) to index
         freqs : tensor or float, optional
@@ -640,7 +742,7 @@ class VisData(TensorData):
             Instead of feeding bl, can feed a
             list of bl indices if these are
             already known given their location
-            in self.ant1, self.ant2.
+            in self.blnums
         time_inds : int or list of int, optional
             Instead of feeding times, can feed
             a list of time indices if these
@@ -714,8 +816,9 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple or list of tuples, optional
-            Baseline antpair, or list of such, to return
+        bl : tuple, list, ndarray, optional
+            Baseline number array, or list of antpair tuples.
+            Can be antpair-pols, with only 1 unique pol.
         times : tensor or float, optional
             Time(s) to index
         freqs : tensor or float, optional
@@ -759,8 +862,9 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple or list of tuples, optional
-            Baseline antpair, or list of such, to return
+        bl : tuple, list, ndarray, optional
+            Baseline number array, or list of antpair tuples.
+            Can be antpair-pols, with only 1 unique pol.
         times : tensor or float, optional
             Time(s) to index
         freqs : tensor or float, optional
@@ -805,8 +909,9 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple or list of tuples, optional
-            Baseline antpair, or list of such, to return
+        bl : tuple, list, ndarray, optional
+            Baseline number array, or list of antpair tuples.
+            Can be antpair-pols, with only 1 unique pol.
         times : tensor or float, optional
             Time(s) to index
         freqs : tensor or float, optional
@@ -896,7 +1001,7 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : tuple, optional
+        bl : tuple or int, optional
             Baseline(pol) to set
         kwargs : dict, optional
             Other parameters to set
@@ -933,8 +1038,9 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bl : list, optional
-            List of baselines to downselect
+        bl : tuple, list, ndarray, optional
+            Baseline number array, or list of antpair tuples.
+            Can be antpair-pols, with only 1 unique pol.
         times : tensor, optional
             List of Julian Date times to downselect
         freqs : tensor, optional
@@ -945,7 +1051,7 @@ class VisData(TensorData):
             Instead of feeding bl, can feed a
             list of bl indices if these are
             already known given their location
-            in self.ant1, self.ant2.
+            in self.blnums
         time_inds : int or list of int, optional
             Instead of feeding times, can feed
             a list of time indices if these
@@ -1152,9 +1258,6 @@ class VisData(TensorData):
             # take average along bl axis
             avg_data, wgt_norm, avg_cov = average_data(obj.data, 2, wgts=wgt, cov=cov, keepdims=True)
 
-            # update flag array
-            avg_flags = abs(wgt_norm) > 1e-40
-
             # update cov array
             if obj.icov is not None:
                 avg_icov = optim.compute_icov(avg_cov, None)
@@ -1162,8 +1265,14 @@ class VisData(TensorData):
                 avg_icov = None
 
             # get rid of cov if not present in obj
-            if obj.cov is not None:
+            if obj.cov is None:
                 avg_cov = None
+
+            # update flag array
+            if obj.flags is not None:
+                avg_flags = obj.flags.all(dim=2, keepdims=True)
+            else:
+                avg_flags = None
 
             # setup data
             obj.setup_data(red[:1], obj.times, obj.freqs, pol=obj.pol,
@@ -1177,7 +1286,7 @@ class VisData(TensorData):
 
         if inplace:
             # overwrite self.data and appropriate metadata
-            self.setup_data(out.bls, out.times, out.freqs, pol=out.pol,
+            self.setup_data(out.blnums, out.times, out.freqs, pol=out.pol,
                             data=out.data, flags=out.flags, cov=out.cov,
                             cov_axis=out.cov_axis, icov=out.icov,
                             history=out.history)
@@ -1274,7 +1383,7 @@ class VisData(TensorData):
             new_time = torch.atleast_1d(obj.times[obj.Ntimes//2])
 
             # setup data
-            obj.setup_data(obj.bls, new_time, obj.freqs, pol=obj.pol,
+            obj.setup_data(obj.blnums, new_time, obj.freqs, pol=obj.pol,
                            data=avg_data, flags=avg_flags, cov=avg_cov,
                            icov=avg_icov, cov_axis=None, history=obj.history)
 
@@ -1285,7 +1394,7 @@ class VisData(TensorData):
 
         if inplace:
             # overwrite self.data and appropriate metadata
-            self.setup_data(out.bls, out.times, out.freqs, pol=out.pol,
+            self.setup_data(out.blnums, out.times, out.freqs, pol=out.pol,
                             data=out.data, flags=out.flags, cov=out.cov,
                             cov_axis=out.cov_axis, icov=out.icov,
                             history=out.history)
@@ -1299,12 +1408,14 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        new_bls : list
+        new_bls : list, ndarray
             List of new baseline tuples for inflated data
             e.g. [(0, 1), (1, 2), (1, 3), ...]
-        old_bls : list
+            or blnums ndarray
+        old_bls : list, ndarray
             List of redundant baseline tuple for each bl tuples in new_bls
             e.g. [(0, 1), (0, 1), (1, 3), ...]
+            or blnums ndarray
 
         Returns
         -------
@@ -1334,7 +1445,7 @@ class VisData(TensorData):
 
         Parameters
         ----------
-        bls : list, optional
+        bls : list, ndarray, optional
             If provided, only inflate to these physical baselines. Note
             all baselines in bls must have a redundant dual in self.bls,
             otherwise its dropped. Default is to use all baselines in bl2red.
@@ -1388,7 +1499,7 @@ class VisData(TensorData):
                     f.attr['cov_axis'] = self.cov_axis
                 if self.icov is not None:
                     f.create_dataset('icov', data=self.icov)
-                f.create_dataset('bls', data=self.bls)
+                f.create_dataset('blnums', data=self.blnums)
                 f.create_dataset('times', data=self.times)
                 f.create_dataset('freqs', data=self.freqs)
                 if self.pol is not None:
@@ -1427,7 +1538,7 @@ class VisData(TensorData):
         with h5py.File(fname, 'r') as f:
             # load metadata
             assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
-            _bls = [tuple(_bl) for _bl in f['bls'][:]]
+            _blnums = f['blnums'][:]
             _times = f['times'][:]
             _freqs = torch.as_tensor(f['freqs'][:])
             _pol = f.attrs['pol'] if 'pol' in f.attrs else None
@@ -1435,7 +1546,7 @@ class VisData(TensorData):
             history = f.attrs['history'] if 'history' in f.attrs else ''
 
             # setup just full-size metadata
-            self.setup_data(_bls, _times, _freqs, pol=_pol,
+            self.setup_data(_blnums, _times, _freqs, pol=_pol,
                             cov_axis=cov_axis)
 
             data, flags, cov, icov = None, None, None, None
@@ -1477,7 +1588,7 @@ class VisData(TensorData):
             tloc = f.attrs['tloc']
             telescope = telescope_model.TelescopeModel(tloc)
             self.setup_meta(telescope, antpos)
-            self.setup_data(self.bls, self.times, self.freqs, pol=self.pol,
+            self.setup_data(self.blnums, self.times, self.freqs, pol=self.pol,
                             data=data, flags=flags, cov=cov,
                             cov_axis=cov_axis, icov=icov, history=history)
 
@@ -1573,7 +1684,7 @@ class VisData(TensorData):
             elif self.cov_axis == 'freq':
                 assert self.cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
                                           self.Nbls, self.Ntimes)
-        for ant1, ant2 in zip(self.ant1, self.ant2):
+        for (ant1, ant2) in self.bls:
             assert (ant1 in self.ants) and (ant2 in self.ants)
 
 
@@ -1583,6 +1694,7 @@ class MapData(TensorData):
     (Npol, 1, Nfreqs, Npix)
     """
     def __init__(self):
+        self.data = None
         self.atol = 1e-10
 
     def setup_meta(self, name=None):
@@ -2153,6 +2265,7 @@ class CalData(TensorData):
     Jee or Jnn as specified by pol.
     """
     def __init__(self):
+        self.data = None
         self.atol = 1e-10
 
     def setup_meta(self, telescope=None, antpos=None):

@@ -80,7 +80,7 @@ class PixelBeam(utils.Module):
             index in the Nmodel dimension from beam.
             E.g. {10: 0, 11: 0, 12: 0} for 3-antennas [10, 11, 12] with
             1 shared beam model or {10: 0, 11: 1, 12: 2} for 3-antennas
-            [10, 11, 12] with different 3 beam models.
+            [10, 11, 12] with 3 different beam models.
             Default is all ants map to index 0.
         R : PixelResponse or other, optional
             A response function mapping the beam params
@@ -280,9 +280,10 @@ class PixelBeam(utils.Module):
         beam : tensor
             Holds the full beam output from gen_beam()
             of shape (Npol, Nvec, Nmodel, Nfreqs, Nsources)
-        bls : 2-tuple or list of tuples
+        bls : blnums array, tuple or list of tuples
             Specifies which baselines (antenna-integer pairs)
-            to use in applying beam to sky.
+            to use in applying beam to sky. Can be a baseline array
+            [101102, ...] or baseline tuples [(1, 2), ...]
             self.ant2beam maps antenna integers to beam model indices.
         sky : tensor
             sky coherency matrix (Nvec, Nvec, Nfreqs, Nsources)
@@ -293,9 +294,12 @@ class PixelBeam(utils.Module):
             perceived sky, having mutiplied beam with sky, of shape
             (Npol, Npol, Nbls, Nfreqs, Npix)
         """
-        # get modelpairs from baseline(s)
-        if not isinstance(bls, list):
+        # ensure bls is a list of tuples
+        bls = utils.blnum2ants(bls)
+        if isinstance(bls, tuple):
             bls = [bls]
+
+        # get modelpairs from baseline(s)
         bl2mp = {_bl: (self.ant2beam[_bl[0]], self.ant2beam[_bl[1]]) for _bl in bls}
         modelpairs = sorted(set(bl2mp.values()))
         Nmp = len(modelpairs)

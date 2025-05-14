@@ -570,8 +570,9 @@ class JonesModel(utils.Module, IndexCache):
 
         Parameters
         ----------
-        bls : list of tuple
-            List of baseline tuples e.g. [(0, 1), (2, 3), ...]
+        bls : ndarray, list
+            blnums ndarray or list of
+            baseline tuples e.g. [(0, 1), (2, 3), ...]
 
         Returns
         -------
@@ -590,6 +591,7 @@ class JonesModel(utils.Module, IndexCache):
                 g1_idx = torch.as_tensor([0 for bl in bls], device=self.device)
                 g2_idx = torch.as_tensor([0 for bl in bls], device=self.device)
             else:
+                bls = utils.blnum2ants(bls)
                 g1_idx = torch.as_tensor([self.ants.index(bl[0]) for bl in bls], device=self.device)
                 g2_idx = torch.as_tensor([self.ants.index(bl[1]) for bl in bls], device=self.device)
             self.cache_aidx[h] = (g1_idx, g2_idx)
@@ -689,7 +691,7 @@ class JonesModel(utils.Module, IndexCache):
         jones = self.index_params(jones, times=vd.times)
 
         # get g1 and g2 indexing
-        g1_idx, g2_idx = self.get_ant_idx(vd.bls)
+        g1_idx, g2_idx = self.get_ant_idx(vd._blnums)
 
         # apply calibration and insert into output vis
         vout.data, _ = _apply_cal(vd.data, jones, g1_idx, g2_idx,
@@ -1003,7 +1005,7 @@ class RedVisModel(utils.Module, IndexCache):
         if not utils.check_devices(self.device, vd.data.device):
             vd.push(self.device)
 
-        # setup predicted visibility
+        # setup predicted visibility: this clones data
         vout = vd.copy()
 
         # get unique visibilities
@@ -1032,9 +1034,9 @@ class RedVisModel(utils.Module, IndexCache):
 
         # apply redvis model: not inplace b/c vout is not deepcopy
         if not undo:
-            vout.data = vout.data + redvis
+            vout.data += redvis
         else:
-            vout.data = vout.data + redvis
+            vout.data -= redvis
 
         return vout
 
@@ -1666,10 +1668,10 @@ class RedVisCoupling(utils.Module, IndexCache):
         self.bls_out = bls_out
         self.Nants = len(antpos)
 
-    def setup_coupling(self, use_reds=True, redtol=1.0,
-                       include_second_order=True, min_len=None, max_len=None,
-                       max_EW=None, max_NS=None, second_max_len=None, second_max_EW=None,
-                       second_max_NS=None, Nproc=None, Ntask=5, use_pathos=True):
+    def setup_coupling(self, use_reds=True, redtol=1.0, include_second_order=True,
+                       min_len=None, max_len=None, max_EW=None, max_NS=None,
+                       second_max_len=None, second_max_EW=None, second_max_NS=None,
+                       min_dly=None, Nproc=None, Ntask=5, use_pathos=True):
         """
         Setup fixed coupling parameters (e.g. delay term and matrix indexing).
         Assumes bl = (ant1, ant2) where ant1 <= ant2 ordering.
@@ -1694,6 +1696,10 @@ class RedVisCoupling(utils.Module, IndexCache):
         second_max_* : float, optional
             Max length/EW/NS parameters for second order coupling terms, if
             include_second_order is True.
+        min_dly : float, optional
+            This is the minimum baseline length [meters] to use when setting
+            the coupling delay. I.e. dly = max(min_dly, bl_len) / c.
+            Typically this is the feed height.
         Nproc : int, optional
             If not None, launch multiprocessing of Nprocesses
         Ntask : int, optional
@@ -1719,6 +1725,8 @@ class RedVisCoupling(utils.Module, IndexCache):
         freqs = freqs - freqs[0]
         for i, (ant1, ant2) in enumerate(self.coupling_terms):
             bl_len = torch.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
+            if min_dly is not None:
+                bl_len = bl_len.clamp(min_dly)
             self.dly[0, 0, i, 0] = torch.exp(2j*np.pi*freqs/self.c*bl_len)
 
         # get the rows of the A matrix, mapping input bls to output bls
@@ -2167,6 +2175,9 @@ def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
     cov_out : tensor, optional
         Output vis covariance
     """
+    bls = utils.blnum2ants(bls)
+    if isinstance(bls, tuple):
+        bls = [bls]
     g1_idx = torch.as_tensor([ants.index(bl[0]) for bl in bls], device=gains.device)
     g2_idx = torch.as_tensor([ants.index(bl[1]) for bl in bls], device=gains.device)
 
@@ -2702,7 +2713,7 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
     R = JonesResponse(param_type=param_type, antpos=vis.antpos,
                       freq_mode=freq_mode, freq_kwargs=freq_kwargs,
                       time_mode=time_mode, time_kwargs=time_kwargs)
-    ants = list(np.unique(np.concatenate([vis.ant1, vis.ant2])).astype(int))
+    ants = sorted(np.unique(utils.flatten(vis.bls)))
     polmode = '1pol' if vis.Npol == 1 else '4pol'
     Nants = len(ants)
     if 'slope' in param_type:
