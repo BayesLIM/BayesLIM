@@ -453,19 +453,11 @@ class LBFGS(BFGS):
 
         elif isinstance(H0, torch.Tensor) and H0.numel() > 1:
             # assume this is diagonal vector
-            self.H = hmat.DiagMat(
-                H0,
-                device=self.params[0].device,
-                dtype=utils._float()
-            )
+            self.H = hmat.DiagMat(H0)
 
         elif isinstance(H0, torch.Tensor) and H0.numel() == 1:
             # assume this is a scalar
-            self.H = hmat.HadamardMat(
-                H0,
-                device=self.params[0].device,
-                dtype=utils._float()
-            )
+            self.H = hmat.HadamardMat(H0)
 
         else:
             self.H = H0
