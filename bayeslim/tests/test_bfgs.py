@@ -98,7 +98,7 @@ def test_scaled_normal():
 	# get multivariate normal
 	N = 50
 	scale = torch.ones(N) * 0.1
-	prob = setup_NormalProb(N, cond=1, scale=scale)
+	prob = setup_NormalProb(N, cond=2, scale=scale)
 
 	# perturb params
 	torch.manual_seed(100)
@@ -125,7 +125,7 @@ def test_multi_scaled_normal():
 	N = 50
 	scale = torch.ones(N) * 0.1
 	scale[:N//2] *= 0.01
-	prob = setup_NormalProb(N, cond=1, scale=scale)
+	prob = setup_NormalProb(N, cond=2, scale=scale)
 
 	# perturb params
 	torch.manual_seed(100)
