@@ -550,7 +550,7 @@ class VisData(TensorData):
                 antpos = antpos.__class__(copy.deepcopy(antpos.ants), antpos.antvecs.clone())
             times = copy.deepcopy(times)
             freqs = copy.deepcopy(freqs)
-            blnums = blnums.clone()
+            blnums = copy.deepcopy(blnums)
             if flags is not None: flags = flags.clone()
             if cov is not None: cov = cov.clone()
             if icov is not None: icov = icov.clone()
