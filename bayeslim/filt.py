@@ -182,7 +182,7 @@ class GPFilter(MatFilter):
     (can include thermal noise and whatever other
     terms in the data).
     """
-    def __init__(self, Cs, Cn, Cs_pred=None, dim=-1, no_filter=False,
+    def __init__(self, Cs, Cn, Cs_cross=None, Cs_pred=None, dim=-1, no_filter=False,
                  dtype=None, device=None, residual=False,
                  name=None, inv='pinv', hermitian=False, rcond=1e-15, eps=None):
         """
@@ -194,9 +194,12 @@ class GPFilter(MatFilter):
         Cn : tensor
             Square covariance of the noise (and other things)
             of shape (N_data_samples, N_data_samples)
-        Cs_pred : tensor, optional
+        Cs_cross : tensor, optional
             Cross-covariance of signal between
             (prediction points, data points). Default is Cs.
+        Cs_pred : tensor, optional
+            Auto-covariance of signal between
+            (prediction points, prediction points). Default is Cs.
         dim : int, optional
             Dimension of input data to apply filter
         no_filter : bool, optional
@@ -225,6 +228,7 @@ class GPFilter(MatFilter):
         self.Cs = torch.as_tensor(Cs, device=device)
         self.Cn = torch.as_tensor(Cn, device=device)
         self.Cs_pred = torch.as_tensor(Cs_pred, device=device) if Cs_pred is not None else Cs_pred
+        self.Cs_cross = torch.as_tensor(Cs_cross, device=device) if Cs_cross is not None else Cs_cross
         self.dtype = dtype
         self.ein = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         self.no_filter = no_filter
@@ -236,7 +240,7 @@ class GPFilter(MatFilter):
 
         self.setup_filter()
 
-    def setup_filter(self, Cs=None, Cn=None, Cs_pred=None, inv=None,
+    def setup_filter(self, Cs=None, Cn=None, Cs_pred=None, Cs_cross=None, inv=None,
                      hermitian=None, rcond=None, eps=None):
         """
         Setup the filter matrix given self.Cs, self.Cn
@@ -260,6 +264,7 @@ class GPFilter(MatFilter):
         self.Cs = self.Cs if Cs is None else Cs
         self.Cn = self.Cn if Cn is None else Cn
         self.Cs_pred = self.Cs_pred if Cs_pred is None else Cs_pred
+        self.Cs_cross = self.Cs_cross if Cs_cross is None else Cs_cross
         self.C = self.Cs + self.Cn
         self.inv = self.inv if inv is None else inv
         self.hermitian = self.hermitian if hermitian is None else hermitian
@@ -271,6 +276,8 @@ class GPFilter(MatFilter):
         self.Cs = self.Cs.to(self.dtype).to(self.device)
         if self.Cs_pred is not None:
             self.Cs_pred = self.Cs_pred.to(self.dtype).to(self.device)
+        if self.Cs_cross is not None:
+            self.Cs_cross = self.Cs_cross.to(self.dtype).to(self.device)
 
         self.set_GV()
 
@@ -279,9 +286,10 @@ class GPFilter(MatFilter):
         Setup filtering matrices G and the variance matrix V
         given self.Cs and self.C_inv
         """
-        Cs = self.Cs if self.Cs_pred is None else self.Cs_pred
+        Cs = self.Cs if self.Cs_cross is None else self.Cs_cross
+        Cs_pred = self.Cs if self.Cs_pred is None else self.Cs_pred
         self.G = Cs @ self.C_inv
-        self.V = Cs - Cs @ self.C_inv @ Cs.T.conj()
+        self.V = Cs_pred - Cs @ self.C_inv @ Cs.T.conj()
 
 
 class LstSqFilter(MatFilter):
