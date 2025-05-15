@@ -935,7 +935,7 @@ class AiryResponse:
             If True, treat this as a squared, "baseline beam"
             otherwise treat this as a per-antenna beam (unsquared)
         brute_force : bool, optional
-            If True (default) makes this differentiable.
+            If True (default) integrate bessel integral numerically.
             See airy_disk() for details.
         Ntau : int, optional
             Integral pixelization, see airy_disk() for details
@@ -1441,7 +1441,7 @@ def airy_disk(zen, az, Dew, freqs, Dns=None, freq_ratio=1.0,
         Bessel integral pixelization density
     brute_force : bool, optional
         If True (default) numerically integrate Bessel integral
-        making this differentiable, otherwise use scipy routine.
+        otherwise use torch routine.
 
     Returns
     -------

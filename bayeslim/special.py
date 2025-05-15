@@ -513,8 +513,7 @@ def j1(x, Ntau=100, brute_force=False):
     brute_force : bool, optional
         If True, numerically integrate
         Bessel integral brute force.
-        Makes this differentiable.
-        Otherwise use a scipy routine.
+        Otherwise use a torch routine.
         
     Returns
     -------
@@ -533,8 +532,7 @@ def j1(x, Ntau=100, brute_force=False):
 
         return torch.sum(wgts * integrand, dim=0) * diff / 2.0 / np.pi
     else:
-        from scipy import special
-        return special.j1(x)
+        return torch.special.bessel_j1(x)
 
 
 def _Pmm_legacy(m, z):
