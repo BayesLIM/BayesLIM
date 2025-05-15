@@ -269,6 +269,7 @@ class VisData(TensorData):
         # and push antpos if needed
         if self.antpos:
             self.antpos.push(device)
+            self.antvecs = self.antpos.antvecs
         # push telescope if needed
         if self.telescope:
             self.telescope.push(device)
@@ -302,6 +303,7 @@ class VisData(TensorData):
         self.antpos = antpos
         self.ants, self.antvecs = None, None
         if antpos is not None:
+            ## TODO: do we really need both self.antvecs and self.antpos?
             self.ants = antpos.ants
             self.antvecs = antpos.antvecs
 
