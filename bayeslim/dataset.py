@@ -457,8 +457,7 @@ class VisData(TensorData):
         if uniq_bls:
             # Just call the ArrayModel method
             from bayeslim.telescope_model import ArrayModel
-            rk = dict(bls=self.bls)
-            array = ArrayModel(self.antpos, self.freqs, redtol=redtol, red_kwargs=rk)
+            array = ArrayModel(self.antpos, self.freqs, redtol=redtol, bls=self.bls)
             return array.get_bls(uniq_bls=uniq_bls, keep_autos=keep_autos, min_len=min_len,
                                  max_len=max_len, min_EW=min_EW, max_EW=max_EW, min_NS=min_NS,
                                  max_NS=max_NS, min_deg=min_deg, max_deg=max_deg)
@@ -1357,7 +1356,7 @@ class VisData(TensorData):
                 # get phasor
                 from bayeslim import telescope_model
                 loc = self.telescope.location
-                lsts = telescope_model.JD2LST(self.times[times], loc[0]) # rad
+                lsts = np.unwrap(telescope_model.JD2LST(self.times[times], loc[0])) # rad
                 dlst = lsts[obj.Ntimes//2] - lsts
                 phs = telescope_model.vis_rephase(dlst, loc[1], self.get_bl_vecs(self.bls), self.freqs)
                 data = obj.data * phs

@@ -151,7 +151,7 @@ class ArrayModel(utils.Module, utils.AntposDict):
     """
     def __init__(self, antpos, freqs=None, device=None, cache_s=True,
                  cache_depth=None, redtol=1.0, name=None,
-                 red_kwargs={}):
+                 **kwargs):
         """
         A model of an interferometric array
 
@@ -178,7 +178,7 @@ class ArrayModel(utils.Module, utils.AntposDict):
             are built. This is the bl vector redundancy tolerance [m]
         name : str, optional
             Name for this object, stored as self.name
-        red_kwargs : dict, optional
+        **kwargs
             Keyword arguments to pass to build_reds()
         """
         # init Module
@@ -201,7 +201,7 @@ class ArrayModel(utils.Module, utils.AntposDict):
 
         # build redundant info
         (self.reds, self.redvecs, self.bl2red, self.bls, self.redlens, self.redangs,
-         self.redtags) = build_reds(antpos, redtol=redtol, **red_kwargs)
+         self.redtags) = build_reds(antpos, redtol=redtol, **kwargs)
 
         if device:
             self.push(device)

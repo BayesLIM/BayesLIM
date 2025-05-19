@@ -507,7 +507,7 @@ class VisMapper:
     metadata (irrespective of the visibility data itself), then
     run self.build_v() 
     """
-    def __init__(self, vis, ra, dec, beam=None, fov=180, dtype=None):
+    def __init__(self, vis, ra, dec, beam=None, fov=180, dtype=None, **kwargs):
         """
         Parameters
         ----------
@@ -527,11 +527,12 @@ class VisMapper:
             Use torch.float32 or torch.float64 when building
             imaging matrices. Default (None) is to use
             torch.get_default_dtype().
+        kwargs : additional kwargs for ArrayModel()
         """
         ## TODO: add on-the-fly vis loading
         self.vis = vis
         self.telescope = vis.telescope
-        self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device)
+        self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device, **kwargs)
         self.ra = ra
         self.dec = dec
         self.Npix = len(ra)
