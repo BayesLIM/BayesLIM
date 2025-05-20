@@ -532,6 +532,8 @@ class VisMapper:
         ## TODO: add on-the-fly vis loading
         self.vis = vis
         self.telescope = vis.telescope
+        self.times = np.asarray(self.vis.times.cpu())  # this must be numpy array for caching purposes
+        self.freq_inds = slice(None)
         self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device, **kwargs)
         self.ra = ra
         self.dec = dec
@@ -549,25 +551,41 @@ class VisMapper:
         self.D = None
         self.v = None
         self.Dinv = None
-
+ 
     @torch.no_grad()
-    def build_A(self):
+    def build_A(self, freq_inds=None):
         """
         Build the A matrix, this is generally the slowest part of the (dirty)
         map making, as well as the most memory intensive.
+
+        Parameters
+        ----------
+        freq_inds : ndarray, slice, optional
+            Frequency indices of self.vis to build A matrix.
         """
+        # handle frequencies
+        if freq_inds is not None:
+            self.freq_inds = utils._list2slice(freq_inds)
+        freqs = self.vis.freqs[self.freq_inds]
+        Nfreqs = len(freqs)
+        self.array.set_freqs(freqs)
+
+        # other metadata
         Ntimes = self.vis.Ntimes
         Nbls = self.vis.Nbls
-        Nfreqs = self.vis.Nfreqs
+        blvecs = self.array.get_blvecs(self.vis.bls)
+
+        # init A
         self.A = torch.zeros(Ntimes * Nbls, Nfreqs, self.Npix, dtype=self.vis.data.dtype, device=self.device)
+
         # build A matrix
-        for i, time in enumerate(self.vis.times):
+        for i, time in enumerate(self.times):
             # get zen, az
             zen, az = self.telescope.eq2top(time, self.ra, self.dec, store=True)
             # get beam and cut
             if self.beam is not None:
                 beam, cut, zen, az = self.beam.gen_beam(zen, az)
-                beam = beam.to(self.device)
+                beam = beam[:, :, :, self.freq_inds].to(self.device)
                 # only single pol imaging with antenna-independent beam for now
                 beam = beam[0, 0, 0]
                 if not self.beam.powerbeam:
@@ -578,15 +596,10 @@ class VisMapper:
                 zen, az = zen[cut], az[cut]
 
             # get conjugate of fringe (for vis simulation we use fr, for mapping we use fr.conj)
-            blvecs = self.array.get_blvecs(self.vis.bls)
             fr = self.array.gen_fringe(blvecs, zen, az, conj=True)
 
             # multiply in beam
             if beam is not None:
-                if beam.shape[0] != fr.shape[1]:
-                    # different Nfreqs between the two, pick out nearest beam freqs
-                    beam = beam[torch.stack([torch.argmin(abs(self.beam.freqs - f)) for f in self.vis.freqs])]
-
                 fr *= beam
 
             # insert
@@ -617,16 +630,17 @@ class VisMapper:
         icov = icov if icov is not None else vis.icov
         Ntimes = vis.Ntimes
         Nbls = vis.Nbls
-        Nfreqs = vis.Nfreqs
+        freqs = vis.freqs[self.freq_inds]
+        Nfreqs = len(freqs)
         self.v = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=vis.data.dtype, device=self.device)
         self.w = torch.zeros(Ntimes * Nbls, Nfreqs, dtype=utils._float(), device=self.device)
-        for i, time in enumerate(vis.times):
+        for i, time in enumerate(self.times):
             # insert into v vector
-            self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, squeeze=False)[0, 0, :, 0]
+            self.v[i*Nbls:(i+1)*Nbls] = vis.get_data(times=time, freq_inds=self.freq_inds, squeeze=False)[0, 0, :, 0]
 
             # get weights
             if icov is not None and cov_axis is None:
-                wgt = vis.get_icov(bl=vis.bls, times=time, icov=icov, squeeze=False)[0, 0, :, 0]
+                wgt = vis.get_icov(bl=vis.bls, times=time, icov=icov, freq_inds=self.freq_inds, squeeze=False)[0, 0, :, 0]
             else:
                 wgt = torch.tensor(1.0, device=self.device)
 
