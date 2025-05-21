@@ -172,6 +172,30 @@ class TensorData:
 
         return td
 
+    def get_data(self, **kwargs):
+        """
+        Return data
+        """
+        return self.data
+
+    def get_flags(self, **kwargs):
+        """
+        Return flags
+        """
+        return self.flags
+
+    def get_cov(self, **kwargs):
+        """
+        Return cov
+        """
+        return self.cov
+
+    def get_icov(self, **kwargs):
+        """
+        Return icov
+        """
+        return self.icov
+
     def __add__(self, other):
         out = self.copy()
         if isinstance(other, (float, int, complex, torch.Tensor)):
