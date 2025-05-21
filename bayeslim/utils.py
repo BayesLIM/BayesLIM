@@ -1710,16 +1710,27 @@ def push(tensor, device, parameter=False):
         tensor.push(device)
         return tensor
     if not isinstance(tensor, torch.Tensor):
+        # this isn't a tensor or an obj with push(), so just return it
         return tensor
+    # this is a tensor
     dtype = isinstance(device, torch.dtype)
-    if dtype and torch.is_complex(tensor) and not device.is_complex:
-        if device == torch.float16: device = torch.complex32
-        elif device == torch.float32: device = torch.complex64
-        elif device == torch.float64: device = torch.complex128
-        else: raise ValueError("tensor is complex but output dtype is not float or complex")
+    if dtype:
+        # only change tensor.dtype for float or complex tensors
+        is_complex = tensor.is_complex()
+        is_float = tensor.is_floating_point()
+        if (not is_float) and (not is_complex):
+            # int or bool tensor
+            return tensor
+        elif is_complex and (not device.is_complex):
+            # convert complex to another complex
+            if device == torch.float16: device = torch.complex32
+            elif device == torch.float32: device = torch.complex64
+            elif device == torch.float64: device = torch.complex128
+            else: raise ValueError("tensor is complex but output dtype is not float or complex")
 
     if parameter or isinstance(tensor, torch.nn.Parameter):
         return torch.nn.Parameter(tensor.to(device))
+
     else:
         return tensor.to(device)
 
