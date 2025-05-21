@@ -17,6 +17,7 @@ class TensorData:
     """
     def __init__(self):
         # init empty object
+        self.device = None
         self.setup_data()
 
     def setup_data(self, data=None, flags=None, cov=None,
@@ -52,6 +53,7 @@ class TensorData:
         Push data, flags, cov and icov to device
         """
         dtype = isinstance(device, torch.dtype)
+        if not dtype: self.device = device
         if self.data is not None:
             self.data = utils.push(self.data, device)
         if self.flags is not None:
@@ -256,7 +258,9 @@ class VisData(TensorData):
     def __init__(self):
         # init empty object
         self.data = None
-        self.atol = 1e-10
+        self.device = None
+        self.atol = 1e-7
+        self._file = None
         self.setup_meta()
 
     def push(self, device, return_obj=False):
@@ -309,7 +313,7 @@ class VisData(TensorData):
 
     def setup_data(self, bls, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
-                   icov=None, history=''):
+                   icov=None, history='', file=None):
         """
         Setup metadata and optionally data tensors.
 
@@ -354,6 +358,8 @@ class VisData(TensorData):
             Recommended to call self.set_cov() and then self.compute_icov()
         history : str, optional
             data history string
+        file : HDF5 file handle, optional
+            For lazy loading, this is an opened h5py file handle.
         """
         # set the data
         self.data = data
@@ -370,6 +376,11 @@ class VisData(TensorData):
         self.flags = flags
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
+        self._file = file
+
+        if data is not None:
+            if not utils.check_devices(data.device, self.device):
+                self.push(data.device)
 
     def _set_bls(self, bls):
         """
@@ -378,7 +389,7 @@ class VisData(TensorData):
 
         Note:
         self.blnums is numpy on cpu
-        self._blnums is pytorch on self.data.device.
+        self._blnums is pytorch on self.device.
 
         Parameters
         ----------
@@ -401,8 +412,8 @@ class VisData(TensorData):
 
         # check device
         if self.data is not None:
-            if not utils.check_devices(self._blnums.device, self.data.device):
-                self._blnums = self._blnums.to(self.data.device)
+            if not utils.check_devices(self._blnums.device, self.device):
+                self._blnums = self._blnums.to(self.device)
 
         self.blnums = self._blnums.cpu().numpy()
         self.Nbls = len(self.blnums)
@@ -670,7 +681,7 @@ class VisData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-12))[0].tolist()
+        return np.where(np.isclose(self.times, time, atol=self.atol))[0].tolist()
 
     def _freq2ind(self, freq):
         """
@@ -1518,7 +1529,8 @@ class VisData(TensorData):
     def read_hdf5(self, fname, read_data=True,
                   bl=None, times=None, freqs=None, pol=None,
                   time_inds=None, freq_inds=None,
-                  suppress_nonessential=False):
+                  suppress_nonessential=False,
+                  lazy_load=False):
         """
         Read HDF5 VisData object
 
@@ -1533,68 +1545,84 @@ class VisData(TensorData):
         suppress_nonessential : bool, optional
             If True, suppress reading-in flags and cov, as only data and icov
             are essential for inference.
+        lazy_load : bool, optional
+            If True, load an HDF5 handle just for data-shaped tensors
+            and keep the keep the HDF5 file open. Default = False.
+            If True, cannot downselect on any indices during the read.
+            If True, sets read_data = False.
         """
-        import h5py
         from bayeslim import telescope_model
-        with h5py.File(fname, 'r') as f:
-            # load metadata
-            assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
-            if 'blnums' in f:
-                _blnums = f['blnums'][:]
-            elif 'bls' in f:
-                _blnums = utils.ants2blnum(list(zip(*f['bls'][:].T)))
-            _times = f['times'][:]
-            _freqs = torch.as_tensor(f['freqs'][:])
-            _pol = f.attrs['pol'] if 'pol' in f.attrs else None
-            cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
-            history = f.attrs['history'] if 'history' in f.attrs else ''
+        f = h5py.File(fname, mode='r')  # safe to keep file open in mode='r'
+        if lazy_load:
+            file = f
+            assert bl == times == freqs == pol == time_inds == freq_inds == None
+            read_data = False
+        else:
+            file = None
+        # load metadata
+        assert str(f.attrs['obj']) == 'VisData', "not a VisData object"
+        if 'blnums' in f:
+            _blnums = f['blnums'][:]
+        elif 'bls' in f:
+            _blnums = utils.ants2blnum(list(zip(*f['bls'][:].T)))
+        _times = f['times'][:]
+        _freqs = torch.as_tensor(f['freqs'][:])
+        _pol = f.attrs['pol'] if 'pol' in f.attrs else None
+        cov_axis = f.attrs['cov_axis'] if 'cov_axis' in f.attrs else None
+        history = f.attrs['history'] if 'history' in f.attrs else ''
 
-            # setup just full-size metadata
-            self.setup_data(_blnums, _times, _freqs, pol=_pol,
-                            cov_axis=cov_axis)
+        # setup just full-size metadata
+        self.setup_data(_blnums, _times, _freqs, pol=_pol,
+                        cov_axis=cov_axis)
 
-            data, flags, cov, icov = None, None, None, None
-            if read_data:
-                data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
-                                     time_inds=time_inds, freq_inds=freq_inds,
-                                     squeeze=False, data=f['data'], try_view=True)
-                data = torch.as_tensor(data)
-                if 'flags' in f and not suppress_nonessential:
-                    flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
-                                           time_inds=time_inds, freq_inds=freq_inds,
-                                           squeeze=False, flags=f['flags'], try_view=True)
-                    flags = torch.as_tensor(flags)
-                else:
-                    flags = None
-                if 'cov' in f and not suppress_nonessential:
-                    cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
+        data, flags, cov, icov = None, None, None, None
+        if read_data:
+            data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
+                                 time_inds=time_inds, freq_inds=freq_inds,
+                                 squeeze=False, data=f['data'], try_view=True)
+            data = torch.as_tensor(data, device=self.device)
+            if 'flags' in f and not suppress_nonessential:
+                flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
                                        time_inds=time_inds, freq_inds=freq_inds,
-                                       squeeze=False, cov=f['cov'], try_view=True)
-                    cov = torch.as_tensor(cov)
-                else:
-                    cov = None
-                if 'icov' in f:
-                    icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
-                                         time_inds=time_inds, freq_inds=freq_inds,
-                                         squeeze=False, icov=f['icov'], try_view=True)
-                    icov = torch.as_tensor(icov)
-                else:
-                    icov = None
+                                       squeeze=False, flags=f['flags'], try_view=True)
+                flags = torch.as_tensor(flags, device=self.device)
+            if 'cov' in f and not suppress_nonessential:
+                cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
+                                   time_inds=time_inds, freq_inds=freq_inds,
+                                   squeeze=False, cov=f['cov'], try_view=True)
+                cov = torch.as_tensor(cov, device=self.device)
+            if 'icov' in f:
+                icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
+                                     time_inds=time_inds, freq_inds=freq_inds,
+                                     squeeze=False, icov=f['icov'], try_view=True)
+                icov = torch.as_tensor(icov, device=self.device)
 
-            # downselect metadata to selection
-            self.select(bl=bl, times=times, freqs=freqs, pol=pol,
-                        time_inds=time_inds, freq_inds=freq_inds)
+        elif lazy_load:
+            data = HDF5tensor(f['data'], device=self.device)
+            if 'flags' in f and not suppress_nonessential:
+                flags = HDF5tensor(f['flags'], device=self.device)
+            if 'cov' in f and not suppress_nonessential:
+                cov = HDF5tensor(f['cov'], device=self.device)
+            if 'icov' in f:
+                icov = HDF5tensor(f['icov'], device=self.device)
 
-            # setup downselected metadata and data
-            ants = f.attrs['ants'].tolist()
-            antvecs = f.attrs['antvecs']
-            antpos = utils.AntposDict(ants, antvecs)
-            tloc = f.attrs['tloc']
-            telescope = telescope_model.TelescopeModel(tloc)
-            self.setup_meta(telescope, antpos)
-            self.setup_data(self.blnums, self.times, self.freqs, pol=self.pol,
-                            data=data, flags=flags, cov=cov,
-                            cov_axis=cov_axis, icov=icov, history=history)
+        # downselect metadata to selection
+        self.select(bl=bl, times=times, freqs=freqs, pol=pol,
+                    time_inds=time_inds, freq_inds=freq_inds)
+
+        # setup downselected metadata and data
+        ants = f.attrs['ants'].tolist()
+        antvecs = f.attrs['antvecs']
+        antpos = utils.AntposDict(ants, antvecs)
+        tloc = f.attrs['tloc']
+        telescope = telescope_model.TelescopeModel(tloc)
+        self.setup_meta(telescope, antpos)
+        self.setup_data(self.blnums, self.times, self.freqs, pol=self.pol,
+                        data=data, flags=flags, cov=cov, cov_axis=cov_axis,
+                        icov=icov, history=history, file=file)
+
+        if not lazy_load:
+            f.close()
 
     def read_uvdata(self, fname, run_check=True, **kwargs):
         """
@@ -1699,7 +1727,7 @@ class MapData(TensorData):
     """
     def __init__(self):
         self.data = None
-        self.atol = 1e-10
+        self.atol = 1e-7
 
     def setup_meta(self, name=None):
         """
@@ -1854,8 +1882,8 @@ class MapData(TensorData):
         _angs = self.angs
         idx = []
         for ang1, ang2 in zip(*angs):
-            match = np.isclose(ang1, _angs[0], atol=self.atol, rtol=1e-10) \
-                    & np.isclose(ang2, _angs[1], atol=self.atol, rtol=1e-10)
+            match = np.isclose(ang1, _angs[0], atol=self.atol) \
+                    & np.isclose(ang2, _angs[1], atol=self.atol)
             if match.any():
                 idx.append(np.where(match)[0][0])
 
@@ -2270,7 +2298,7 @@ class CalData(TensorData):
     """
     def __init__(self):
         self.data = None
-        self.atol = 1e-10
+        self.atol = 1e-7
 
     def setup_meta(self, telescope=None, antpos=None):
         """
@@ -2486,7 +2514,7 @@ class CalData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-12))[0].tolist()
+        return np.where(np.isclose(self.times, time, atol=self.atol))[0].tolist()
 
     def _freq2ind(self, freq):
         """
@@ -3114,6 +3142,47 @@ class CalData(TensorData):
         This operation is inplace.
         """
         raise NotImplementedError
+
+
+class HDF5tensor:
+    def __init__(self, hdf5_dataset, dtype=None, device=None):
+        self.hdf5_dataset = hdf5_dataset
+        self.out_dtype = dtype
+        self.device = device
+
+    def __getitem__(self, idx):
+        # slice into hdf5 handle to get numpy array
+        data = self.hdf5_dataset[idx]
+
+        # convert to tensor on self.device
+        data = torch.as_tensor(data, device=self.device)
+
+        # change dtype if needed
+        if self.out_dtype is not None:
+            data = utils.push(data, self.out_dtype)
+
+        return data        
+
+    def __repr__(self):
+        return self.hdf5_dataset.__repr__()
+
+    def __str__(self):
+        return self.hdf5_dataset.__str__()
+
+    @property
+    def shape(self):
+        return self.hdf5_dataset.shape
+
+    @property
+    def size(self):
+        return self.hdf5_dataset.size
+
+    @property
+    def dtype(self):
+        return self.hdf5_dataset.dtype
+
+    def __len__(self):
+        return len(self.hdf5_dataset)
 
 
 class Dataset(TorchDataset):
