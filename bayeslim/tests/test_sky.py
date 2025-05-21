@@ -16,7 +16,7 @@ def setup_PixSky_Noise(freqs, nside=32):
 	hpix_colat, hpix_ra = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
 	hpix_dec = ba.utils.colat2lat(hpix_colat, deg=False)
 	cut = hpix_dec < (59.27852 * np.pi / 180)
-	angs = torch.as_tensor([hpix_ra[cut], hpix_dec[cut]]) / ba.utils.D2R
+	angs = torch.as_tensor(np.asarray([hpix_ra[cut], hpix_dec[cut]])) / ba.utils.D2R
 	R = ba.sky_model.PixelSkyResponse(freqs)
 	params = torch.randn(1, 1, len(freqs), angs.shape[1])
 	sky = ba.sky_model.PixelSky(params, angs, pxarea, R=R, parameter=False)
