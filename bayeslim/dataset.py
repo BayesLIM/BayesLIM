@@ -87,7 +87,7 @@ class TensorData:
             Recommended to first set cov and then call compute_icov()
         """
         cov_logdet = None
-        if cov is not None:
+        if isinstance(cov, torch.Tensor):
             # compute covariance log determinant
             if cov_axis is None:
                 # cov is same shape as data and only holds variances
@@ -108,14 +108,14 @@ class TensorData:
             if torch.is_complex(cov_logdet):
                 cov_logdet = cov_logdet.real
 
-        elif icov is not None:
+        elif isinstance(icov, torch.Tensor):
             # only icov provided, try to get cov_logdet
             if cov_axis is None:
                 cov_logdet = torch.sum(-torch.log(icov))
 
         # set covariance
-        if cov is not None: cov = cov.clone()
-        if icov is not None: icov = icov.clone()
+        if isinstance(cov, torch.Tensor): cov = cov.clone()
+        if isinstance(icov, torch.Tensor): icov = icov.clone()
         self.cov = cov
         self.icov = icov
         self.cov_axis = cov_axis
@@ -156,15 +156,15 @@ class TensorData:
 
         # clone data
         data = self.data
-        if data is not None:
+        if isinstance(data, torch.Tensor):
             if detach:
                 data = data.detach()
             data = data.clone()
 
         if deepcopy:
-            if flags is not None: flags = flags.clone()
-            if cov is not None: cov = cov.clone()
-            if icov is not None: icov = icov.clone()
+            if isinstance(flags, torch.Tensor): flags = flags.clone()
+            if isinstance(cov, torch.Tensor): cov = cov.clone()
+            if isinstance(icov, torch.Tensor): icov = icov.clone()
 
         td = TensorData()
         td.setup_data(data=data, flags=flags, cov=cov,
@@ -259,7 +259,7 @@ class VisData(TensorData):
         # init empty object
         self.data = None
         self.device = None
-        self.atol = 1e-7
+        self.atol = 1e-10
         self._file = None
         self.setup_meta()
 
@@ -378,7 +378,7 @@ class VisData(TensorData):
         self.history = history
         self._file = file
 
-        if data is not None:
+        if isinstance(data, torch.Tensor):
             if not utils.check_devices(data.device, self.device):
                 self.push(data.device)
 
@@ -549,7 +549,7 @@ class VisData(TensorData):
 
         # clone data
         data = self.data
-        if data is not None:
+        if isinstance(data, torch.Tensor):
             if detach:
                 data = data.detach()
             data = data.clone()
@@ -563,9 +563,9 @@ class VisData(TensorData):
             times = copy.deepcopy(times)
             freqs = copy.deepcopy(freqs)
             blnums = copy.deepcopy(blnums)
-            if flags is not None: flags = flags.clone()
-            if cov is not None: cov = cov.clone()
-            if icov is not None: icov = icov.clone()
+            if isinstance(flags, torch.Tensor): flags = flags.clone()
+            if isinstance(cov, torch.Tensor): cov = cov.clone()
+            if isinstance(icov, torch.Tensor): icov = icov.clone()
 
         vd.setup_meta(telescope=telescope, antpos=antpos)
         vd.setup_data(blnums, times, freqs, pol=self.pol,
@@ -681,7 +681,8 @@ class VisData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol))[0].tolist()
+        # rtol=1e-13 allows for 0.03 sec discrimination on JD values
+        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-13))[0].tolist()
 
     def _freq2ind(self, freq):
         """
@@ -1729,7 +1730,7 @@ class MapData(TensorData):
     """
     def __init__(self):
         self.data = None
-        self.atol = 1e-7
+        self.atol = 1e-10
 
     def setup_meta(self, name=None):
         """
@@ -2300,7 +2301,7 @@ class CalData(TensorData):
     """
     def __init__(self):
         self.data = None
-        self.atol = 1e-7
+        self.atol = 1e-10
 
     def setup_meta(self, telescope=None, antpos=None):
         """
@@ -2516,7 +2517,8 @@ class CalData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
-        return np.where(np.isclose(self.times, time, atol=self.atol))[0].tolist()
+        # rtol=1e-13 allows for 0.03 sec discrimination on JD values
+        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-13))[0].tolist()
 
     def _freq2ind(self, freq):
         """
