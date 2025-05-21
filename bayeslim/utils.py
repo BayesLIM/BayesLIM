@@ -2107,6 +2107,8 @@ def inflate_bls(data_bls, bl2red, all_bls=None):
 
 def _list2slice(inds):
     """convert list/tuple/tensor indexing to slice if possible"""
+    if isinstance(inds, range) and inds.step > 0:
+        return slice(inds.start, inds.stop, inds.step)
     if isinstance(inds, (list, tuple, torch.Tensor, np.ndarray)):
         if len(inds) == 0:
             return inds
