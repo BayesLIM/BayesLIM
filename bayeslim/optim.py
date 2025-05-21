@@ -999,17 +999,18 @@ class LogProb(utils.Module):
             self.send_main_params(main_params=main_params)
 
         # forward pass model
-        out = self.model(inp, prior_cache=self.prior_cache)
-        if isinstance(out, (VisData, MapData, TensorData)):
-            out = out.data
-        prediction = out.to(self.device)
+        prediction = self.model(inp, prior_cache=self.prior_cache)
+        if isinstance(prediction, (VisData, MapData, TensorData)):
+            prediction = prediction.data
+        if not utils.check_devices(prediction.device, self.device):
+            prediction = prediction.to(self.device)
 
         # compute residual
-        res = prediction - target.data
+        res = prediction - target.get_data()
 
         # get inverse covariance
         if hasattr(target, 'icov'):
-            icov = target.icov
+            icov = target.get_icov()
             cov_axis = target.cov_axis
         else:
             icov = None
