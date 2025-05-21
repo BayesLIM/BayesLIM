@@ -1698,24 +1698,26 @@ class VisData(TensorData):
         if self.telescope is not None:
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
         if self.data is not None:
-            assert isinstance(self.data, torch.Tensor)
+            if self._file is None: assert isinstance(self.data, torch.Tensor)
             assert self.data.shape[-3:] == (self.Nbls, self.Ntimes, self.Nfreqs)
         if self.flags is not None:
-            assert isinstance(self.flags, torch.Tensor)
-            assert self.data.shape == self.flags.shape
-        if self.cov is not None:
-            assert self.cov_axis != 'full', "full data-sized covariance not implemented"
-            if self.cov_axis is None:
-                assert self.cov.shape == self.data.shape
-            elif self.cov_axis == 'bl':
-                assert self.cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,
-                                          self.Ntimes, self.Nfreqs)
-            elif self.cov_axis == 'time':
-                assert self.cov.shape == (self.Ntimes, self.Ntimes, self.Npol, self.Npol,
-                                          self.Nbls, self.Nfreqs)
-            elif self.cov_axis == 'freq':
-                assert self.cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
-                                          self.Nbls, self.Ntimes)
+            if self._file is None: assert isinstance(self.flags, torch.Tensor)
+            assert self.flags.shape == self.data.shape
+        for arr in ['cov', 'icov']:
+            cov = getattr(self, arr)
+            if cov is not None:
+                assert self.cov_axis != 'full', "full data-sized covariance not implemented"
+                if self.cov_axis is None:
+                    assert cov.shape == self.data.shape
+                elif self.cov_axis == 'bl':
+                    assert cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,
+                                              self.Ntimes, self.Nfreqs)
+                elif self.cov_axis == 'time':
+                    assert cov.shape == (self.Ntimes, self.Ntimes, self.Npol, self.Npol,
+                                              self.Nbls, self.Nfreqs)
+                elif self.cov_axis == 'freq':
+                    assert cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
+                                              self.Nbls, self.Ntimes)
         for (ant1, ant2) in self.bls:
             assert (ant1 in self.ants) and (ant2 in self.ants)
 
