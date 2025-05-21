@@ -1272,9 +1272,9 @@ class VisCoupling(utils.Module, IndexCache):
     all N^2 visibilities, then single-path mutual coupling
     including 1st and 2nd order terms can be described as 
 
-        Vc = X @ V @ X^T
+        Vc = E @ V @ E^T
 
-    where Vc is the coupled visibility and X = I + E where E
+    where Vc is the coupled visibility and E = I + X where X
     is the Nantenna x Nantenna matrix holding coupling
     coefficients between antennas.
 
