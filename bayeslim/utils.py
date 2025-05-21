@@ -2109,14 +2109,18 @@ def _list2slice(inds):
     """convert list/tuple/tensor indexing to slice if possible"""
     if isinstance(inds, range) and inds.step > 0:
         return slice(inds.start, inds.stop, inds.step)
+    if isinstance(inds, (int, np.integer)):
+        return slice(inds, inds+1)
     if isinstance(inds, (list, tuple, torch.Tensor, np.ndarray)):
         if len(inds) == 0:
             return inds
-        diff = list(set(np.diff(inds)))
-        if len(diff) == 0:
+        elif len(inds) == 1:
             # only 1 element
-            return slice(int(inds[0]), int(inds[0])+1, 1)
-        elif len(diff) == 1:
+            start = int(inds[0])
+            return slice(start, start+1, 1)
+        diff = list(set(np.diff(inds)))
+        if len(diff) == 1:
+            # constant step size
             if (inds[1] - inds[0]) > 0:
                 # only return as slice if inds is increasing
                 return slice(int(inds[0]), int(inds[-1]+diff[0]), int(diff[0]))
