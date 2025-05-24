@@ -692,7 +692,7 @@ def JD2LST(jd, longitude):
 
 def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
                min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False,
-               red_info=None):
+               use_blnums=False, red_info=None):
     """
     Build redundant groups. Note that this currently has sub-optimal
     performance and probably scales ~O(N_bl^2), which could be improved.
@@ -737,6 +737,9 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     norm_vec : bool, optional
         If True, match redundancies based on total baseline
         length. Otherwise use full 3D XYZ vector (default).
+    use_blnums : bool, optional
+        If True output baseline numbers (e.g. 101102) instead of antpair
+        tuples e.g. (1, 2)
     red_info : tuple, optional
         This holds pre-computed output of build_reds(). If passed,
         this bypasses all operations and just returns red_info().
@@ -770,9 +773,12 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     ants = list(antpos.keys())
     antvec = [antpos[a] for a in ants]
 
-    # get baselines
+    # get all baselines
     if bls is None:
         bls = [(a, a) for a in ants] + list(itertools.combinations(ants, 2))
+
+    if use_blnums:
+        blnums = utils.ants2blnum(bls)
 
     # get excluded baseline vectors
     if exclude_reds is not None:
@@ -782,7 +788,7 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     reds, rvec, bl2red = [], [], {}
     lens, angs, tags = [], [], []
     k = 0
-    for bl in bls:
+    for bi, bl in enumerate(bls):
         # get baseline vector
         blvec = utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]])
         bllen = np.linalg.norm(blvec)
@@ -814,7 +820,10 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
 
         if rgroup is None:
             # this a unique group, append to lists
-            reds.append([bl])
+            if use_blnums:
+                reds.append([blnums[bi]])
+            else:
+                reds.append([bl])
             rvec.append(blvec)
             # get unique baseline properties
             bllen = np.linalg.norm(blvec)
@@ -831,14 +840,19 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
 
         else:
             # this falls into an existing redundant group
-            reds[rgroup].append(bl)
+            if use_blnums:
+                reds[rgroup].append(blnums[bi])
+            else:
+                reds[rgroup].append(bl)
 
-    # resort by input red_bls
+    # re-sort by input red_bls
     if red_bls is not None:
         s = []
         for rbl in red_bls:
+            if use_blnums:
+                rbl = utils.ants2blnum(rbl)
             for i, red in enumerate(reds):
-                if rbl in red or rbl[::-1] in red:
+                if rbl in red or utils.conjbl(rbl) in red:
                     s.append(i)
                     break
 
@@ -854,9 +868,10 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     bls = utils.flatten(reds)
 
     # setup bl2red
+    _bls = blnums if use_blnums else bls
     bl2red = {}
     if not skip_reds:
-        for bl in bls:
+        for bl in _bls:
             for i, rg in enumerate(reds):
                 if bl in rg:
                     bl2red[bl] = i
