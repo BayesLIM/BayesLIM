@@ -1005,8 +1005,8 @@ class RedVisModel(utils.Module, IndexCache):
         if not utils.check_devices(self.device, vd.data.device):
             vd.push(self.device)
 
-        # setup predicted visibility: this clones data
-        vout = vd.copy()
+        # setup predicted visibility
+        vout = vd.copy(copydata=False)
 
         # get unique visibilities
         if self.p0 is not None:
@@ -1034,9 +1034,9 @@ class RedVisModel(utils.Module, IndexCache):
 
         # apply redvis model: not inplace b/c vout is not deepcopy
         if not undo:
-            vout.data += redvis
+            vout.data = vout.data + redvis
         else:
-            vout.data -= redvis
+            vout.data = vout.data - redvis
 
         return vout
 
