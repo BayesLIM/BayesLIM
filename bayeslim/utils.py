@@ -2351,3 +2351,17 @@ def ants2blnum(antnums, separate=False):
     return bl
 
 
+def conjbl(bl):
+    """
+    Conjugate a blnum or antpair tuple
+    """
+    if isinstance(bl, tuple):
+        # antpair tuple
+        return bl[::-1]
+    elif isinstance(bl, list) and isinstance(bl[0], tuple):
+        # list of antpair tuples
+        return [conjbl(b) for b in bl]
+    else:
+        # single blnum or blnum ndarray
+        return 1000 * (bl % 1000) + bl // 1000
+
