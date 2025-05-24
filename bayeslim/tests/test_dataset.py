@@ -113,3 +113,80 @@ def test_visdata_select():
 	)
 	assert vds.data.shape == (1, 1, 5, 3, 6)
 	assert vds.bls == vd.bls[:10:2]
+
+
+def test_visdata_average():
+	vd = setup_VisData()
+	reds = ba.telescope_model.ArrayModel(vd.antpos).reds
+	Navgs = torch.as_tensor([len(red) for red in reds])
+
+	# test averaged noise and covariance
+	torch.manual_seed(0)
+	Ntest = 30
+	vds = [setup_VisData() for i in range(Ntest)]
+	for vd in vds: vd.bl_average(inplace=True)
+	# get variance per baseline group
+	var = torch.stack([vd.data[0,0].var(dim=(-1,-2)) for vd in vds]).mean(0)
+	# check it matches with 1/Navgs to within 2sigma of Ntest
+	assert ((var - 1 / Navgs).abs() < 1/np.sqrt(Ntest) * 2).all()
+	# assert propagated covariance is correct
+	assert torch.isclose(vds[0].cov[0,0,:,0,0], 1 / Navgs, atol=1e-5, rtol=1e-5).all()
+
+	# test bl_average with missing bls in reds
+	vd = setup_VisData()
+	vd.bl_average(reds=reds[1:], inplace=True)
+	assert vd.Nbls == (len(reds) - 1)
+
+	# test w/ blnums as reds
+	blnum_reds = [ba.utils.ants2blnum(red) for red in reds]
+	vd = setup_VisData()
+	vd.bl_average(reds=blnum_reds[1:], inplace=True)
+	assert vd.Nbls == (len(reds) - 1)
+
+	# test w/ icov instead of cov, and with flags
+	vd = setup_VisData()
+	vd.icov = 1 / vd.cov
+	vd.cov = None
+	vd.flags = torch.zeros_like(vd.data, dtype=bool)
+	vd.set(reds[0], True, arr='flags')
+	vd.bl_average(reds=reds, inplace=True)
+	# assert flags have been correctly propagated
+	assert vd.get_flags(reds[0][0]).all()
+	assert not vd.get_flags([red[0] for red in reds[1:]]).any()
+	# assert icov correctly propagated
+	assert torch.isclose(vd.icov[0,0,:,0,0], Navgs*1.0, atol=1e-5, rtol=1e-5).all()
+
+
+def test_visdata_inflate():
+	vd = setup_VisData()
+	reds = ba.telescope_model.ArrayModel(vd.antpos).reds
+	bl2red = {}
+	for i, red in enumerate(reds):
+		for bl in red:
+			bl2red[bl] = i
+
+	# test correct average
+	for i, red in enumerate(reds):
+		vd.set(red, i, arr='data')
+	vdr = vd.bl_average(reds=reds, inplace=False)
+	assert torch.isclose(vdr.data[0,0,:,0,0].real, torch.arange(float(len(reds)))).all()
+
+	# test RedVisAvg
+	RVG = ba.dataset.RedVisAvg(reds, inplace=False)
+	vdr2 = RVG(vd)
+	assert torch.isclose(vdr.data, vdr2.data).all()
+
+	# inflate by redundancy
+	vdi = vdr.inflate_by_redundancy()
+
+	# test shapes and values
+	assert vdi.data.shape == vd.data.shape
+	assert torch.isclose(vd.data, vdi.data).all()
+
+	# test RedVisInflate
+	new_bls, red_inds = ba.utils.inflate_bls(vdr.bls, bl2red, vd.bls)
+	RVG = ba.dataset.RedVisInflate(new_bls, red_inds)
+	vdi2 = RVG(vdr)
+	assert torch.isclose(vdi2.data, vdi.data).all()
+
+

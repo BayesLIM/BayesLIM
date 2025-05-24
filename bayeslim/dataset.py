@@ -138,30 +138,34 @@ class TensorData:
         from bayeslim import optim
         self.icov = optim.compute_icov(self.cov, self.cov_axis, inv=inv, **kwargs)
 
-    def copy(self, deepcopy=False, detach=True):
+    def copy(self, copydata=False, copymeta=False, detach=True):
         """
-        Copy and return self. This is equivalent
-        to a detach and clone. Detach is optional
+        Copy and return self.
 
         Parameters
         ----------
-        deepcopy : bool, optional
-            If True (default) also make a copy of metadata
-            in addition to data.
+        copydata : bool, optional
+            If True make a clone of the data.
+            Default is False.
+        copymeta : bool, optional
+            If True make a new instantiation of metadata like
+            times, freqs, flags, etc.
         detach : bool, optional
             If True (default) detach self.data for new object
+            if copydata == True.
         """
         flags, cov, icov = self.flags, self.cov, self.icov
         history = self.history
 
         # clone data
         data = self.data
-        if isinstance(data, torch.Tensor):
-            if detach:
-                data = data.detach()
-            data = data.clone()
+        if copydata:
+            if isinstance(data, torch.Tensor):
+                if data.requires_grad and detach:
+                    data = data.detach()
+                data = data.clone()
 
-        if deepcopy:
+        if copymeta:
             if isinstance(flags, torch.Tensor): flags = flags.clone()
             if isinstance(cov, torch.Tensor): cov = cov.clone()
             if isinstance(icov, torch.Tensor): icov = icov.clone()
@@ -197,11 +201,11 @@ class TensorData:
         return self.icov
 
     def __add__(self, other):
-        out = self.copy()
+        out = self.copy(copydata=False, copymeta=False)
         if isinstance(other, (float, int, complex, torch.Tensor)):
-            out.data += other
+            out.data = out.data + other
         else:
-            out.data += other.data
+            out.data = out.data + other.data
             self._propflags(out, other)
         return out
 
@@ -214,11 +218,11 @@ class TensorData:
         return self
 
     def __sub__(self, other):
-        out = self.copy()
+        out = self.copy(copydata=False, copymeta=False)
         if isinstance(other, (float, int, complex, torch.Tensor)):
-            out.data -= other
+            out.data = out.data - other
         else:
-            out.data -= other.data
+            out.data = out.data - other.data
             self._propflags(out, other)
         return out
 
@@ -231,11 +235,11 @@ class TensorData:
         return self
 
     def __mul__(self, other):
-        out = self.copy()
+        out = self.copy(copydata=False, copymeta=False)
         if isinstance(other, (float, int, complex, torch.Tensor)):
-            out.data *= other
+            out.data = out.data * other
         else:
-            out.data *= other.data
+            out.data = out.data * other.data
             self._propflags(out, other)
         return out
 
@@ -248,11 +252,11 @@ class TensorData:
         return self
 
     def __truediv__(self, other):
-        out = self.copy()
+        out = self.copy(copydata=False, copymeta=False)
         if isinstance(other, (float, int, complex, torch.Tensor)):
-            out.data /= other
+            out.data = out.data / other
         else:
-            out.data /= other.data
+            out.data = out.data / other.data
             self._propflags(out, other)
         return out
 
@@ -297,7 +301,6 @@ class VisData(TensorData):
         # and push antpos if needed
         if self.antpos:
             self.antpos.push(device)
-            self.antvecs = self.antpos.antvecs
         # push telescope if needed
         if self.telescope:
             self.telescope.push(device)
@@ -329,11 +332,9 @@ class VisData(TensorData):
                 antpos = utils.AntposDict(list(antpos.keys()),
                     list(antpos.values()))
         self.antpos = antpos
-        self.ants, self.antvecs = None, None
+        self.ants = None
         if antpos is not None:
-            ## TODO: do we really need both self.antvecs and self.antpos?
             self.ants = antpos.ants
-            self.antvecs = antpos.antvecs
 
     def setup_data(self, bls, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -549,21 +550,22 @@ class VisData(TensorData):
 
         return self.antpos[ant2] - self.antpos[ant1]
 
-    def copy(self, deepcopy=False, detach=True):
+    def copy(self, copydata=False, copymeta=False, detach=True):
         """
-        Copy and return self. This is equivalent
-        to a detach and clone. Detach is optional
+        Copy and return self.
 
         Parameters
         ----------
-        deepcopy : bool, optional
-            If True (default) also make a copy of metadata
-            like telescope, antpos, times, freqs, flags, etc.
-            Note that this also copies things like the telescope cache,
-            which can be large in memory. Otherwise, only make a clone
-            of data and make all other (meta)data a pointer to self.
+        copydata : bool, optional
+            If True make a clone of the data.
+            Default is False.
+        copymeta : bool, optional
+            If True make a new instantiation of metadata like
+            telescope, antpos, times, freqs, flags, etc.
+            Note that this drops things like telescope cache.
         detach : bool, optional
             If True (default) detach self.data for new object
+            if copydata == True.
         """
         vd = VisData()
         telescope, antpos = self.telescope, self.antpos
@@ -573,12 +575,13 @@ class VisData(TensorData):
 
         # clone data
         data = self.data
-        if isinstance(data, torch.Tensor):
-            if detach:
-                data = data.detach()
-            data = data.clone()
+        if copydata:
+            if isinstance(data, torch.Tensor):
+                if data.requires_grad and detach:
+                    data = data.detach()
+                data = data.clone()
 
-        if deepcopy:
+        if copymeta:
             if telescope is not None:
                 telescope = telescope.__class__(telescope.location, tloc=telescope.tloc,
                                                 device=telescope.device)
@@ -1191,7 +1194,7 @@ class VisData(TensorData):
         if inplace:
             vd = self
         else:
-            vd = self.copy(detach=True)
+            vd = self.copy(copymeta=True)
         cal_data = cd.data
         if not utils.check_devices(vd.data.device, cal_data.device):
             cal_data = cal_data.to(vd.data.device)
@@ -1237,15 +1240,16 @@ class VisData(TensorData):
         other_data = other_vis.data if other_vis is not None else torch.zeros_like(self.data)
         return calibration.chisq(self.data, other_data, icov, axis=axis, cov_axis=cov_axis, dof=dof)
 
-    def bl_average(self, reds=None, wgts=None, redtol=1.0, inplace=True):
+    def bl_average(self, reds=None, wgts=None, redtol=1.0, inplace=False):
         """
-        Average baselines together, weighted by inverse covariance. Note
-        this drops all baselines not present in reds from the object.
+        Average baselines together. Note this drops all baselines not
+        present in reds from the object.
 
         Parameters
         ----------
-        reds : list of baseline groups, optional
-            List of baseline groups to average.
+        reds : list, optional
+            List of baseline groups to average in either blnums format
+            or antpair tuple format.
             E.g. [[(0, 1), (1, 2)], [(2, 5), (3, 6), (4, 7)], ...]
             Default is to automatically build redundant groups.
         wgts : tensor, optional
@@ -1261,75 +1265,77 @@ class VisData(TensorData):
         # setup reds
         if reds is None:
             from bayeslim import telescope_model
-            reds = telescope_model.build_reds(self.antpos, bls=self.bls, redtol=redtol)[0]
+            red_info = telescope_model.build_reds(
+                self.antpos,
+                bls=self.bls,
+                redtol=redtol,
+            )
+            reds, bl2red = red_info[0], red_info[2]
+        else:
+            bl2red = {}
+            for i, red in enumerate(reds):
+                for bl in red:
+                    bl2red[bl] = i
 
-        # iterate over reds: select, average, then append
-        avg_groups = []
-        for i, red in enumerate(reds):
-            # down select bls from self
-            obj = self.select(bl=red, inplace=False)
+        # setup indexing tensor along Nbls axis
+        bls = self.bls if isinstance(list(bl2red.keys())[0], tuple) else self.blnums
+        Nmax = len(reds)
+        index = torch.as_tensor(
+            [bl2red.get(bl, Nmax) for bl in bls],
+            device=self.device
+        )
+        Nout_bls = index.unique().numel()
+        truncate = Nmax in index
 
-            # setup weights
-            if wgts is None:
-                if obj.icov is not None:
-                    wgt = optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis')
-                elif obj.cov is not None:
-                    wgt = 1 / optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis').clip(1e-40)
-                else:
-                    wgt = torch.ones_like(obj.data)
-            else:
-                # select wgt given bl selection
-                wgt = wgts[self.get_inds(bl=red)]
-                
-            assert wgt.shape[2] == obj.data.shape[2]
-            wgt = wgt.real
+        # get weights
+        if wgts is None and self.icov is not None and self.cov_axis is None:
+            wgts = self.icov
 
-            # get covariance
-            if obj.cov is not None:
-                cov = optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis')
-            elif obj.icov is not None:
-                cov = 1 / optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis').clip(1e-40)
-            else:
-                cov = None
+        # get cov
+        cov = None
+        if self.cov_axis is None:
+            if self.cov is not None:
+                cov = self.cov
+            elif self.icov is not None:
+                cov = 1 / self.icov.clip(1e-60)
 
-            # take average along bl axis
-            avg_data, wgt_norm, avg_cov = average_data(obj.data, 2, wgts=wgt, cov=cov, keepdims=True)
+        # take data average
+        avg_data, sum_wgts, avg_cov = average_data(
+            self.data,
+            -3,
+            index,
+            Nout_bls,
+            wgts=wgts,
+            cov=cov,
+            truncate=truncate
+        )
 
-            # update cov array
-            if obj.icov is not None:
-                avg_icov = optim.compute_icov(avg_cov, None)
-            else:
-                avg_icov = None
+        # get avg_flags
+        avg_flags = None
+        if self.flags is not None:
+            avg_flags = torch.zeros_like(
+                avg_data,
+                dtype=bool,
+                device=avg_data.device
+            )
+            avg_flags.index_add_(-3, index, ~self.flags)
+            avg_flags = ~avg_flags
 
-            # get rid of cov if not present in obj
-            if obj.cov is None:
-                avg_cov = None
-
-            # update flag array
-            if obj.flags is not None:
-                avg_flags = obj.flags.all(dim=2, keepdims=True)
-            else:
-                avg_flags = None
-
-            # setup data
-            obj.setup_data(red[:1], obj.times, obj.freqs, pol=obj.pol,
-                           data=avg_data, flags=avg_flags, cov=avg_cov,
-                           icov=avg_icov, cov_axis=None, history=obj.history)
-
-            avg_groups.append(obj)
-
-        # concatenate the averaged groups
-        out = concat_VisData(avg_groups, 'bl')
+        # get avg_icov
+        avg_icov = None
+        if self.icov is not None:
+            avg_icov = 1 / avg_cov.clip(1e-60)
 
         if inplace:
-            # overwrite self.data and appropriate metadata
-            self.setup_data(out.blnums, out.times, out.freqs, pol=out.pol,
-                            data=out.data, flags=out.flags, cov=out.cov,
-                            cov_axis=out.cov_axis, icov=out.icov,
-                            history=out.history)
-
+            vout = self
         else:
-            return out
+            vout = self.copy(copydata=False, copymeta=False)
+
+        vout.setup_data([red[0] for red in reds], vout.times, vout.freqs, pol=self.pol,
+                        data=avg_data, flags=avg_flags, cov=avg_cov,
+                        icov=avg_icov, cov_axis=None, history=self.history)
+
+        return vout
 
     def time_average(self, time_inds=None, wgts=None, atol=1e-5, rephase=False, inplace=True):
         """
@@ -1439,7 +1445,7 @@ class VisData(TensorData):
         else:
             return out
 
-    def _inflate_by_redundancy(self, new_bls, old_bls):
+    def _inflate_by_redundancy(self, new_bls, red_bl_inds, try_view=False):
         """
         Inflate data by redundancies and return a new object
 
@@ -1448,21 +1454,23 @@ class VisData(TensorData):
         new_bls : list, ndarray
             List of new baseline tuples for inflated data
             e.g. [(0, 1), (1, 2), (1, 3), ...]
-            or blnums ndarray
-        old_bls : list, ndarray
-            List of redundant baseline tuple for each bl tuples in new_bls
-            e.g. [(0, 1), (0, 1), (1, 3), ...]
-            or blnums ndarray
+            or blnums ndarray.
+        red_bl_inds : list, ndarray
+            List of baseline indices in redundant dataset
+            for each bl in new_bls.
+            e.g. [0, 0, 1, 2, 2, ...]
+        try_view : bool, optional
+            If True try to make inflated data a view of red data.
 
         Returns
         -------
         VisData
         """
         # expand data across redundant baselines
-        data = self.get_data(bl=old_bls, squeeze=False, try_view=False)
-        flags = self.get_flags(bl=old_bls, squeeze=False, try_view=False)
-        cov = self.get_cov(bl=old_bls, squeeze=False, try_view=False)
-        icov = self.get_icov(bl=old_bls, squeeze=False, try_view=False)
+        data = self.get_data(bl_inds=red_bl_inds, squeeze=False, try_view=try_view)
+        flags = self.get_flags(bl_inds=red_bl_inds, squeeze=False, try_view=try_view)
+        cov = self.get_cov(bl_inds=red_bl_inds, squeeze=False, try_view=try_view)
+        icov = self.get_icov(bl_inds=red_bl_inds, squeeze=False, try_view=try_view)
 
         # setup new object
         new_vis = VisData()
@@ -1507,9 +1515,9 @@ class VisData(TensorData):
         if bls is None:
             bls = list(bl2red.keys())
 
-        new_bls, red_bls = utils.inflate_bls(self.bls, bl2red, bls)
+        new_bls, red_bl_inds = utils.inflate_bls(self.bls, bl2red, bls)
 
-        return self._inflate_by_redundancy(new_bls, red_bls)
+        return self._inflate_by_redundancy(new_bls, red_bl_inds)
 
     def write_hdf5(self, fname, overwrite=False):
         """
@@ -1545,7 +1553,8 @@ class VisData(TensorData):
                 # write telescope and array objects
                 f.attrs['tloc'] = self.telescope.location
                 f.attrs['ants'] = self.ants
-                f.attrs['antvecs'] = self.antvecs
+                antvecs = None if self.antpos is None else self.antpos.antvecs
+                f.attrs['antvecs'] = antvecs
                 f.attrs['obj'] = 'VisData'
                 f.attrs['version'] = version.__version__
         else:
@@ -2347,10 +2356,9 @@ class CalData(TensorData):
                 antpos = utils.AntposDict(list(antpos.keys()),
                     list(torch.vstack(antpos.values())))
         self.antpos = antpos
-        self.ants, self.antvecs = None, None
+        self.ants = None
         if antpos is not None:
             self.ants = antpos.ants
-            self.antvecs = antpos.antvecs
 
     def setup_data(self, ants, times, freqs, pol=None,
                    data=None, flags=None, cov=None, cov_axis=None,
@@ -2972,7 +2980,7 @@ class CalData(TensorData):
         CalData
         """
         from bayeslim.calibration import redcal_degen_gains
-        out = self.copy()
+        out = self.copy(copymeta=True)
         rd = out.redcal_degens(wgts=wgts)
         out.data = redcal_degen_gains(out.ants, antpos=out.antpos,
                                       abs_amp=rd[0], phs_slope=rd[1])
@@ -3253,6 +3261,88 @@ class Dataset(TorchDataset):
         return self.read_fn(self.data[idx], **self.read_kwargs[idx])
 
 
+class RedVisAvg(utils.Module):
+    """
+    VisData redundant averaging block.
+
+    Currently only supports diagonal covariances.
+    """
+    def __init__(self, reds, wgts=None, inplace=False, device=None):
+        """
+        Parameters
+        ----------
+        reds : list of lists
+            Redundant baseline groups to average
+            together
+        wgts : tensor, optional
+            Visibility weights to use when averaging
+        inplace : bool, optional
+            Average inplace, default = False
+        device : bool, optional
+            device to push to
+        """
+        super().__init__()
+        self.reds = reds
+        self.wgts = wgts
+        self.inplace = inplace
+        self.device = device
+
+    def __call__(self, vd, **kwargs):
+        vd = vd.bl_average(
+            reds=self.reds,
+            wgts=self.wgts,
+            inplace=self.inplace
+        )
+
+        return vd
+
+    def forward(self, vd, **kwargs):
+        return self(vd, **kwargs)
+
+    def push(self, device):
+        """
+        Push to device
+        """
+        self.wgts = utils.push(self.wgts, device)
+
+
+class RedVisInflate(utils.Module):
+    """
+    VisData redundant inflation block.
+    """
+    def __init__(self, new_bls, red_bl_inds):
+        """
+        Parameters
+        ----------
+        new_bls : list
+            new baselines of inflated data.
+        red_bl_inds : tensor
+            Indicies of redundantly compressed data for each
+            bl in new_bls.
+        """
+        super().__init__()
+        self.new_bls = new_bls
+        self.red_bl_inds = red_bl_inds
+        self.device = None
+
+    def __call__(self, vd, **kwargs):
+        vd = vd._inflate_by_redundancy(
+            new_bls=self.new_bls,
+            red_bl_inds=self.red_bl_inds,
+        )
+
+        return vd
+
+    def forward(self, vd, **kwargs):
+        return self(vd, **kwargs)
+
+    def push(self, device):
+        """
+        Push to device
+        """
+        self.red_bl_inds = utils.push(self.red_bl_inds, device)
+
+
 def concat_VisData(vds, axis, run_check=True, interleave=False):
     """
     Concatenate VisData objects together
@@ -3365,32 +3455,40 @@ def average_TensorData(objs, wgts=None):
     raise NotImplementedError
 
 
-def average_data(data, dim, wgts=None, cov=None, keepdims=True):
+def average_data(data, dim, index, N, wgts=None, cov=None, truncate=False):
     """
-    Average tensor data along a dimension
+    Average tensor data along a dimension using torch.index_add.
 
     Parameters
     ----------
     data : tensor
-        nd-tensor to average along one dimension
+        nd-tensor to average along a dimension.
     dim : int
-        Dimension of data to average over
+        Dimension of data to average over.
+    index : tensor
+        Indexing tensor of data along dim, denoting
+        the output index for each element in data to sum together.
+        e.g. [0, 1, 0, 1, ...] -> [sum(data[[0, 2]]), sum(data[[1, 3]]), ...]
+    N : int
+        The number of output elements along dim, i.e., len(index.unique())
     wgts : tensor
-        Weights to use for averaging. If None and cov is None
-        use uniform weights. If None but cov is not None, use inverse-cov.
-        If wgts and cov are passed, use wgts for weighting.
+        Data weights to use for averaging.
+        If None use uniform weights.
     cov : tensor
-        Covariance of data to use in weighting, and to propgate to averaged
+        Covariance of data to use in weighting, and to propagate to averaged
         data. Currently only supports diagonal covariances. Must match
-        shape of data tensor along last cov.ndim dimensions.
-    keepdims : bool, optional
-        If True, keep averaged dimension, otherwise squeeze it.
+        shape of data tensor.
+    truncate : bool, optional
+        If True, remove the last element from all outputs along dim.
+        This is needed when some elements in data aren't actually
+        needed, but due to torch.index_add must be assigned
+        an element in the output data, so we just truncate it.
 
     Returns
     -------
     avg_data : tensor
         Data averaged along dim.
-    wgt_norm : tensor
+    sum_wgts : tensor
         Sum of weights along dim.
     avg_cov : tensor
         Covariance of averaged data.
@@ -3414,39 +3512,62 @@ def average_data(data, dim, wgts=None, cov=None, keepdims=True):
 
         C_x = G^-1 A^T W A G^-1 = G^-1 = 1 / tr(W)
     """
-    # setup weights
-    if wgts is None:
-        if cov is not None:
-            wgts = 1 / cov.clip(1e-40)
-        else:
-            wgts = torch.ones_like(data)
-
-    wgts = wgts.real
-
-    # make sure wgts have same shape as data
-    if wgts.shape != data.shape[-wgts.ndim:]:
-        wgts = torch.ones_like(data).real * wgts
-
-    # get dim relative to last dimension
+    # make sure dim is negative
     dim = np.arange(-data.ndim, 0, 1)[dim]
     
-    # average data
-    wgt_norm = torch.sum(wgts, dim=dim, keepdims=keepdims)
+    # setup weights
+    if wgts is None:
+        # uniform weights
+        shape = torch.ones(data.ndim, dtype=torch.int64).tolist()
+        shape[dim] = data.shape[dim]
+        wgts = torch.ones(shape, device=data.device)
 
-    # TODO: do a true divide where wgt_norm == 0
-    avg_data = torch.sum(data * wgts, dim=dim, keepdims=keepdims) / wgt_norm.clip(1e-40)
+    # make sure wgts and data have same len along dim
+    if wgts.shape[dim] != data.shape[dim]:
+        # broadcast wgts.shape[dim] to data.shape[dim]
+        shape = list(wgts.shape)
+        shape[dim] = data.shape[dim]
+        wgts = wgts.expand(shape)
+
+    # setup output data and wgt tensors
+    shape = list(data.shape)
+    shape[dim] = N
+    avg_data = torch.zeros(shape, dtype=data.dtype, device=data.device)
+    shape = list(wgts.shape)
+    shape[dim] = N
+    sum_wgts = torch.zeros(shape, dtype=wgts.dtype, device=wgts.device)
+
+    # take weighted sum of data
+    sum_wgts.index_add_(dim, index, wgts)
+    avg_data.index_add_(dim, index, data * wgts)
+    avg_data /= sum_wgts.clip(1e-40)
 
     # update cov array
     if cov is not None:
         # ensure cov broadcasts with data
-        assert cov.shape == data.shape[-cov.ndim:]  # only diagonal
+        assert cov.shape == data.shape[-cov.ndim:]
+
+        # propagate covariance through weighted sum
+        shape = list(cov.shape)
+        shape[dim] = N
+        avg_cov = torch.zeros(shape, dtype=cov.dtype, device=cov.device)
+        avg_cov.index_add_(dim, index, cov * wgts.pow(2))
+        avg_cov /= sum_wgts.clip(1e-40).pow(2)
+
     else:
-        cov = torch.ones_like(data).real
+        avg_cov = None
 
-    # propagate covariance through weighted sum
-    avg_cov = torch.sum(cov * wgts**2, dim=dim, keepdims=keepdims) / (wgt_norm**2).clip(1e-40)
+    if truncate:
+        # remove last element from all outputs
+        slices = [slice(None)] * data.ndim
+        slices[dim] = slice(0, N - 1)
+        avg_data = avg_data[slices]
+        slices = slices[-wgts.ndim:]
+        sum_wgts = sum_wgts[slices]
+        if cov is not None:
+            avg_cov = avg_cov[slices]
 
-    return avg_data, wgt_norm, avg_cov
+    return avg_data, sum_wgts, avg_cov
 
 
 def load_data(fname, concat_ax=None, copy=False, **kwargs):

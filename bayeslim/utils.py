@@ -2063,13 +2063,13 @@ def flatten(arr, Nelem=None):
     return flat
 
 
-def inflate_bls(data_bls, bl2red, all_bls=None):
+def inflate_bls(red_bls, bl2red, all_bls=None):
     """
     Inflate unique baseline to all physical baselines
 
     Parameters
     ----------
-    data_bls : list of ant-pair tuples
+    red_bls : list of ant-pair tuples
         List of unique bls of current redundant data set.
     bl2red : dict, optional
         A {bl: int} dictionary mapping a physical baseline
@@ -2077,7 +2077,7 @@ def inflate_bls(data_bls, bl2red, all_bls=None):
     all_bls : list of ant-pair tuples, optional
         If provided, only inflate to physical bls
         present in all_bls. If a redundant baseline
-        match doesn't exist in data_bls then drop
+        match doesn't exist in red_bls then drop
         it from output.
 
     Returns
@@ -2092,15 +2092,15 @@ def inflate_bls(data_bls, bl2red, all_bls=None):
         all_bls = list(bl2red.keys())
 
     # get redundant indices of current baselines
-    red_indices = {bl2red.get(bl, None): bl for bl in data_bls}
+    red_indices = set(bl2red.get(bl, None) for bl in red_bls)
 
-    # iterate over new_bls and get corresponding redundant baseline
+    # iterate over new_bls and get corresponding redundant index
     new_bls, red_inds = [], []
     for bl in all_bls:
         red_idx = bl2red.get(bl, -1)
         if red_idx in red_indices:
             new_bls.append(bl)
-            red_inds.append(red_indices[red_idx])
+            red_inds.append(red_idx)
 
     return new_bls, red_inds
 
