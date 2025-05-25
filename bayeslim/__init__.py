@@ -22,6 +22,7 @@ from . import filt
 from . import linear_model
 from . import hmat
 from . import bfgs
+from . import imaging
 
 from .paramdict import ParamDict
 from .dataset import CalData, MapData, VisData, Dataset

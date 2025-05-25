@@ -14,13 +14,14 @@ freqs = torch.linspace(120e6, 130e6, 10)
 times = torch.linspace(2458168.1, 2458168.3, 5)
 
 
-def setup_VisData():
+def setup_VisData(N=3, times=times, freqs=freqs):
+	# setup HERA-like array and some random data
 
 	vd = ba.VisData()
 
 	# setup visdata
 	telescope = setup_Telescope()
-	array = setup_Array(N=3)
+	array = setup_Array(N=N)
 	antpos = array.to_antpos()
 	bls = array.get_bls()
 
