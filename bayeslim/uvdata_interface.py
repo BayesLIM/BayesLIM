@@ -8,6 +8,7 @@ import itertools
 import copy
 
 from . import utils, beam_model, sky_model, telescope_model, rime_model
+from .dataset import VisData
 from .utils import _float, _cfloat
 
 try:
@@ -16,6 +17,119 @@ try:
 except ImportError:
     import_pyuv = False
     warnings.warn("could not import pyuvdata")
+
+
+def uvd_to_visdata(uvd):
+    """
+    Turn UVData into a VisData
+
+    Parameters
+    ----------
+    uvd : UVData object
+        With data and metadata pre-loaded.
+
+    Returns
+    -------
+    VisData
+    """
+    raise NotImplementedError
+    # init a VisData
+    vd = VisData()
+
+    # setup metadata
+    telescope = telescope_model.Telescope()
+    antpos = utils.AntposDict(ants, antvecs)
+    vd.setup_meta(telescope=telescope, antpos=antpos)
+
+    # setup data tensors: (Npol, Npol, Nbls, Ntimes, Nfreqs)
+    data = torch.as_tensor()
+    flags = torch.as_tensor()
+    cov = torch.as_tensor()
+    icov = torch.as_tensor()
+
+    # setup data
+    vd.setup_data(bls, times, freqs, pol=pol,
+        data=data, flags=flags, cov=cov, cov_axis=None,
+        icov=icov, history=history)
+
+    return vd
+
+
+class PyVisData(VisData):
+    """
+    A subclass of VisData with a
+    pyuvdata.UVData interface.
+
+    This is mainly for lazy loading
+    a pyuvdata UVH5 file into
+    the VisData expected format.
+    """
+    raise NotImplementedError
+    def read_uvdata(self, fname, run_check=True, **kwargs):
+        """
+        Read a UVH5 file into a UVData and transfer to
+        a VisData object. Needs pyuvdata support.
+
+        Parameters
+        ----------
+        fname : str or UVData
+            Filename(s) to read, or UVData object
+        run_check : bool, optional
+            Run check after read
+        kwargs : dict
+            kwargs for UVData read
+        """
+        from pyuvdata import UVData
+        from bayeslim.utils import _float, _cfloat
+        from bayeslim import telescope_model
+        # load uvdata
+        if isinstance(fname, str):
+            uvd = UVData()
+            uvd.read_uvh5(fname, **kwargs)
+        elif isinstance(fname, UVData):
+            uvd = fname
+        # extract data and metadata
+        bls = uvd.get_antpairs()
+        Nbls = uvd.Nbls
+        times = torch.as_tensor(np.unique(uvd.time_array))
+        Ntimes = uvd.Ntimes
+        freqs = torch.tensor(uvd.freq_array[0], dtype=_float())
+        Nfreqs = uvd.Nfreqs
+        if uvd.x_orientation is None:
+            uvd.x_orientation = 'north'  # IAU convention by default
+        pols = uvd.get_pols()
+        if len(pols) == 1:
+            pol = pols[0]
+        else:
+            pol = None
+        self.history = uvd.history
+        Npol = 1 if len(pols) == 1 else 2
+        data_pols = [[pol]] if Npol == 1 else [['ee', 'en'], ['ne', 'nn']]
+
+        # organize data
+        data = np.zeros((Npol, Npol, Nbls, Ntimes, Nfreqs), dtype=uvd.data_array.dtype)
+        flags = np.zeros((Npol, Npol, Nbls, Ntimes, Nfreqs), dtype=bool)
+        for i in range(len(data_pols)):
+            for j in range(len(data_pols)):
+                dpol = data_pols[i][j]
+                for k, bl in enumerate(bls):
+                    data[i, j, k] = uvd.get_data(bl + (dpol,))
+                    flags[i, j, k] = uvd.get_flags(bl + (dpol,))
+        data = torch.tensor(data, dtype=_cfloat())
+        flags = torch.tensor(flags, dtype=torch.bool)
+
+        # setup data
+        self.setup_data(bls, times, freqs, pol=pol,
+                        data=data, flags=flags, history=uvd.history)
+        # configure telescope data
+        antpos, ants = uvd.get_ENU_antpos()
+        antpos = dict(zip(ants, antpos))
+        loc = uvd.telescope_location_lat_lon_alt_degrees
+        telescope = telescope_model.TelescopeModel((loc[1], loc[0], loc[2]))
+        self.setup_meta(telescope, antpos)
+
+        if run_check:
+            self.check()
 
 
 def run_rime_sim(sky, beam, uvd, ant2beam=None, partial_read={},
