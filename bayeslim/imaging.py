@@ -65,30 +65,39 @@ class VisMapper:
 		## TODO: add on-the-fly vis loading
 		self.vis = vis
 		self.telescope = vis.telescope
-		self.times = np.asarray(self.vis.times.cpu())  # this must be numpy array for caching purposes
-		self.Ntimes = len(self.times)
-		self.freqs = vis.freqs
-		self.set_inds()
 		self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device, **kwargs)
 		self.ra = ra
 		self.dec = dec
 		self.Npix = len(ra)
-		self.beam = beam
-		self.fov = beam.fov if beam is not None else fov
+
 		self.device = vis.data.device
 		self.dtype = dtype
-		self.blvecs = self.array.get_blvecs(self.vis.bls)
-		self.Nbls = self.vis.Nbls
+
+		self.beam = beam
+		self.fov = beam.fov if beam is not None else fov
+
+		# set freq indices
+		self._freqs = vis.freqs
+		self.set_freq_inds()
+
+		# set time indices
+		self._times = np.asarray(vis.times.cpu())  # this must be numpy array for caching purposes
+		self.set_time_inds()
+
+		# set bl indices
+		self._blnums = vis.blnums
+		self.set_bl_inds()
+
 		self.cache_A = cache_A
 		self.clear_cache()
-		self.method = None
-		self.icov = None
+
+		self.set_normalization()
 
 	def clear_cache(self):
 		self.A = {}
 		self.D = None
  
-	def set_inds(self, freq_inds=None, freqs=None):
+	def set_freq_inds(self, freq_inds=None, freqs=None):
 		"""
 		Set frequency indexing
 
@@ -102,7 +111,7 @@ class VisMapper:
 		assert not ((freqs is not None) and (freq_inds is not None))
 
 		# get freq_inds
-		fidx = lambda f: torch.where(torch.isclose(self.freqs, f, atol=1e-10))[0]
+		fidx = lambda f: torch.where(torch.isclose(self._freqs, f, atol=1e-10))[0]
 		if freqs is not None:
 			iterable = False
 			if isinstance(freqs, (list, np.ndarray)):
@@ -119,8 +128,99 @@ class VisMapper:
 			freq_inds = slice(None)
 
 		self.freq_inds = utils._list2slice(freq_inds)
+		self.freqs = self._freqs[self.freq_inds]
+		self.Nfreqs = len(self.freqs)
+		self.clear_cache()
 
-	def set_normalization(self, method='w', icov=None, clip=1e-8):
+	def set_time_inds(self, time_inds=None, times=None):
+		"""
+		Set times indexing. This works slightly different
+		than freq_inds or bl_inds, b/c there are two sets
+		of time_inds. self.time_inds tracks the indices
+		of self.vis.times that we want to image. Whereas
+		the "time_ind" in self.build_A() and self.build_v()
+		and in the cache self.A tracks the indices of
+		self.vis.times[self.time_inds].
+
+		Parameters
+		----------
+		time_inds : tensor
+			Time indices of observations to image
+		times : tensor
+			Observation times [Julian Date] of observations to image
+		"""
+		assert not ((times is not None) and (time_inds is not None))
+
+		# get time_inds
+		tidx = lambda t: np.where(np.isclose(self._times, t, atol=1e-10, rtol=1e-13))[0]
+		if times is not None:
+			iterable = False
+			if isinstance(times, list):
+				iterable = True
+			elif isinstance(times, (torch.Tensor, np.ndarray)):
+				if times.ndim == 1:
+					iterable = True
+			if iterable:
+				time_inds = np.concatenate([tidx(t) for t in times]).tolist()
+			else:
+				time_inds = tidx(times).tolist()
+			assert len(time_inds) == len(times)
+
+		# make sure time_inds is a list
+		if time_inds is None:
+			time_inds = list(range(len(self._times)))
+		elif isinstance(time_inds, slice):
+			time_inds = utils._slice2tensor(time_inds).tolist()
+		elif isinstance(time_inds, (np.ndarray, torch.Tensor)):
+			if time_inds.ndim == 0:
+				time_inds = [time_inds.tolist()]
+			else:
+				time_inds = time_inds.tolist()
+		elif isinstance(time_inds, (int, np.integer)):
+			time_inds = [time_inds]
+
+		self.time_inds = time_inds
+		self.times = self._times[time_inds]
+		self.Ntimes = len(self.times)
+		self.clear_cache()
+
+	def set_bl_inds(self, bl_inds=None, blnums=None):
+		"""
+		Set baseline indexing
+
+		Parameters
+		----------
+		bl_inds : tensor
+			Baseline indices of observations to image
+		blnums : tensor
+			Baseline blnums to image
+		"""
+		assert not ((blnums is not None) and (bl_inds is not None))
+
+		# get time_inds
+		blidx = lambda bl: np.where(self._blnums == bl)[0]
+		if blnums is not None:
+			iterable = False
+			if isinstance(blnums, list):
+				iterable = True
+			elif isinstance(times, (torch.Tensor, np.ndarray)):
+				if blnums.ndim == 1:
+					iterable = True
+			if iterable:
+				bl_inds = np.concatenate([blidx(bl) for bl in blnums]).tolist()
+			else:
+				bl_inds = blidx(blnums).tolist()
+
+		if bl_inds is None:
+			bl_inds = slice(None)
+
+		self.bl_inds = utils._list2slice(bl_inds)
+		self.blnums = self._blnums[self.bl_inds]
+		self.Nbls = len(self.blnums)
+		self.blvecs = self.array.get_blvecs(utils.blnum2ants(self.blnums))
+		self.clear_cache()
+
+	def set_normalization(self, method='A2w', icov=None, clip=1e-8):
 		"""
 		Set the normalization method.
 
@@ -128,11 +228,13 @@ class VisMapper:
 		----------
 		method : str, optional
 			Choice of dirty map, diagonal normalization:
-				'w'  : D = 1 / w @ 1
-				'Aw' : D = 1 / MaxNorm(|A^t| @ w @ 1) * w @ 1
+				'w'   : D = 1 / 1 @ w
+				'Aw'  : D = 1 / w @ |A|
+				'A2w' : D = 1 / w @ |A|^2]
+			Default ('A2w') is standard least squares.
 		icov : tensor, optional
-			Inverse covariance to use instead of self.vis.
-			Must match self.vis.icov shape.
+			Visibility weights to use instead of self.vis.icov,
+			must match self.vis.icov shape.
 		"""
 		self.method = method
 		self.icov = icov
@@ -203,10 +305,12 @@ class VisMapper:
 			Visibility vector of shape (..., Nbls, Nfreqs)
 		"""
 		vis = self.vis if vis is None else vis
+		time_ind = self.time_inds[time_ind]
 		if isinstance(vis, list):
 			# (Nvis, Nbls, Nfreqs)
 			v = torch.stack([
 			_vis.get_data(
+				bl_inds=self.bl_inds,
 				time_inds=time_ind,
 				freq_inds=self.freq_inds,
 				squeeze=False,
@@ -216,6 +320,7 @@ class VisMapper:
 		else:
 			# (Nbls, Nfreqs)
 			v = vis.get_data(
+				bl_inds=self.bl_inds,
 				time_inds=time_ind,
 				freq_inds=self.freq_inds,
 				squeeze=False,
@@ -240,10 +345,12 @@ class VisMapper:
 			Visibility weights of shape (Nbls, Nfreqs)
 		"""
 		icov = self.icov if self.icov is not None else self.vis.icov
+		time_ind = self.time_inds[time_ind]
 
 		# get weights
 		if icov is not None:
 			w = self.vis.get_icov(
+				bl_inds=self.bl_inds,
 				time_inds=time_ind,
 				icov=icov,
 				freq_inds=self.freq_inds,

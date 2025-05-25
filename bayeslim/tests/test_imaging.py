@@ -14,7 +14,7 @@ from test_dataset import setup_VisData
 freqs = torch.linspace(120e6, 130e6, 2)
 
 
-def setup_VisMapper(vd, fov=60, nside=32, cache_A=True):
+def setup_VisMapper(vd, fov=180, nside=32, cache_A=True):
 	# setup HERA stripe mapping object
 	theta, phi = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
 	s = (abs(theta - (90+30.72148)*np.pi/180) < (20*np.pi/180)) & (phi < 110*np.pi/180)
@@ -101,13 +101,32 @@ def test_imaging_lazy():
 		maps1 = VM.make_map()
 
 		# setup mapper with out-of-memory data
-		vd.read_hdf5(tmpfile, lazy_load=True)
-		VM = setup_VisMapper(vd, cache_A=False)
-		VM.set_normalization('A2w', clip=1e-8)
-		maps2 = VM.make_map()
+		vd2 = ba.VisData()
+		vd2.read_hdf5(tmpfile, lazy_load=True)
+		VM2 = setup_VisMapper(vd2, cache_A=False)
+		VM2.set_normalization('A2w', clip=1e-8)
+		maps2 = VM2.make_map()
 
-	assert torch.isclose(maps1, maps2, atol=1e-8, rtol=1e-8).all()
+		assert torch.isclose(maps1, maps2, atol=1e-8, rtol=1e-8).all()
 
+		# now test with freq, bl, and time selections
+		VM.set_freq_inds(freq_inds=[0])
+		VM.set_time_inds(time_inds=range(0,20,2))
+		VM.set_bl_inds(bl_inds=range(0,100))
+		VM2.set_freq_inds(freq_inds=[0])
+		VM2.set_time_inds(time_inds=range(0,20,2))
+		VM2.set_bl_inds(bl_inds=range(0,100))
 
+		maps3 = VM.make_map()
+		maps4 = VM2.make_map()
 
+		assert maps3.shape == (1, VM.Npix)
+		assert torch.isclose(maps3, maps4, atol=1e-8, rtol=1e-8).all()
+
+		# now test different time indices
+		# and make sure they aren't the same maps
+		VM.set_time_inds(time_inds=range(0,10))
+		maps5 = VM.make_map()
+		assert maps5.shape == (1, VM.Npix)
+		assert not torch.isclose(maps3, maps5, atol=1e-8, rtol=1e-8).any()
 
