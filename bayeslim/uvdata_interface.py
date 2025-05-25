@@ -64,7 +64,8 @@ class PyVisData(VisData):
     a pyuvdata UVH5 file into
     the VisData expected format.
     """
-    raise NotImplementedError
+    def __init__(self):
+        raise NotImplementedError
     def read_uvdata(self, fname, run_check=True, **kwargs):
         """
         Read a UVH5 file into a UVData and transfer to
