@@ -1709,8 +1709,11 @@ class RedVisCoupling(utils.Module, IndexCache):
         """
         if use_reds:
             # build redundancies
-            reds, rvec, bl2red_idx, all_bls, lens, angs, _ = telescope_model.build_reds(self.antpos,
-                bls=self.bls_out, redtol=redtol)
+            reds, rvec, bl2red_idx, all_bls, lens, angs, _ = telescope_model.build_reds(
+                self.antpos,
+                bls=self.bls_out,
+                redtol=redtol
+            )
             bl2red = {}
             for k in bl2red_idx:
                 bl2red[k] = reds[bl2red_idx[k]][0]
@@ -1738,9 +1741,7 @@ class RedVisCoupling(utils.Module, IndexCache):
                                                      second_max_EW=second_max_EW, second_max_NS=second_max_NS,
                                                      Nproc=Nproc, Ntask=Ntask, use_pathos=use_pathos)
         if use_reds:
-            self.red_bls = [bl2red[bl] for bl in self.bls_out]
-        else:
-            self.red_bls = self.bls_out
+            self.red_bl_inds = [bl2red_idx[bl] for bl in self.bls_out]
 
         # Create indexing lists for matrix operations that need to be performed:
         # 1. (coupling + coupling.conj + coupling * coupling.conj) @ vis
@@ -1910,7 +1911,7 @@ class RedVisCoupling(utils.Module, IndexCache):
             through coupling matrix
         """
         # this is the inflated 0th order visibilities
-        vout = vd._inflate_by_redundancy(self.bls_out, self.red_bls)
+        vout = vd._inflate_by_redundancy(self.bls_out, self.red_bl_inds)
 
         # forward model
         if self.p0 is not None:
