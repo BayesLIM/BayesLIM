@@ -1509,7 +1509,7 @@ class VisData(TensorData):
         # check if bl2red is passed
         if bl2red is None:
             from bayeslim.telescope_model import build_reds
-            bl2red = build_reds(self.antpos, **kwargs)[2]
+            bl2red = build_reds(self.antpos, bls=self.bls**kwargs)[2]
 
         # get all new baselines
         if bls is None:
