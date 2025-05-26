@@ -384,19 +384,18 @@ class VisMapper:
 		if isinstance(vis, list):
 			# feeding list of visdata for multiple maps
 			Nmaps = len(vis)
-		Nfreqs = len(self.freqs[self.freq_inds])
 
 		# init maps
-		maps = torch.zeros(Nmaps, Nfreqs, self.Npix, device=self.device)
+		maps = torch.zeros(Nmaps, self.Nfreqs, self.Npix, device=self.device)
 		if isinstance(vis, VisData):
 			# get rid of Nmaps dim
 			maps = maps[0]
 
 		# init weights
 		if self.method == 'w':
-			Aw = torch.zeros(Nfreqs, 1, device=self.device)
+			Aw = torch.zeros(self.Nfreqs, 1, device=self.device)
 		elif self.method in ['Aw', 'A2w']:
-			Aw = torch.zeros(Nfreqs, self.Npix, device=self.device)
+			Aw = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 
 		# iterate over times
 		for i, time in enumerate(self.times):
@@ -453,8 +452,6 @@ class VisMapper:
 			Set of PSF-convolved maps of shape
 			(Nmaps, Nfreqs, Npix)
 		"""
-		Nfreqs = len(self.freqs[self.freq_inds])
-
 		# get map data
 		map2ten = lambda m: m.get_data() if isinstance(m, MapData) else m
 		if isinstance(maps, list):
@@ -465,10 +462,10 @@ class VisMapper:
 		# init output tensor
 		if maps.ndim == 3:
 			Nmaps = len(maps)
-			shape = (Nmaps, Nfreqs, self.Npix)
+			shape = (Nmaps, self.Nfreqs, self.Npix)
 		else:
 			Nmaps = 1
-			shape = (Nfreqs, self.Npix)
+			shape = (self.Nfreqs, self.Npix)
 
 		Pm = torch.zeros(shape, device=self.device)
 
@@ -476,9 +473,9 @@ class VisMapper:
 		if D is None:
 			# init weights
 			if self.method == 'w':
-				Aw = torch.zeros(Nfreqs, 1, device=self.device)
+				Aw = torch.zeros(self.Nfreqs, 1, device=self.device)
 			elif self.method in ['Aw', 'A2w']:
-				Aw = torch.zeros(Nfreqs, self.Npix, device=self.device)
+				Aw = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 
 		# iterate over time integrations
 		for i, time in enumerate(self.times):
@@ -537,21 +534,19 @@ class VisMapper:
 		P : tensor
 			PSF matrix of shape (Nfreqs, Npix, [Npix]) 
 		"""
-		Nfreqs = len(self.freqs[self.freq_inds])
-
 		# init the P matrix
 		if diag:
-			P = torch.zeros(Nfreqs, self.Npix, device=self.device)
+			P = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 		else:
-			P = torch.zeros(Nfreqs, self.Npix, self.Npix, device=self.device)
+			P = torch.zeros(self.Nfreqs, self.Npix, self.Npix, device=self.device)
 		
 		# init summed weights
 		if D is None:
 			# init weights
 			if self.method == 'w':
-				Aw = torch.zeros(Nfreqs, 1, device=self.device)
+				Aw = torch.zeros(self.Nfreqs, 1, device=self.device)
 			elif self.method in ['Aw', 'A2w']:
-				Aw = torch.zeros(Nfreqs, self.Npix, device=self.device)
+				Aw = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 
 		# iterate over time integrations
 		for i, time in enumerate(self.times):
