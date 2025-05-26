@@ -1001,12 +1001,12 @@ class RedVisModel(utils.Module, IndexCache):
             The predicted visibilities, having pushed vd through
             the redundant visibility model.
         """
-        # push to device
-        if not utils.check_devices(self.device, vd.data.device):
-            vd.push(self.device)
-
         # setup predicted visibility
         vout = vd.copy(copydata=False)
+
+        # push to device
+        if not utils.check_devices(self.device, vout.data.device):
+            vout.push(self.device)
 
         # get unique visibilities
         if self.p0 is not None:
@@ -1025,11 +1025,11 @@ class RedVisModel(utils.Module, IndexCache):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
 
         # down select on time
-        redvis = self.index_params(redvis, times=vd.times)
+        redvis = self.index_params(redvis, times=vout.times)
 
         # expand redvis to vis size if needed
         if redvis.shape[2] != vout.data.shape[2]:
-            index = self.get_bl_idx(vd.bls)
+            index = self.get_bl_idx(vout.bls)
             redvis = torch.index_select(redvis, 2, index)
 
         # apply redvis model: not inplace b/c vout is not deepcopy

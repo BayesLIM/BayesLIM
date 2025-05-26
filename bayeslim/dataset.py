@@ -1282,7 +1282,7 @@ class VisData(TensorData):
         Nmax = len(reds)
         index = torch.as_tensor(
             [bl2red.get(bl, Nmax) for bl in bls],
-            device=self.device
+            device=self.data.device
         )
         Nout_bls = index.unique().numel()
         truncate = Nmax in index
@@ -3246,7 +3246,9 @@ class RedVisAvg(utils.Module):
         Push to device
         """
         self.wgts = utils.push(self.wgts, device)
-
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.device = device
 
 class RedVisInflate(utils.Module):
     """
@@ -3282,7 +3284,10 @@ class RedVisInflate(utils.Module):
         """
         Push to device
         """
-        self.red_bl_inds = utils.push(self.red_bl_inds, device)
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.red_bl_inds = utils.push(self.red_bl_inds, device)
+            self.device = device
 
 
 def concat_VisData(vds, axis, run_check=True, interleave=False):

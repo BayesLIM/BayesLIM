@@ -59,7 +59,7 @@ class VisMapper:
 			imaging matrices. Default (None) is to use
 			torch.get_default_dtype().
 		cache_A : bool, optional
-			If True, save the large A matrix as self.A
+			If True, save the A matrices in self.A
 		kwargs : additional kwargs for ArrayModel()
 		"""
 		## TODO: add on-the-fly vis loading
