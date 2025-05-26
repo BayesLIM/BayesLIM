@@ -21,8 +21,8 @@ def setup_VisMapper(vd, fov=180, nside=32, cache_A=True):
 
 	# airy beam
 	R = ba.beam_model.AiryResponse(freq_ratio=1.0)
-	p0 = torch.ones(1, 1, 1, len(freqs), 2) * torch.tensor([11., 11.])
-	beam = ba.beam_model.PixelBeam(p0, freqs, ant2beam=None, R=R, pol='e', powerbeam=True, fov=fov, parameter=False)
+	p0 = torch.ones(1, 1, 1, len(vd.freqs), 2) * torch.tensor([11., 11.])
+	beam = ba.beam_model.PixelBeam(p0, vd.freqs, ant2beam=None, R=R, pol='e', powerbeam=True, fov=fov, parameter=False)
 
 	# init mapper
 	angs = torch.as_tensor(np.array([phi[s]/ba.D2R - 15, 90 - theta[s] / ba.D2R]))
