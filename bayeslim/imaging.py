@@ -236,6 +236,7 @@ class VisMapper:
 			Visibility weights to use instead of self.vis.icov,
 			must match self.vis.icov shape.
 		"""
+		assert method in ['w', 'Aw', 'A2w']
 		self.method = method
 		self.icov = icov
 		self.D = None

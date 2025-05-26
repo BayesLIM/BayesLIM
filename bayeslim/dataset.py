@@ -3154,6 +3154,14 @@ class HDF5tensor:
     def __len__(self):
         return len(self.hdf5_dataset)
 
+    def push(self, device):
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.device = device
+        else:
+            self.out_dtype = device
+
+
 
 class Dataset(TorchDataset):
     """
