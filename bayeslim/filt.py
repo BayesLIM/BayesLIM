@@ -4,7 +4,7 @@ Module for visibility and map filtering
 import torch
 import numpy as np
 
-from . import utils, dataset, linalg
+from . import utils, dataset, linalg, VisData
 
 
 class BaseFilter(utils.Module):
@@ -329,6 +329,47 @@ class LstSqFilter(MatFilter):
         Set filtering matrix
         """
         self.G = torch.as_tensor(G, device=device, dtype=dtype) if G is not None else self.G
+
+
+class WedgeFilter:
+    """
+    A baseline-dependent frequency filter
+    (i.e. a wedge filter).
+    """
+    def __init__(self, filters, filt2bls, inplace=False):
+        """
+        Parameters
+        ----------
+        filters : list
+            List of BaseFilter subclasses
+        filt2bls : dict
+            Dictionary mapping int index in self.filters
+            to all the baselines in the input VisData that
+            it will filter. If input is a tensor, the values
+            should be the indices of the input tensor
+            along the Nbls axis that it will filter.
+        inplace : bool, optional
+            If True, edit input data inplace.
+        """
+        self.filters = filters
+        self.filt2bls = filt2bls
+        self.inplace = inplace
+
+    def __call__(self, vd):
+        is_VD = isinstance(vd, VisData)
+        if is_VD:
+            vout = vd.copy(copydata=True)
+        else:
+            vout = vd.clone()
+
+        for i, bls in self.filt2bls.items():
+            if is_VD:
+                filt = self.filters[i](vout.get_data(bl=bls, squeeze=False))
+                vout.set(bls, filt, arr='data')
+            else:
+                vout[:, :, bls] = self.filters[i](vout[:, :, bls])
+
+        return vout
 
 
 def rbf_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
