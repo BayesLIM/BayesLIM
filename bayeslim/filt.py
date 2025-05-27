@@ -4,7 +4,7 @@ Module for visibility and map filtering
 import torch
 import numpy as np
 
-from . import utils, dataset, linalg, VisData
+from . import utils, dataset, linalg
 
 
 class BaseFilter(utils.Module):
@@ -356,7 +356,7 @@ class WedgeFilter:
         self.inplace = inplace
 
     def __call__(self, vd):
-        is_VD = isinstance(vd, VisData)
+        is_VD = isinstance(vd, dataset.VisData)
         if is_VD:
             vout = vd.copy(copydata=True)
         else:
