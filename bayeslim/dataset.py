@@ -7,6 +7,7 @@ import numpy as np
 import os
 import copy
 import h5py
+from astropy.units import sday
 
 from . import version, utils
 
@@ -1337,7 +1338,7 @@ class VisData(TensorData):
 
         return vout
 
-    def time_average(self, time_inds=None, wgts=None, atol=1e-5, rephase=False, inplace=True):
+    def time_average(self, time_inds=None, wgts=None, rephase=False, inplace=True):
         """
         Average time integrations together, weighted by inverse covariance. Note
         this drops all time indices not present in time_inds list.
@@ -1350,100 +1351,106 @@ class VisData(TensorData):
         wgts : tensor, optional
             Weights to use, with the same shape as the data. Default
             is to use diagonal component of self.icov, if it exists.
-        atol : float, optional
-            Tolerance for matching time stamps in self.times array [julian date].
         rephase : bool, optional
             If True, assume data are in drift-scan mode. Rephase the data to bin center in LST
-            before averaging.
+            before averaging. Note: makes a copy of rephased data if inplace = False.
         inplace : bool, optional
             If True, edit arrays inplace, otherwise return a deepcopy
         """
-        from bayeslim import optim
-
         # setup times
         if time_inds is None:
             time_inds = [torch.arange(self.Ntimes)]
 
-        # iterate over times: select, average, then append
-        avg_groups = []
-        for i, times in enumerate(time_inds):
-            # down select bls from self
-            obj = self.select(time_inds=times, inplace=False)
+        # get averaging index tensor
+        Nmax = len(time_inds)
+        index = torch.ones(self.Ntimes, dtype=torch.int64, device=self.data.device) * Nmax
+        for i, tinds in enumerate(time_inds):
+            tinds = utils._list2slice(tinds)
+            time_inds[i] = tinds
+            index[tinds] = i
 
-            # setup weights
-            if wgts is None:
-                if obj.icov is not None:
-                    wgt = optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis')
-                elif obj.cov is not None:
-                    wgt = 1 / optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis').clip(1e-40)
-                else:
-                    wgt = torch.ones_like(obj.data)
+        Nout_times = index.unique().numel()
+        truncate = Nmax in index
+
+        # get weights
+        if wgts is None and self.icov is not None and self.cov_axis is None:
+            wgts = self.icov
+
+        # get cov
+        cov = None
+        if self.cov_axis is None:
+            if self.cov is not None:
+                cov = self.cov
+            elif self.icov is not None:
+                cov = 1 / self.icov.clip(1e-60)
+
+        # get avg_times
+        avg_times = torch.zeros(Nout_times)
+        avg_times.index_add_(0, index, self.times)
+        sum_wgts = torch.zeros(Nout_times)
+        sum_wgts.index_add_(0, index, torch.ones_like(self.times))
+        avg_times /= sum_wgts
+
+        # rephase the data
+        if rephase:
+            # get dLST for each time integration
+            from bayeslim import telescope_model
+            dtimes = (avg_times[index.cpu()] - self.times)
+            dLST = dtimes * 2 * np.pi / sday.to('day')
+            phs = telescope_model.vis_rephase(
+                dLST,
+                self.telescope.location[1],
+                self.get_bl_vecs(self.bls),
+                self.freqs
+            )
+            data = self.data
+            if inplace:
+                data *= phs
             else:
-                # select wgt given bl selection
-                wgt = wgts[self.get_inds(time_inds=times)]
-                
-            assert wgt.shape[2] == obj.data.shape[2]
-            wgt = wgt.real
+                data = data * phs
+        else:
+            data = self.data
 
-            # get covariance
-            if obj.cov is not None:
-                cov = optim.cov_get_diag(obj.cov, obj.cov_axis, mode='vis')
-            elif obj.icov is not None:
-                cov = 1 / optim.cov_get_diag(obj.icov, obj.cov_axis, mode='vis').clip(1e-40)
-            else:
-                cov = None
+        # take data average
+        avg_data, sum_wgts, avg_cov = average_data(
+            data,
+            -2,
+            index,
+            Nout_times,
+            wgts=wgts,
+            cov=cov,
+            truncate=truncate
+        )
 
-            # rephase the data
-            if rephase:
-                # get phasor
-                from bayeslim import telescope_model
-                loc = self.telescope.location
-                lsts = np.unwrap(telescope_model.JD2LST(self.times[times], loc[0])) # rad
-                dlst = lsts[obj.Ntimes//2] - lsts
-                phs = telescope_model.vis_rephase(dlst, loc[1], self.get_bl_vecs(self.bls), self.freqs)
-                data = obj.data * phs
+        # get avg_flags
+        avg_flags = None
+        if self.flags is not None:
+            avg_flags = torch.zeros_like(
+                avg_data,
+                dtype=bool,
+                device=avg_data.device
+            )
+            avg_flags.index_add_(-2, index, ~self.flags)
+            avg_flags = ~avg_flags
 
-            else:
-                data = obj.data
-
-            # take average along bl axis
-            avg_data, wgt_norm, avg_cov = average_data(data, 3, wgts=wgt, cov=cov, keepdims=True)
-
-            # update flag array
-            avg_flags = abs(wgt_norm) > 1e-40
-
-            # update cov array
-            if obj.icov is not None:
-                avg_icov = optim.compute_icov(avg_cov, None)
-            else:
-                avg_icov = None
-
-            # get rid of cov if not present in obj
-            if obj.cov is not None:
-                avg_cov = None
-
-            # get new time
-            new_time = torch.atleast_1d(obj.times[obj.Ntimes//2])
-
-            # setup data
-            obj.setup_data(obj.blnums, new_time, obj.freqs, pol=obj.pol,
-                           data=avg_data, flags=avg_flags, cov=avg_cov,
-                           icov=avg_icov, cov_axis=None, history=obj.history)
-
-            avg_groups.append(obj)
-
-        # concatenate the averaged groups
-        out = concat_VisData(avg_groups, 'time')
+        # get avg_icov
+        avg_icov = None
+        if self.icov is not None:
+            avg_icov = 1 / avg_cov.clip(1e-60)
 
         if inplace:
-            # overwrite self.data and appropriate metadata
-            self.setup_data(out.blnums, out.times, out.freqs, pol=out.pol,
-                            data=out.data, flags=out.flags, cov=out.cov,
-                            cov_axis=out.cov_axis, icov=out.icov,
-                            history=out.history)
-
+            vout = self
         else:
-            return out
+            vout = self.copy(copydata=False, copymeta=False)
+
+        if truncate:
+            avg_times = avg_times[:-1]
+
+        vout.setup_data(self.blnums, avg_times, vout.freqs, pol=self.pol,
+                        data=avg_data, flags=avg_flags, cov=avg_cov,
+                        icov=avg_icov, cov_axis=None, history=self.history)
+
+        return vout
 
     def _inflate_by_redundancy(self, new_bls, red_bl_inds, try_view=False):
         """

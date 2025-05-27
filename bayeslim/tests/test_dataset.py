@@ -116,7 +116,7 @@ def test_visdata_select():
 	assert vds.bls == vd.bls[:10:2]
 
 
-def test_visdata_average():
+def test_visdata_bl_average():
 	vd = setup_VisData()
 	reds = ba.telescope_model.ArrayModel(vd.antpos).reds
 	Navgs = torch.as_tensor([len(red) for red in reds])
@@ -156,6 +156,48 @@ def test_visdata_average():
 	assert not vd.get_flags([red[0] for red in reds[1:]]).any()
 	# assert icov correctly propagated
 	assert torch.isclose(vd.icov[0,0,:,0,0], Navgs*1.0, atol=1e-5, rtol=1e-5).all()
+
+
+def test_visdata_time_average():
+	## test uniform average and propagated covariance
+	Ntimes = 10
+	times = torch.linspace(2458168.1, 2458168.3, Ntimes)
+	torch.manual_seed(0)
+	vd = setup_VisData(times=times)
+	Ntest = 30
+	vds = [setup_VisData(times=times) for i in range(Ntest)]
+	for _vd in vds: _vd.time_average(inplace=True)
+	# check averaged shape
+	assert vds[0].data.shape == vd.data.shape[:3] + (1,) + vd.data.shape[-1:]
+	# get variance
+	var = torch.stack([vd.data.var()for vd in vds]).mean(0)
+	# check it matches with 1/Navgs to within 2sigma of Ntest
+	assert ((var - 1 / Ntimes).abs() < (1/Ntest * 2)).all()
+	# assert propagated covariance is correct
+	assert torch.isclose(1/vds[0].cov, torch.tensor(float(Ntimes)), atol=1e-5).all()
+
+	## test multi-bin average with missing chunks, out of place
+	vd = setup_VisData(times=times)
+	time_inds = [range(0, 3), range(3, 6), range(6, 9)]
+	vda = vd.time_average(time_inds=time_inds, inplace=False)
+	# assert shape is correct
+	assert vda.data.shape == vd.data.shape[:3] + (3,) + vd.data.shape[-1:]
+	# assert covariance is correct
+	assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
+	# assert avg_times are correct
+	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
+
+	## test rephasing
+	## TODO: use point source sim and validate rephasing is accurate
+	vd = setup_VisData(times=times)
+	time_inds = [range(0, 3), range(3, 6), range(6, 9)]
+	vda = vd.time_average(time_inds, rephase=True, inplace=False)
+	# assert shape is correct
+	assert vda.data.shape == vd.data.shape[:3] + (3,) + vd.data.shape[-1:]
+	# assert covariance is correct
+	assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
+	# assert avg_times are correct
+	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
 
 
 def test_visdata_inflate():
