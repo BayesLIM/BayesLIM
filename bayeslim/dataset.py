@@ -1327,6 +1327,10 @@ class VisData(TensorData):
         if self.icov is not None:
             avg_icov = 1 / avg_cov.clip(1e-60)
 
+        # set avg_cov to None if input cov is None
+        if self.cov is None:
+            avg_cov = None
+
         if inplace:
             vout = self
         else:
