@@ -376,7 +376,12 @@ class RIME(utils.Module):
             vis = torch.sum(vis, dim=0)
 
         history = io.get_model_description(self)[0]
-        vd.setup_meta(self.telescope, self.array.to_antpos())
+        telescope = self.telescope.__class__(
+            self.telescope.location,
+            tloc=self.telescope.tloc,
+            device=self.telescope.device
+        )
+        vd.setup_meta(telescope, self.array.to_antpos())
         vd.setup_data(self.data_bls, self.sim_times, self.freqs, pol=pol,
                       data=vis, flags=None, cov=None, history=history)
 
