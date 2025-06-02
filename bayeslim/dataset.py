@@ -1352,7 +1352,6 @@ class VisData(TensorData):
         time_inds : list of tensors, optional
             List of time indices from self.times to average together. Default is to
             average all times. E.g. [(0,1,2,3,4,...,N)]
-        wgts : tensor, optional
             Weights to use, with the same shape as the data. Default
             is to use diagonal component of self.icov, if it exists.
         rephase : bool, optional
@@ -1441,6 +1440,9 @@ class VisData(TensorData):
         avg_icov = None
         if self.icov is not None:
             avg_icov = 1 / avg_cov.clip(1e-60)
+
+        if self.cov is None:
+            avg_cov = None
 
         if inplace:
             vout = self
