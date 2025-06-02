@@ -640,7 +640,7 @@ def vis_rephase(dlst, lat, blvecs, freqs):
     tau = torch.einsum("...i,ki->...k", s_diff_over_c, blvecs)  # (Nlst, Nbls)
 
     # get phasor (Nbls, Nlst, Nfreqs)
-    phasor = torch.exp(-2j * np.pi * freqs * tau.T[..., None])
+    phasor = torch.exp(2j * np.pi * freqs * tau.T[..., None])
 
     return phasor
 
