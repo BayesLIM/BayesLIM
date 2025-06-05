@@ -510,33 +510,55 @@ def phasor_mat(x, shift, neg=True, x2=None, dtype=None, device=None):
 
 def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
     """
+    A Gaussian-convolved Sinc covariance model,
+    or a top-hat truncated Gaussian Fourier space kernel.
+
     Convolution of a Gaussian and Sinc covariance function
     See appendix A2 of arxiv:1608.05854
+
+    Parameters
+    ----------
+    x : tensor
+        Sampling points of covariance
+    gauss_ls : float
+        Gaussian length scale
+    sinc_ls : float
+        Sinc length scale
+    high_prec : bool, optional
+        If True use mpmath arbitrary precision
+        library, otherwise use numpy.
+
+    Returns
+    -------
+    tensor
     """
-    raise NotImplementedError
-    sinc_ls = sinc_ls * (2 / np.pi)
+    sinc_ls = sinc_ls / np.pi
 
     arg = gauss_ls / np.sqrt(2) / sinc_ls
-    Xc = X / gauss_ls / np.sqrt(2)
-
-    dists = pdist(Xc, metric="euclidean")
-    K = func(dists, arg)
-    K = squareform(K)
-    np.fill_diagonal(K, 1)
+    xc = x / gauss_ls / np.sqrt(2)
+    N = len(x)
+    idx = torch.tril_indices(N, N, offset=-1)
+    dists = (xc[:, None] - xc[None, :])[*idx]
 
     if high_prec:
         import mpmath
         fn = lambda z: mpmath.exp(-z**2) * (mpmath.erf(arg + 1j*z) + mpmath.erf(arg - 1j*z)).real
-        K = 0.5 * np.asarray(np.frompyfunc(fn, 1, 1)(dists), dtype=float) / special.erf(arg)
+        K = 0.5 * torch.as_tensor(np.asarray(np.frompyfunc(fn, 1, 1)(dists.numpy()), dtype=float))
+        K /= special.erf(arg)
 
     else:
-        K = 0.5 * np.exp(-dists**2) / special.erf(arg) \
-            * (special.erf(arg + 1j*dists) + special.erf(arg - 1j*dists))
+        K = (0.5 * torch.exp(-dists**2) / special.erf(arg) \
+            * (special.erf(arg + 1j*dists) + special.erf(arg - 1j*dists))).real
         # replace nans with zero: in this limit, you should use high_prec
         # but this is a faster approximation
-        K[np.isnan(K)] = 0.0
+        K[torch.isnan(K)] = 0.0
 
-    return K
+    cov = torch.zeros((N, N))
+    cov[*idx] = K
+    cov += cov.T.clone()
+    cov[range(N), range(N)] = 1.0
+
+    return cov
 
 
 def gen_cov_modes(cov, N=None, rcond=None, device=None, dtype=None):
