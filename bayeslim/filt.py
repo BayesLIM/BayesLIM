@@ -3,6 +3,7 @@ Module for visibility and map filtering
 """
 import torch
 import numpy as np
+from scipy import special
 
 from . import utils, dataset, linalg
 
@@ -538,7 +539,7 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
     xc = x / gauss_ls / np.sqrt(2)
     N = len(x)
     idx = torch.tril_indices(N, N, offset=-1)
-    dists = (xc[:, None] - xc[None, :])[*idx]
+    dists = (xc[:, None] - xc[None, :])[idx[0], idx[1]]
 
     if high_prec:
         import mpmath
@@ -554,7 +555,7 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
         K[torch.isnan(K)] = 0.0
 
     cov = torch.zeros((N, N))
-    cov[*idx] = K
+    cov[idx[0], idx[1]] = K
     cov += cov.T.clone()
     cov[range(N), range(N)] = 1.0
 
