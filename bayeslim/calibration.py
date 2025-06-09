@@ -1668,7 +1668,7 @@ class RedVisCoupling(utils.Module, IndexCache):
         self.bls_out = bls_out
         self.Nants = len(antpos)
 
-    def setup_coupling(self, use_reds=True, redtol=1.0, include_second_order=True,
+    def setup_coupling(self, use_reds=True, copydata=False, redtol=1.0, include_second_order=True,
                        min_len=None, max_len=None, max_EW=None, max_NS=None,
                        second_max_len=None, second_max_EW=None, second_max_NS=None,
                        min_dly=None, Nproc=None, Ntask=5, use_pathos=True):
@@ -1681,6 +1681,9 @@ class RedVisCoupling(utils.Module, IndexCache):
         use_reds : bool, optional
             If True assume self.bls_in represents unique redundant baselines,
             otherwise assume it represents physical baselines
+        copydata : bool, optional
+            If True, copy the input data when taking a forward pass.
+            Otherwise, edit inplace (default). Only used if use_reds = False.
         redtol : float, optional
             Red tolerance for use_reds in meters
         include_second_order : bool, optional
@@ -1707,6 +1710,8 @@ class RedVisCoupling(utils.Module, IndexCache):
         use_pathos : bool, optional
             Use pathos multiproc instead of multiprocessing
         """
+        self.use_reds = use_reds
+        self.copydata = copydata
         if use_reds:
             # build redundancies
             reds, rvec, bl2red_idx, all_bls, lens, angs, _ = telescope_model.build_reds(
@@ -1912,7 +1917,10 @@ class RedVisCoupling(utils.Module, IndexCache):
             through coupling matrix
         """
         # this is the inflated 0th order visibilities
-        vout = vd._inflate_by_redundancy(self.bls_out, self.red_bl_inds)
+        if self.use_reds:
+            vout = vd._inflate_by_redundancy(self.bls_out, self.red_bl_inds)
+        else:
+            vout = vd.copy(copydata=self.copydata)
 
         # forward model
         if self.p0 is not None:
