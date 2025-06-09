@@ -1712,6 +1712,7 @@ class RedVisCoupling(utils.Module, IndexCache):
             reds, rvec, bl2red_idx, all_bls, lens, angs, _ = telescope_model.build_reds(
                 self.antpos,
                 bls=self.bls_out,
+                red_bls=self.bls_in,
                 redtol=redtol
             )
             bl2red = {}
