@@ -1363,7 +1363,7 @@ class VisCoupling(utils.Module, IndexCache):
                                               atol=atol)
         self.clear_cache()
 
-    def setup_coupling(self, bls=None):
+    def setup_coupling(self, bls=None, min_dly=None):
         """
         Setup coupling forward model metadata (e.g. delay term and matrix indexing)
 
@@ -1371,6 +1371,10 @@ class VisCoupling(utils.Module, IndexCache):
         ----------
         bls : list of ant-pair tuples
             The baselines of the input data
+        min_dly : float, optional
+            This is the minimum baseline length [meters] to use when setting
+            the coupling delay. I.e. dly = max(min_dly, bl_len) / c.
+            Typically this is the feed height.
         """
         # setup time delay phasor between coupled antennas
         self.dly = torch.ones(1, 1, self.Nants, self.Nants, 1, self.Nfreqs,
@@ -1379,6 +1383,8 @@ class VisCoupling(utils.Module, IndexCache):
         for i, ant1 in enumerate(self.antpos):
             for j, ant2 in enumerate(self.antpos):
                 vec_len = torch.linalg.norm(self.antpos[ant2] - self.antpos[ant1])
+                if min_dly is not None:
+                    vec_len = vec_len.clamp(min_dly)
                 self.dly[0, 0, i, j, 0] = torch.exp(2j*torch.pi*dfreqs/self.c*vec_len)
 
         # setup indexing of input VisData and its reshaping into square matrix and back
