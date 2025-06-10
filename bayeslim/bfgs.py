@@ -550,7 +550,9 @@ class LBFGS(BFGS):
         return two_loop_recursion(vec, self._s, self._y, self._rho, self.H)
 
 
-def lbfgs_approx_cov(prob, Nsteps=1, **kwargs):
+def lbfgs_approx_cov(prob, Nsteps=5,
+    max_iter=1, lr=1e-5, tolerance_grad=1e-40, tolerance_change=1e-40, **kwargs
+    ):
     """
     Compute the LBFGS approximate covariance heuristic,
     Eqn 6.20 from Nocedal & Wright, for each parameter
