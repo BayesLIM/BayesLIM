@@ -1350,8 +1350,6 @@ class VisCoupling(utils.Module, IndexCache):
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
-        self.Nants = params.shape[2]
-
         if R is None:
             # default response is per freq channel and time bin
             R = VisModelResponse(time_dim=4, freq_dim=5)
