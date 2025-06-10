@@ -1342,6 +1342,95 @@ class VisData(TensorData):
 
         return vout
 
+    def lst_rephase(self, dtime=None, dLST=None, inplace=True):
+        """
+        Rephase zenith-pointing drift-scan data by a delta-time
+
+        Parameters
+        ----------
+        dtime : float, tensor
+            Differential in local time to rephase the visibilities [Julian Day].
+            First converted to a dLST, then phasor is applied.
+        dLST : float, tensor
+            Differential in LST to rephase the visibilities [radians].
+        inplace : bool, optional
+            If True, rephase data in-place, otherwise make a copy
+
+        Returns
+        -------
+        VisData
+        """
+        # get dLST for each time integration
+        from bayeslim import telescope_model
+        if dLST is None:
+            assert dtime is not None
+            dLST = dtime * 2 * np.pi / sday.to('day')
+        phs = telescope_model.vis_rephase(
+            dLST,
+            self.telescope.location[1],
+            self.get_bl_vecs(self.bls),
+            self.freqs
+        )
+        if inplace:
+            vd = self
+        else:
+            vd = self.copy(copydata=True)
+
+        vd.data *= phs
+
+        return vd
+
+    def time_nn_interp(self, lsts, rephase=True, inplace=True):
+        """
+        Perform nearest-neighbor interpolation of data onto
+        lsts time bins. We use NN interpolation for amplitude,
+        and lst_rephase() for phasing. Starting and ending
+        time bins in 'lsts' must be bounded within self.times.
+
+        Parameters
+        ----------
+        lsts : ndarray
+            LST bins [radians] to interpolate to.
+        rephase : bool, optional
+            If True (default) perform the rephasing
+        inplace : bool, optional
+            If True (default) operate inplace.
+
+        Returns
+        -------
+        VisData
+        """
+        # first ensure lsts is not wrapped
+        if lsts[-1] < lsts[0]:
+            lsts = copy.deepcopy(lsts)
+            lsts[lsts < lsts[0]] += 2 * np.pi
+
+        # now get lsts of self.times
+        from bayeslim.telescope_model import JD2LST
+        self_lsts = JD2LST(self.times, self.telescope.location[0])
+        if self_lsts[-1] < self_lsts[0]:
+            self_lsts[self_lsts < self_lsts[0]] += 2 * np.pi
+        if lsts[0] < self_lsts[0]:
+            lsts += 2 * np.pi
+
+        # get closest times
+        t_idx = np.argmin(abs(self_lsts - lsts[:, None]), axis=1)
+
+        # get dLST
+        dLST = lsts - self_lsts[t_idx]
+
+        if inplace:
+            vd = self
+        else:
+            vd = self.copy()
+
+        vd.select(time_inds=t_idx, inplace=True, try_view=False)
+
+        if rephase:
+            vd.lst_rephase(dLST=dLST, inplace=True)
+
+        return vd
+
     def time_average(self, time_inds=None, wgts=None, rephase=False, inplace=True):
         """
         Average time integrations together, weighted by inverse covariance. Note

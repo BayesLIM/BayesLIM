@@ -32,10 +32,10 @@ def setup_PixBeam_Interp(freqs, interp_mode='linear'):
 	return beam
  
 
-def setup_PixBeam_Airy(freqs):
+def setup_PixBeam_Airy(freqs, D=10.):
 	# setup an Airy PixelBeam
 	R = ba.beam_model.AiryResponse(powerbeam=True)
-	params = torch.ones(1, 1, 1, 1, 1) * 10.0
+	params = torch.ones(1, 1, 1, 1, 1) * D
 	beam = ba.beam_model.PixelBeam(params, freqs, R=R, pol='e',
 		powerbeam=True, fov=180, parameter=False
 	)

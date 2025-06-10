@@ -14,8 +14,8 @@ def setup_Telescope():
 
 	return telescope
 
-def setup_Array(N=3, freqs=None):
-	antnums, antvecs = ba.utils._make_hex(N, D=15)
+def setup_Array(N=3, freqs=None, D=15):
+	antnums, antvecs = ba.utils._make_hex(N, D=D)
 	antpos_d = ba.utils.AntposDict(antnums, antvecs)
 	array = ba.telescope_model.ArrayModel(
 		antpos_d, freqs=freqs, cache_s=False, redtol=1.0,

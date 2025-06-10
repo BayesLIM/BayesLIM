@@ -24,15 +24,15 @@ def setup_PixSky_Noise(freqs, nside=32):
 	return sky
 
 
-def setup_PointSky(freqs):
+def setup_PointSky(freqs, Nsource=10):
 	# setup power-law point source model at HERA's zenith pointings
 	R = ba.sky_model.PointSkyResponse(freqs, freq_mode='powerlaw', f0=freqs[0])
-	params = torch.ones(1, 1, 2, 10)
+	params = torch.ones(1, 1, 2, Nsource)
 	params[..., 0, :] = 1.0
 	params[..., 1, :] = -2.2
 
 	# degrees
-	angs = torch.stack([torch.arange(10) * 5, torch.ones(10) * -30.7])
+	angs = torch.stack([torch.arange(Nsource) * 5, torch.ones(Nsource) * -30.7])
 
 	sky = ba.sky_model.PointSky(params, angs, R=R, parameter=False)
 

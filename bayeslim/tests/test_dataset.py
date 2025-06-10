@@ -8,6 +8,8 @@ import bayeslim as ba
 from bayeslim.data import DATA_PATH
 
 from test_telescope import setup_Array, setup_Telescope
+from test_sky import setup_PointSky
+from test_beam import setup_PixBeam_Airy
 
 
 freqs = torch.linspace(120e6, 130e6, 10)
@@ -188,7 +190,6 @@ def test_visdata_time_average():
 	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
 
 	## test rephasing
-	## TODO: use point source sim and validate rephasing is accurate
 	vd = setup_VisData(times=times)
 	time_inds = [range(0, 3), range(3, 6), range(6, 9)]
 	vda = vd.time_average(time_inds, rephase=True, inplace=False)
@@ -198,6 +199,44 @@ def test_visdata_time_average():
 	assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
 	# assert avg_times are correct
 	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
+
+
+def test_vis_rephase():
+	# point source sim
+	freqs = torch.linspace(100e6, 200e6, 16)
+	times = torch.linspace(2458168.02, 2458168.04, 10)  # times centered at ra=0 deg
+
+	sky = setup_PointSky(freqs, Nsource=1)
+	beam = setup_PixBeam_Airy(freqs)
+
+	telescope = setup_Telescope()
+	lsts = ba.telescope_model.JD2LST(times, telescope.location[0]) * 180 / np.pi
+	array = setup_Array(N=3, freqs=freqs, D=30)
+
+	sim_bls = array.get_bls(uniq_bls=True,  keep_autos=False)
+
+	rime = ba.rime_model.RIME(
+		sky, telescope, beam, array, sim_bls, times, freqs
+	)
+
+	with torch.no_grad():
+		vd = rime()
+
+	# rephase!
+	vd_phs = vd.lst_rephase(vd.times[vd.Ntimes//2] - vd.times, inplace=False)
+
+	# get phase drift from middle integration
+	dphs = (vd_phs.data / vd_phs.data[:, :, :, vd.Ntimes//2:vd.Ntimes//2+1]).angle().squeeze()
+
+	# the result should be more stable visibility phase wrt time
+	assert dphs.abs().max() < 1.0
+
+	# test time_nn_interp()
+	new_lsts = lsts[:-1] + np.diff(lsts)[0] / 4
+	vd_int = vd.time_nn_interp(new_lsts*np.pi/180, inplace=False)
+
+	assert vd_int.data.shape == (1, 1, 30, 9, 16)
+	assert (vd.data.abs()[:,:,:,:-1] - vd_int.data.abs()).max() < 1e-10
 
 
 def test_visdata_inflate():
