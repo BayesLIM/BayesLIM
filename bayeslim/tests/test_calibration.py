@@ -31,8 +31,8 @@ def setup_Coupling(freqs=freqs, times=times):
 	R = ba.calibration.VisModelResponse(
 	    freq_kwargs={'freqs': freqs},
 	    time_kwargs={'times': times},
-	    time_dim=4,
-	    freq_dim=5
+	    time_dim=-2,
+	    freq_dim=-1
 	)
 	coupling_terms, coupling_idx = ba.calibration.gen_coupling_terms(
 		antpos,
@@ -55,7 +55,7 @@ def setup_Coupling(freqs=freqs, times=times):
 	return rvis_cpl
 
 
-def test_RedVisCoupling_sympy():
+def test_Coupling_sympy():
 	if not import_sympy:
 		return
 
@@ -135,13 +135,35 @@ def test_RedVisCoupling_sympy():
 		))).astype(np.complex128)
 
 	# setup coupling indexing arrays
-	rvis_cpl.setup_coupling(use_reds=True, include_second_order=True)
+	rvis_cpl.setup_coupling(copydata=True, use_reds=True, include_second_order=True)
 
-	# take forward pass of RedVisModel
+	# take forward pass of RedVisCoupling
 	with torch.no_grad():
 		vout = rvis_cpl(vd)
 
-	# compare RedVisModel against analytic result
+	# compare RedVisCoupling against analytic result
+	r = vout[[bl for bl in vout.bls]].numpy() / np.array([Vc[bl[0], bl[1]] for bl in vout.bls])
+	assert np.isclose(r, 1 + 0j, atol=1e-10).all()
+
+	#### export to VisCoupling and test it ####
+	CI = ba.calibration.CouplingInflate(
+		vd.get_bl_vecs(rvis_cpl.coupling_terms),
+		vd.antpos,
+	)
+	vis_cpl = ba.calibration.VisCoupling(
+		CI(rvis_cpl.params),
+		freqs,
+		vd.antpos,
+		rvis_cpl.bls_out,
+		R=rvis_cpl.R,
+	)
+	vis_cpl.setup_coupling()
+
+	# take forward pass of VisCoupling
+	with torch.no_grad():
+		vout = vis_cpl(vd.inflate_by_redundancy())
+
+	# compare VisCoupling against analytic result
 	r = vout[[bl for bl in vout.bls]].numpy() / np.array([Vc[bl[0], bl[1]] for bl in vout.bls])
 	assert np.isclose(r, 1 + 0j, atol=1e-10).all()
 

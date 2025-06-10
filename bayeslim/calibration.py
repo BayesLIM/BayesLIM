@@ -1280,7 +1280,7 @@ class VisCoupling(utils.Module, IndexCache):
 
     Note that because params should be of shape
     (Npol, Npol, Nantenna, Nantenna, Ntime_coeff, Nfreq_coeff),
-    the Response object should have time_dim=4, freq_dim=5.
+    the Response object should have time_dim=-2, freq_dim=-1.
 
     Currently only supports single-pol coupling.
     """
@@ -1295,7 +1295,11 @@ class VisCoupling(utils.Module, IndexCache):
         ----------
         params : tensor
             (Npol, Npol, Nantenna, Nantenna, Ntime_coeff, Nfreq_coeff) tensor
-            describing coupling between antennas
+            holding coupling parameters between antennas. Or,
+            (Npol, Npol, Nterms, Ntime_coeff, Nfreq_coeff) tensor
+            holding unique coupling parameters, with
+            R = VisModelReponse(..., LM=CouplingExpand())
+            to map into (..., Nant, Nant, ...) shape.
         freqs : tensor
             Observing frequencies [Hz]
         antpos : dict
@@ -1329,7 +1333,6 @@ class VisCoupling(utils.Module, IndexCache):
         super().__init__(name=name)
         ## TODO: support multi-pol coupling
         ## TODO: support frequency batching (for IndexCache and beam, sky objects too)
-        ## TODO: support multi-path coupling
         ## TODO: support OWL-QN LBFGS optimization for sparse-priors on coupling terms
         self.params = params
         self.p0 = p0
@@ -1451,8 +1454,7 @@ class VisCoupling(utils.Module, IndexCache):
             The predicted visibilities, having pushed input
             through coupling matrix
         """
-        vout = dataset.VisData()
-        vout.setup_meta(telescope=vd.telescope, antpos=vd.antpos)
+        vout = vd.copy()
 
         # forward model
         if self.p0 is not None:
@@ -1508,11 +1510,7 @@ class VisCoupling(utils.Module, IndexCache):
         flat_coupled = reshaped_data.flatten(start_dim=2, end_dim=3)
 
         # pick out original bls
-        data = torch.index_select(flat_coupled, 2, self.bls_idx)
-
-        vout.setup_data(bls=vd.bls, times=vd.times, freqs=vd.freqs, pol=vd.pol,
-                        data=data, flags=vd.flags, cov=vd.cov,
-                        cov_axis=vd.cov_axis, icov=vd.icov, history=vd.history)
+        vout.data = torch.index_select(flat_coupled, 2, self.bls_idx)
 
         return vout
 
@@ -2081,13 +2079,23 @@ class RedVisCoupling(utils.Module, IndexCache):
         return hits
 
 
-class CouplingExpand:
+class CouplingInflate:
     """
-    Take a coupling vector and expand to an Nants x Nants
+    Take a RedVicCoupling parameter and inflate to an Nants x Nants
     coupling matrix.
     """
     def __init__(self, vecs, antpos, redtol=1.0):
-        raise NotImplementedError
+        """
+        Parameters
+        ----------
+        vecs : tensor
+            Coupling term baseline vectors,
+            shape (Nterms, 3) in ENU [meters]
+        antpos : dict
+            Antenna position dictionary
+        redtol : float
+            Redundancy tolerance [meters]
+        """
         self.vecs = vecs
         self.antpos = antpos
         self.ants = list(antpos.keys())
@@ -2104,7 +2112,7 @@ class CouplingExpand:
                 vec = antpos[self.ants[j]] - antpos[self.ants[i]]
                 norm = (vecs - vec).norm(dim=1).isclose(torch.tensor(0.), atol=redtol)
                 if norm.any():
-                    idx[i, j] = i * Nants + j
+                    idx[i, j] = torch.where(norm)[0]
                 else:
                     zeros[i, j] = True
 
