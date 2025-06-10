@@ -101,7 +101,7 @@ class FFT(utils.Module):
 
         elif isinstance(inp, (dataset.VisData, dataset.CalData, dataset.MapData)):
             out = inp.copy()
-            out.data = self.forward(inp.data, **kwargs)
+            out.data = self.forward(inp.data, ifft=ifft, win=win, **kwargs)
             return out
 
         win = win if win is not None else self.win
