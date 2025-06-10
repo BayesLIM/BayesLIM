@@ -1446,7 +1446,8 @@ def eqarea_grid(resol):
     Parameters
     ----------
     resol : float
-        Resolution of grid in radians (i.e. sidelength of cell at equator)
+        Resolution of grid in degrees
+        (i.e. sidelength of cell at equator)
 
     Returns
     -------
@@ -1455,7 +1456,7 @@ def eqarea_grid(resol):
     phi : ndarray
         Phi samples (lat) in radians
     """
-    n = int(2*np.pi / (resol * np.pi/180))
+    n = int(2*np.pi / (resol * np.pi / 180))
     phi, dphi = np.linspace(0, 2*np.pi, n, endpoint=False, retstep=True)
 
     t = np.arange(0, 1, dphi)
