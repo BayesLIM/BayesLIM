@@ -399,7 +399,9 @@ class IndexCache:
             return self.cache_tidx[h]
         else:
             # compute time indices
-            idx = [torch.where(torch.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0][0] for t in times]
+            idx = torch.cat([
+                torch.where(torch.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0] for t in times
+                ])
             idx = utils._list2slice(idx)
             # store in cache and return
             self.cache_tidx[h] = idx

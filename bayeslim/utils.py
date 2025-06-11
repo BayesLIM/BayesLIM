@@ -2113,17 +2113,23 @@ def _list2slice(inds):
         return slice(inds, inds+1)
     if isinstance(inds, (list, tuple, torch.Tensor, np.ndarray)):
         if len(inds) == 0:
+            # only 1 element
             return inds
         elif len(inds) == 1:
             # only 1 element
             start = int(inds[0])
             return slice(start, start+1, 1)
-        diff = list(set(np.diff(inds)))
+        # non-trivial
+        if isinstance(inds, torch.Tensor):
+            diff = list(set(np.diff(inds.cpu())))
+        else:
+            diff = list(set(np.diff(inds)))
         if len(diff) == 1:
             # constant step size
             if (inds[1] - inds[0]) > 0:
                 # only return as slice if inds is increasing
                 return slice(int(inds[0]), int(inds[-1]+diff[0]), int(diff[0]))
+
     return inds
 
 
