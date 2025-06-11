@@ -2313,7 +2313,7 @@ def blnum2ants(blnum, separate=False):
             return list(zip(ant1.tolist(), ant2.tolist()))
 
 
-def ants2blnum(antnums, separate=False):
+def ants2blnum(antnums, separate=False, tensor=False):
     """
     Convert tuple of antenna numbers to baseline integer.
     A baseline integer is the two antenna numbers + 100
@@ -2325,6 +2325,12 @@ def ants2blnum(antnums, separate=False):
     antnums : tuple or list
         tuple containing integer antenna numbers for a baseline.
         Ex. (ant1, ant2)
+    separate : bool, optional
+        If True, return tuple of separated baseline numbers
+        otherwise return as a single number (default)
+    tensor : bool, optional
+        If True, return as torch.Tensor, otherwise
+        return as np.ndarray (default)
 
     Returns
     -------
@@ -2336,17 +2342,28 @@ def ants2blnum(antnums, separate=False):
         ant1 = antnums[0] + 100
         ant2 = antnums[1] + 100
 
-        # form bl
-        bl = int(ant1*1000 + ant2)
+        if separate:
+            bl = (ant1, ant2)
+        else:
+            # form bl
+            bl = int(ant1*1000 + ant2)
 
     elif isinstance(antnums, list) and isinstance(antnums[0], tuple):
         # assumed list of antnum tuples
         bl = np.asarray(antnums) + 100
-        bl = bl[:, 0] * 1000 + bl[:, 1]
+        if separate:
+            bl = (bl[:, 0] * 1000, bl[:, 1])
+        else:
+            bl = bl[:, 0] * 1000 + bl[:, 1]
 
     else:
         # assumed antnums already a blnum
         bl = antnums
+        if separate:
+            bl = (bl // 1000, bl % 1000)
+
+    if tensor:
+        bl = torch.as_tensor(bl)
 
     return bl
 

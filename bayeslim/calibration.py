@@ -368,9 +368,9 @@ class IndexCache:
         Parameters
         ----------
         times : tensor, optional
-            Total set of observation times
-        bls : list, optional
-            Total set of baseline tuples
+            Observation times to index against
+        blnums : tensor, optional
+            Baseline numbers to index against
         atol : float, optional
             Absolute tolerance for time indexing
         """
@@ -399,7 +399,6 @@ class IndexCache:
             return self.cache_tidx[h]
         else:
             # compute time indices
-            assert hasattr(self, '_times')
             idx = [torch.where(torch.isclose(self._times, t, atol=self._atol, rtol=1e-15))[0][0] for t in times]
             idx = utils._list2slice(idx)
             # store in cache and return
@@ -425,8 +424,16 @@ class IndexCache:
             return self.cache_bidx[h]
         else:
             # compute bl indices
-            assert hasattr(self, '_bls')
-            idx = [self._bls.index(bl) for bl in bls]
+            if isinstance(bls, list):
+                idx = [self._bls.index(bl) for bl in bls]
+            elif isinstance(bls, torch.Tensor):
+                idx = torch.cat(
+                    [torch.where(self._bls == bl)[0] for bl in bls]
+                )
+            elif isinstance(bls, np.ndarray):
+                idx = np.concatenate(
+                    [np.where(self._bls == bl)[0] for bl in bls]
+                )
             idx = utils._list2slice(idx)
             # store in cache and return
             self.cache_bidx[h] = idx
@@ -456,6 +463,19 @@ class IndexCache:
                 params = params[..., idx, :, :]
 
         return params
+
+    def push(self, device):
+        """
+        Push reference times and blnums
+        to device, clear caches
+        """
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.clear_cache()
+            if self._times is not None and isinstance(self._times, torch.Tensor):
+                self._times = utils.push(self._times, device)
+            if self._bls is not None and isinstance(self._bls, torch.Tensor):
+                self._bls = utils.push(self._bls, device)
 
 
 class JonesModel(utils.Module, IndexCache):
@@ -543,8 +563,11 @@ class JonesModel(utils.Module, IndexCache):
             # default response
             R = JonesResponse()
         self.R = R
-        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
-                                              atol=atol)
+        # init IndexCache
+        super(torch.nn.Module, self).__init__(
+            times=R.times if hasattr(R, 'times') else None,
+            atol=atol
+        )
         self.polmode = polmode
         self.single_ant = single_ant
         self.vis_type = vis_type
@@ -708,6 +731,8 @@ class JonesModel(utils.Module, IndexCache):
         if not dtype:
             self.clear_cache()
             self.device = device
+            # IndexCache push
+            super(torch.nn.Module, self).push(device)
         self.params = utils.push(self.params, device)
         self.R.push(device)
         if self.p0 is not None:
@@ -971,8 +996,11 @@ class RedVisModel(utils.Module, IndexCache):
             R = VisModelResponse()
         self.R = R
         self.p0 = p0
-        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
-                                              atol=atol)
+        # init IndexCache
+        super(torch.nn.Module, self).__init__(
+            times=R.times if hasattr(R, 'times') else None,
+            atol=atol
+        )
         self.clear_cache()
 
     def forward(self, vd, undo=False, prior_cache=None):
@@ -1028,9 +1056,9 @@ class RedVisModel(utils.Module, IndexCache):
         redvis = self.index_params(redvis, times=vout.times)
 
         # expand redvis to vis size if needed
-        if redvis.shape[2] != vout.data.shape[2]:
-            index = self.get_bl_idx(vout.bls)
-            redvis = torch.index_select(redvis, 2, index)
+        if redvis.shape[-3] != vout.data.shape[-3]:
+            index = self.get_bl_idx(vout._blnums)
+            redvis = torch.index_select(redvis, -3, index)
 
         # apply redvis model: not inplace b/c vout is not deepcopy
         if not undo:
@@ -1046,13 +1074,12 @@ class RedVisModel(utils.Module, IndexCache):
         redvis to vis shape along Nbls axis.
         Overloads IndexCache.get_bl_idx
         """
-        if not isinstance(bls, list):
-            bls = [bls]
         h = utils.arr_hash(bls)
         if h not in self.cache_bidx:
             index = torch.as_tensor(
-                [self.bl2red[bl] for bl in bls],
-                device=self.device)
+                [self.bl2red[bl] for bl in bls.cpu().numpy()],
+                device=self.device
+            )
             self.cache_bidx[h] = index
         else:
             index = self.cache_bidx[h]
@@ -1072,7 +1099,10 @@ class RedVisModel(utils.Module, IndexCache):
         Push to a new device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype: self.device = device
+        if not dtype:
+            self.device = device
+            # IndexCache push
+            super(torch.nn.Module, self).push(device)
         self.params = utils.push(self.params, device)
         self.R.push(device)
         if self.p0 is not None:
@@ -1101,7 +1131,7 @@ class VisModel(utils.Module, IndexCache):
 
     """
     def __init__(self, params, R=None, parameter=True, p0=None,
-                 name=None, atol=1e-5):
+                 blnums=None, name=None, atol=1e-5):
         """
         Visibility model
 
@@ -1124,6 +1154,10 @@ class VisModel(utils.Module, IndexCache):
             Starting params to sum with params before Response
             function. This reframes params as a perturbation about p0.
             Same shape and dtype as params.
+        blnums : tensor, optional
+            Baseline numbers for the visibility model
+            along the Nbls dim. This is only needed for
+            Nbls minibatching.
         name : str, optional
             Name for this object, stored as self.name
         atol : float, optional
@@ -1139,9 +1173,12 @@ class VisModel(utils.Module, IndexCache):
             R = VisModelResponse()
         self.R = R
         self.p0 = p0
-        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
-                                              bls=R.bls if hasattr(R, 'bls') else None,
-                                              atol=atol)
+        # init IndexCache
+        super(torch.nn.Module, self).__init__(
+            times=R.times if hasattr(R, 'times') else None,
+            bls=blnums,
+            atol=atol
+        )
         self.clear_cache()
 
     def forward(self, vd, undo=False, prior_cache=None, **kwargs):
@@ -1188,8 +1225,13 @@ class VisModel(utils.Module, IndexCache):
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=vis)
 
-        # down select
-        vis = self.index_params(vis, times=vd.times, bls=vd.bls)
+        # down select on times or bls for minibatching
+        times, bls = None, None
+        if vout.Nbls != vis.shape[-3]:
+            bls = vd._blnums
+        if vout.Ntimes != vis.shape[-2]:
+            times = vd.times
+        vis = self.index_params(vis, times=times, bls=bls)
 
         if not undo:
             vout.data = vout.data + vis
@@ -1203,7 +1245,10 @@ class VisModel(utils.Module, IndexCache):
         Push to a new device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype: self.device = device
+        if not dtype:
+            self.device = device
+            # IndexCache push
+            super(torch.nn.Module, self).push(device)
         self.R.push(device)
         self.params = utils.push(self.params, device)
         if self.p0 is not None:
@@ -1222,15 +1267,12 @@ class VisModelResponse(BaseResponse):
     A response object for VisModel and RedVisModel, subclass of BaseResponse
     taking params of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
     """
-    def __init__(self, bls=None, freq_mode='channel', time_mode='channel',
+    def __init__(self, freq_mode='channel', time_mode='channel',
                  param_type='real', device=None, time_dim=3, freq_dim=4,
                  freq_kwargs={}, time_kwargs={}, LM=None, base0=None):
         """
         Parameters
         ----------
-        bls : list of 2-tuple, optional
-            List of baseline tuples for baseline indexing (minibatching)
-            e.g. [(0, 1), (1, 2). ...] along the Nbls params dimension
         freq_mode : str, optional
             Frequency parameterization, ['channel', 'linear']
         time_mode : str, optional
@@ -1308,7 +1350,6 @@ class VisCoupling(utils.Module, IndexCache):
             axis of params, values are antenna vectors in ENU frame [meters]
         bls : list of tuples
             List of baselines along the Nbls axis of the input VisData
-            object
         R : callable, optional
             Response object for params, mapping it from
             sparse basis to its (Npol, Npol, ... Nfreqs) shape
@@ -1356,9 +1397,10 @@ class VisCoupling(utils.Module, IndexCache):
         self.R = R
 
         # IndexCache.__init__
-        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
-                                              bls=R.bls if hasattr(R, 'bls') else None,
-                                              atol=atol)
+        super(torch.nn.Module, self).__init__(
+            times=R.times if hasattr(R, 'times') else None,
+            atol=atol
+        )
         self.clear_cache()
 
     def setup_coupling(self, bls=None, min_dly=None):
@@ -1518,7 +1560,7 @@ class VisCoupling(utils.Module, IndexCache):
 
         return vout
 
-    def index_params(self, params, times=None, bls=None):
+    def index_params(self, params, times=None):
         """overload IndexCache index_params b/c of time broadcast"""
         if times is not None:
             # if only 1 time bin in params, assume we want to broadcast
@@ -1527,7 +1569,7 @@ class VisCoupling(utils.Module, IndexCache):
             else:
                 params = super(utils.Module, self).index_params(params, times=times)
 
-        return super(utils.Module, self).index_params(params, bls=bls)
+        return params
 
     def push(self, device):
         """
@@ -1535,13 +1577,16 @@ class VisCoupling(utils.Module, IndexCache):
         """
         dtype = isinstance(device, torch.dtype)
         if not dtype and hasattr(self, "bls_idx"):
-            self.device = device
             self.flat_data_idx = self.flat_data_idx.to(device)
             self.flat_conj_idx = self.flat_conj_idx.to(device)
             self.flat_unconj_idx = self.flat_unconj_idx.to(device)
             self.bls_idx = self.bls_idx.to(device)
         if hasattr(self, 'I'):
             self.I = utils.push(self.I, device)
+        if not dtype:
+            self.device = device
+            # IndexCache push
+            super(torch.nn.Module, self).push(device)
 
         self.params = utils.push(self.params, device)
         self.dly = utils.push(self.dly, device)
@@ -1656,9 +1701,10 @@ class RedVisCoupling(utils.Module, IndexCache):
         self.R = R
 
         # IndexCache.__init__
-        super(torch.nn.Module, self).__init__(times=R.times if hasattr(R, 'times') else None,
-                                              bls=R.bls if hasattr(R, 'bls') else None,
-                                              atol=atol)
+        super(torch.nn.Module, self).__init__(
+            times=R.times if hasattr(R, 'times') else None,
+            atol=atol
+        )
         self.clear_cache()
 
         self.coupling_terms = coupling_terms
@@ -2017,7 +2063,7 @@ class RedVisCoupling(utils.Module, IndexCache):
 
         return vout
 
-    def index_params(self, params, times=None, bls=None):
+    def index_params(self, params, times=None):
         """overload IndexCache index_params b/c of time broadcast"""
         if times is not None:
             # if only 1 time bin in params, assume we want to broadcast
@@ -2026,7 +2072,7 @@ class RedVisCoupling(utils.Module, IndexCache):
             else:
                 params = super(utils.Module, self).index_params(params, times=times)
 
-        return super(utils.Module, self).index_params(params, bls=bls)
+        return params
 
     def push(self, device):
         """
@@ -2044,6 +2090,10 @@ class RedVisCoupling(utils.Module, IndexCache):
                 arr = getattr(self, k)
                 arr = tuple(a.to(device) for a in arr)
                 setattr(self, k, arr)
+
+            # IndexCache push
+            super(torch.nn.Module, self).push(device)
+
         self.params = utils.push(self.params, device)
         self.R.push(device)
         self.dly = utils.push(self.dly, device)

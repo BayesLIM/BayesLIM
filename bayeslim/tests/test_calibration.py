@@ -6,6 +6,9 @@ torch.set_default_dtype(torch.float64)
 import bayeslim as ba
 from bayeslim.data import DATA_PATH
 
+from test_telescope import setup_Array, setup_Telescope
+from test_dataset import setup_VisData
+
 try:
 	import symengine as sympy
 	import_sympy = True
@@ -199,10 +202,52 @@ def test_Coupling_sympy():
 	# setup coupling indexing arrays
 	rvis_cpl.setup_coupling(use_reds=True, include_second_order=False)
 
-	# take forward pass of RedVisModel
+	# take forward pass of RedVisCoupling
 	with torch.no_grad():
 		vout = rvis_cpl(vd)
 
-	# compare RedVisModel against analytic result
+	# compare RedVisCoupling against analytic result
 	r = vout[[bl for bl in vout.bls]].numpy() / np.array([Vc[bl[0], bl[1]] for bl in vout.bls])
 	assert np.isclose(r, 1 + 0j, atol=1e-10).all()
+
+
+def test_VisModel():
+	vd = setup_VisData()
+	vd.data[:] = 0
+	bls = vd.get_bls()
+	blnums = ba.utils.ants2blnum(bls, tensor=True)
+
+	params = torch.randn(1, 1, len(bls), len(times), len(freqs), dtype=ba._cfloat())
+	R = ba.calibration.VisModelResponse(
+		freq_kwargs=dict(freqs=freqs),
+		time_kwargs=dict(times=times)
+	)
+
+	vis_mdl = ba.calibration.VisModel(params, R=R, parameter=False, blnums=blnums)
+
+	# take forward pass and assert vout == params
+	vout = vis_mdl(vd)
+	assert torch.isclose(vout.data, params, atol=1e-10).all()
+
+	# now try time minibatching
+	vd2 = vd.select(time_inds=range(3), inplace=False)
+	vout = vis_mdl(vd2)
+	assert vout.Ntimes == 3
+
+	# assert vd2.times picks up a hash
+	# important for high-perf indexing
+	assert hasattr(vd2.times, '_arr_hash')
+	assert vd2.times._arr_hash in vis_mdl.cache_tidx
+
+	# now try bl minibatching
+	vd2 = vd.select(bl_inds=range(50), inplace=False)
+	vout = vis_mdl(vd2)
+	assert vout.Nbls == 50
+
+	# assert vd2._blnums picks up a hash
+	assert hasattr(vd2._blnums, '_arr_hash')
+	assert vd2._blnums._arr_hash in vis_mdl.cache_bidx
+
+	# assert vis_mdl.push() clears caches
+
+
