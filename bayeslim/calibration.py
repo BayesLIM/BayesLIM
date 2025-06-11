@@ -1329,7 +1329,8 @@ class VisCoupling(utils.Module, IndexCache):
     Currently only supports single-pol coupling.
     """
     def __init__(self, params, freqs, antpos, bls, R=None, parameter=True,
-                 p0=None, name=None, atol=1e-5, add_I=True, prod='both'):
+                 p0=None, name=None, atol=1e-5, add_I=True, prod='both',
+                 double=False):
         """
         Visibility coupling model. Note this does not support baseline
         minibatching (all baselines must exist in the input VisData object).
@@ -1367,11 +1368,15 @@ class VisCoupling(utils.Module, IndexCache):
         atol : float, optional
             Absolute tolerance for time index caching
         add_I : bool, optional
-            If True, (default) add identity to the coupling matrix (I + E)
+            If True, (default) add identity to the coupling matrix (I + X)
         prod : str, optional
             If 'both' (default) form Vc = X V0 X^T
             if 'left' form Vc = X V0
             if 'right' form Vc = V0 X^T
+        double : bool, optional
+            If True, model double-path reflections, in which
+            case E = I + X + XX. Otherwise, use single-path
+            reflections (default), where E = I + X.
         """
         super().__init__(name=name)
         ## TODO: support multi-pol coupling
@@ -1390,6 +1395,7 @@ class VisCoupling(utils.Module, IndexCache):
         assert self.Npol == 1, "multi-pol not currently supported"
         self.add_I = add_I
         self.prod = prod
+        self.double = double
         if parameter:
             self.params = torch.nn.Parameter(self.params)
 
@@ -1483,7 +1489,8 @@ class VisCoupling(utils.Module, IndexCache):
             self.Nants, dtype=utils._float(), device=self.device
             )[None, None, :, :, None, None]
 
-    def forward(self, vd, prior_cache=None, add_I=None, prod=None, **kwargs):
+    def forward(self, vd, prior_cache=None, add_I=None, prod=None,
+                double=False, **kwargs):
         """
         Forward pass vd through visibility coupling
         model term.
@@ -1522,11 +1529,16 @@ class VisCoupling(utils.Module, IndexCache):
 
         # down select on times
         coupling = self.index_params(coupling, times=vd.times)
-        Ntimes = coupling.shape[3]
+        Ntimes = coupling.shape[-2]
 
         # multiply by delay term
         coupling *= self.dly
-        Nfreqs = coupling.shape[5]
+        Nfreqs = coupling.shape[-1]
+
+        # model double-path reflections
+        double = double if double is not None else self.double
+        if double:
+            coupling += torch.einsum("...patf,...aqtf->...pqtf", coupling, coupling)
 
         # add identity
         add_I = add_I if add_I is not None else self.add_I

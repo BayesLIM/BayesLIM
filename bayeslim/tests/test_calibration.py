@@ -211,6 +211,47 @@ def test_Coupling_sympy():
 	assert np.isclose(r, 1 + 0j, atol=1e-10).all()
 
 
+def test_VisCoupling():
+
+	freqs = torch.linspace(120e6, 130e6, 8)
+	times = torch.linspace(2458168.1, 2458168.3, 4)
+	# setup redviscoupling
+	rvis_cpl = setup_Coupling(freqs, times)
+
+	# simulate mock redundant bls data
+	torch.manual_seed(0)
+	vd = ba.VisData()
+	vd.setup_meta(antpos=rvis_cpl.antpos)
+	data = torch.randn(1, 1, len(rvis_cpl.bls_in), len(times), len(freqs), dtype=ba._cfloat())
+	vd.setup_data(rvis_cpl.bls_in, times, freqs, data=data)
+	vd[(0, 0)] = vd[(0, 0)].abs() # fix autocorr to abs
+	vd = vd.inflate_by_redundancy()
+
+	# export ot viscoupling
+	CI = ba.calibration.CouplingInflate(
+		vd.get_bl_vecs(rvis_cpl.coupling_terms),
+		rvis_cpl.antpos,
+	)
+	vis_cpl = ba.calibration.VisCoupling(
+		CI(rvis_cpl.params),
+		freqs,
+		rvis_cpl.antpos,
+		rvis_cpl.bls_out,
+		R=rvis_cpl.R,
+	)
+	vis_cpl.setup_coupling()
+
+	# test forward pass
+	with torch.no_grad():
+		vout = vis_cpl(vd)
+	assert vout.data.shape == vd.data.shape
+
+	# test forward pass with double reflections
+	with torch.no_grad():
+		vout2 = vis_cpl(vd, double=True)
+	assert vout.data.shape == vd.data.shape
+
+
 def test_VisModel():
 	vd = setup_VisData()
 	vd.data[:] = 0
