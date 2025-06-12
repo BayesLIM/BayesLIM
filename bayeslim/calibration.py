@@ -1546,31 +1546,31 @@ class VisCoupling(utils.Module, IndexCache):
             coupling += self.I
 
         # reshape input data along bls axis
-        flat_data = torch.index_select(vd.data, 2, self.flat_data_idx)
+        flat_data = torch.index_select(vd.data, -3, self.flat_data_idx)
 
         # for bls that don't exist in vd.data, null them out
-        flat_data[:, :, self.flat_data_null] = 0.0
+        flat_data[..., self.flat_data_null, :, :] = 0.0
 
         # conjugate lower triangular component
-        flat_data[:, :, self.flat_conj_idx] = flat_data[:, :, self.flat_conj_idx].conj()
+        flat_data[..., self.flat_conj_idx, :, :] = flat_data[..., self.flat_conj_idx, :, :].conj()
 
         # reshape to (..., Nant, Nant, ...) size
         shape = vd.data.shape
-        new_shape = shape[:2] + (self.Nants, self.Nants) + shape[3:]
+        new_shape = shape[:-3] + (self.Nants, self.Nants) + shape[-2:]
         reshaped_data = flat_data.reshape(new_shape)
 
         # take product of coupling matrix with visibility matrix
         prod = prod if prod is not None else self.prod
         if prod in ['left', 'both']:
-            reshaped_data = torch.einsum("ijkl...,ijl...->ijk...", coupling, reshaped_data)
+            reshaped_data = torch.einsum("...patf,...aqtf->...pqtf", coupling, reshaped_data)
         if prod in ['right', 'both']:
-            reshaped_data = torch.einsum("ijkl...,ijml...->ijkm...", reshaped_data, coupling.conj())
+            reshaped_data = torch.einsum("...patf,...qatf->...pqtf", reshaped_data, coupling.conj())
 
         # unravel to flat along Nbls axis
-        flat_coupled = reshaped_data.flatten(start_dim=2, end_dim=3)
+        flat_coupled = reshaped_data.flatten(start_dim=-4, end_dim=-3)
 
         # pick out original bls
-        vout.data = torch.index_select(flat_coupled, 2, self.bls_idx)
+        vout.data = torch.index_select(flat_coupled, -3, self.bls_idx)
 
         return vout
 
@@ -2150,7 +2150,7 @@ class RedVisCoupling(utils.Module, IndexCache):
 class CouplingInflate:
     """
     Take a RedVicCoupling parameter and inflate to an Nants x Nants
-    coupling matrix.
+    coupling matrix. Ordering set by antpos.
     """
     def __init__(self, vecs, antpos, redtol=1.0):
         """
@@ -2175,9 +2175,9 @@ class CouplingInflate:
         zeros = torch.zeros(self.shape, dtype=torch.bool)
 
         # iterate over antenna-pairs
-        for i in range(Nants):
-            for j in range(Nants):
-                vec = antpos[self.ants[j]] - antpos[self.ants[i]]
+        for i, ant1 in enumerate(self.ants):
+            for j, ant2 in enumerate(self.ants):
+                vec = antpos[ant1] - antpos[ant2]
                 norm = (vecs - vec).norm(dim=1).isclose(torch.tensor(0.), atol=redtol)
                 if norm.any():
                     idx[i, j] = torch.where(norm)[0]
