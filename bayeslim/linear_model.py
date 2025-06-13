@@ -19,7 +19,7 @@ class LinearModel:
         y = Ax
     """
     def __init__(self, linear_mode, dim=0, coeff=None, diag=False, idx=None,
-                 out_dtype=None, out_shape=None, meta=None, **kwargs):
+                 out_dtype=None, out_reshape=None, out_shape=None, meta=None, **kwargs):
         """
         Parameters
         ----------
@@ -40,8 +40,13 @@ class LinearModel:
             (params * coeff)[idx]
         out_dtype : dtype, optional
             Cast output of forward as this dtype if desired
-        out_shape : tuple, optional
+        out_reshape : tuple, optional
             Reshape output to this shape if desired
+        out_shape : tuple, optional
+            If out_reshape is not None, out_shape is the shape
+            of the output before doing out.reshape(out_reshape).
+            This is needed for doing self.least_squares(), bc we
+            need to undo the reshape before doing least squares.
         meta : dict, optional
             Additional metadata to attach to self as self.meta
         kwargs : dict
@@ -52,6 +57,7 @@ class LinearModel:
         self.coeff = coeff
         self.idx = idx
         self.out_dtype = out_dtype
+        self.out_reshape = out_reshape
         self.out_shape = out_shape
         self.meta = meta if meta is not None else {}
 
@@ -80,7 +86,8 @@ class LinearModel:
                                           device=kwargs.get('device', None),
                                           fft_norm=kwargs.get('fft_norm', 'ortho'))
         self.diag = diag
-        if diag and self.A.ndim == 2:
+        self._A_ndim = self.A.ndim
+        if diag and self._A_ndim == 2:
             self.A = torch.diag(self.A)
         self.device = self.A.device
 
@@ -128,32 +135,35 @@ class LinearModel:
         elif self.dim in [ndim - 2, -2] or ndim == 1:
             # trivial matmul
             out = A @ params
-        elif self.dim in [ndim, -1]:
+        elif self.dim in [ndim, -1] and self._A_ndim == 2:
             # trivial matmul of A-transpose
             out = params @ A.T
         else:
             # otherwise would moveax, dot, moveax
             # so let's just use einsum
-            t1 = 'ab'
             assert ndim <= 8
             t2 = ['i', 'j', 'k', 'l', 'm', 'n', 'o', 'p'][:ndim]
             t2[self.dim] = 'b'
             t2 = ''.join(t2)
+            if self._A_ndim == 2:
+                t1 = 'ab'
+            else:
+                t1 = t2[self.dim-self._A_ndim+2:self.dim] + 'ab'
             out = t2.replace('b', 'a')
             out = torch.einsum("{},{}->{}".format(t1, t2, out), A, params)
 
         if self.out_dtype is not None:
             out = out.to(self.out_dtype)
 
-        if self.out_shape is not None:
-            out = out.reshape(self.out_shape)
+        if self.out_reshape is not None:
+            out = out.reshape(self.out_reshape)
 
         return out
 
     def __call__(self, params, A=None):
         return self.forward(params, A=A)
 
-    def least_squares(self, y, **kwargs):
+    def least_squares(self, y, out_shape=None, Ninv=None, **kwargs):
         """
         Estimate a params tensor from the data vector
 
@@ -176,7 +186,16 @@ class LinearModel:
             if len(A) != y.shape[self.dim]:
                 A = A.expand(y.shape[self.dim])
             A = torch.diag(A)
-        return linalg.least_squares(A, y, dim=self.dim, **kwargs)
+
+        out_shape = out_shape if out_shape is not None else self.out_shape
+        if out_shape is not None:
+            if Ninv is not None:
+                if Ninv.shape == y.shape:
+                    # diagonal Ninv
+                    Ninv = Ninv.reshape(out_shape)
+            y = y.reshape(out_shape)
+
+        return linalg.least_squares(A, y, dim=self.dim, Ninv=Ninv, **kwargs)
 
     def generate_A(self, x, **interp1d_kwargs):
         """

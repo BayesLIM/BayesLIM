@@ -1870,16 +1870,16 @@ def apply_icov(data, icov, cov_axis, mode='vis'):
     (Npol, Npol, Nbls, Ntimes, Nfreqs) for mode = 'vis' or
     (Npol, 1, Nfreqs, Npix) for mode = 'map'
     cov_axis : 'bl'
-        icov is shape (Nbl, Nbl, Npol, Npol, Ntimes, Nfreqs)
+        icov is shape (Npol, Npol, Ntimes, Nfreqs, Nbl, Nbl)
     cov_axis : 'time'
-        icov is shape (Ntimes, Ntimes, Npol, Npol, Nbls, Nfreqs)
+        icov is shape (Npol, Npol, Nbls, Nfreqs, Ntimes, Ntimes)
     cov_axis : 'freq'
         mode = 'vis'
-            icov is shape (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
+            icov is shape (Npol, Npol, Nbls, Ntimes, Nfreqs, Nfreqs)
         mode = 'map'
-            icov is shape (Nfreqs, Nfreqs, Npol, 1, Npix)
+            icov is shape (Npol, 1, Npix, Nfreqs, Nfreqs)
     cov_axis : 'pix'
-        icov is shape (Npix, Npix, Npol, 1, Nfreqs)
+        icov is shape (Npol, 1, Nfreqs, Npix, Npix)
     """
     if cov_axis is None:
         # icov is just diagonal
@@ -1892,19 +1892,19 @@ def apply_icov(data, icov, cov_axis, mode='vis'):
         out = data.ravel().conj() @ icov @ data.ravel()
     elif cov_axis == 'bl':
         # icov is along bls
-        out = torch.einsum("ijklm,kk,ijklm->ijlm", d.conj(), icov, d)
+        out = torch.einsum("ijklm,ijlmkn,ijnlm->ijlm", d.conj(), icov, d)
     elif cov_axis == 'time':
         # icov is along times
-        out = torch.einsum("ijklm,ll,ijklm->ijkm", d.conj(), icov, d)
+        out = torch.einsum("ijklm,ijkln,ijknm->ijkm", d.conj(), icov, d)
     elif cov_axis == 'freq':
         # icov is along freqs
         if mode == 'vis':
-            out = torch.einsum("ijklm,mm,ijklm->ijkl", d.conj(), icov, d)
+            out = torch.einsum("ijklm,ijklmn,ijkln->ijkl", d.conj(), icov, d)
         elif mode == 'map':
-            out = torch.einsum("ijkl,kk,ijkl->ijl", d.conj(), icov, d)
+            out = torch.einsum("ijkl,ijlkn,ijnl->ijl", d.conj(), icov, d)
     elif cov_axis == 'pix':
         # icov is along Npix of map
-        out = torch.einsum("ijkl,ll,ijkl->ijk", d.conj(), icov, d)
+        out = torch.einsum("ijkl,ijkln,ijkn->ijk", d.conj(), icov, d)
 
     return out
 
@@ -1923,12 +1923,12 @@ def cov_get_diag(cov, cov_axis, mode='vis', shape=None):
         The covariance type.
         None   : cov is variance w/ shape of data
         'full' : cov is (N, N) matrix
-        'bl'   : cov is (Nbl, Nbl, Npol, Npol, Ntimes, Nfreqs)
-        'time' : cov is (Ntimes, Ntimes, Npol, Npol, Nbls, Nfreqs)
+        'bl'   : cov is (Npol, Npol, Ntimes, Nfreqs, Nbl, Nbl)
+        'time' : cov is (Npol, Npol, Nbls, Nfreqs, Ntimes, Ntimes)
         'freq' :
-            mode = 'vis' : cov is (Nfreqs, Nfreqs, Npol, Npol, Nbls, Ntimes)
-            mode = 'map' : cov is (Nfreqs, Nfreqs, Npol, 1, Npix)
-        'pix'  : cov is (Npix, Npix, Npol, 1, Nfreqs)
+            mode = 'vis' : cov is (Npol, Npol, Nbls, Ntimes, Nfreqs, Nfreqs)
+            mode = 'map' : cov is (Npol, 1, Npix, Nfreqs, Nfreqs)
+        'pix'  : cov is (Npol, 1, Nfreqs, Npix, Npix)
         It is assumed that data is shape
         mode = 'vis' : (Npol, Npol, Nbls, Ntimes, Nfreqs)
         mode = 'map' : (Npol, 1, Nfreqs, Npix)
@@ -1947,21 +1947,20 @@ def cov_get_diag(cov, cov_axis, mode='vis', shape=None):
     N = len(cov)
     if cov_axis is None:
         return cov
-    elif cov_axis == 'full':
-        diag = cov.diagonal()
+    diag = cov.diagonal(dim1=-2, dim2=-1)
+    if cov_axis == 'full':
         return diag.reshape(shape)
     elif cov_axis == 'bl':
-        diag = cov[range(N), range(N)]
-        return diag.moveaxis(0, 2)
+        return diag.moveaxis(-1, 2)
     elif cov_axis == 'time':
-        diag = cov[range(N), range(N)]
-        return diag.moveaxis(0, 3)
+        return diag.moveaxis(-1, 3)
     elif cov_axis == 'freq':
-        diag = cov[range(N), range(N)]
-        return diag.moveaxis(0, 4)
+        if mode == 'vis':
+            return diag
+        elif mode == 'map':
+            return diag.moveaxis(-1, 2)
     elif cov_axis == 'pix':
-        diag = cov[range(N), range(N)]
-        return diag.moveaxis(0, -1)
+        return diag
     else:
         raise NameError("didn't recognize cov_axis {}".format(cov_axis))
 
@@ -1992,7 +1991,7 @@ def compute_icov(cov, cov_axis, inv='pinv', **kwargs):
     # set inversion function
     if cov_axis is None:
         # this is just diagonal
-        icov = 1 / cov
+        icov = 1 / cov.clip(1e-40)
     elif cov_axis == 'full':
         # invert full covariance
         icov = linalg.invert_matrix(cov, inv=inv, hermitian=True, **kwargs)

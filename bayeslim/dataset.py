@@ -97,12 +97,12 @@ class TensorData:
                 # cov is 2D (N x N)
                 cov_logdet = torch.slogdet(cov).logabsdet
             else:
-                # cov ndim > 2, but first two axes hold covariances
+                # cov ndim > 2, but last two axes hold covariances
                 cov_logdet = torch.tensor(0.)
                 def recursive_logdet(cov, cov_logdet):
                     if cov.ndim > 2:
-                        for i in range(cov.shape[2]):
-                            recursive_logdet(cov[:, :, i], cov_logdet)
+                        for i in range(cov.shape[0]):
+                            recursive_logdet(cov[i], cov_logdet)
                     else:
                         cov_logdet += torch.slogdet(cov).logabsdet
                 recursive_logdet(cov, cov_logdet)
@@ -372,9 +372,9 @@ class VisData(TensorData):
             modeled covariance. All other axes should broadcast
             with other unmodeled axes.
             E.g. if
-                cov_axis = 'bl': (Nbl, Nbl, Npol, Npol, Nfreqs, Ntimes)
-                cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nbl, Ntimes)
-                cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nbl, Nfreqs)
+                cov_axis = 'bl': (Npol, Npol, Nfreqs, Ntimes, Nbl, Nbl)
+                cov_axis = 'freq': (Npol, Npol, Nbl, Ntimes, Nfreqs, Nfreqs)
+                cov_axis = 'time': (Npol, Npol, Nbl, Nfreqs, Ntimes, Ntimes)
         cov_axis : str, optional
             If cov represents on and off diagonal components, this is the
             axis over which off-diagonal is modeled.
@@ -985,30 +985,30 @@ class VisData(TensorData):
             # cov is not the same shape as data
             if bl is not None or bl_inds is not None:
                 if self.cov_axis == 'bl':
-                    cov = cov[inds[2]][:, inds[2]]
+                    cov = cov[..., inds[2]][..., inds[2]]
                 elif self.cov_axis in ['time', 'freq']:
-                    cov = cov[:, :, :, :, inds[2]]
+                    cov = cov[:, :, inds[2]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif times is not None or time_inds is not None:
                 if self.cov_axis == 'time':
-                    cov = cov[inds[3]][:, inds[3]]
+                    cov = cov[..., inds[3]][..., inds[3]]
                 elif self.cov_axis == 'bl':
-                    cov = cov[:, :, :, :, inds[3]]
+                    cov = cov[:, :, inds[3]]
                 elif self.cov_axis == 'freq':
-                    cov = cov[:, :, :, :, :, inds[3]]
+                    cov = cov[:, :, :, inds[3]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif freqs is not None or freq_inds is not None:
                 if self.cov_axis == 'freq':
-                    cov = cov[inds[4]][:, inds[4]]
+                    cov = cov[..., inds[4]][..., inds[4]]
                 elif self.cov_axis in ['bl', 'time']:
-                    cov = cov[:, :, :, :, :, inds[4]]
+                    cov = cov[:, :, :, inds[4]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif pol is not None:
                 # pol-pol covariance not yet implemented
-                cov = cov[:, :, inds[0], inds[0]]
+                cov = cov[inds[0], inds[0]]
             else:
                 cov = cov[:]
 
@@ -1780,14 +1780,14 @@ class VisData(TensorData):
                 if self.cov_axis is None:
                     assert cov.shape == self.data.shape
                 elif self.cov_axis == 'bl':
-                    assert cov.shape == (self.Nbls, self.Nbls, self.Npol, self.Npol,
-                                              self.Ntimes, self.Nfreqs)
+                    assert cov.shape == (self.Npol, self.Npol,
+                                         self.Ntimes, self.Nfreqs, self.Nbls, self.Nbls)
                 elif self.cov_axis == 'time':
-                    assert cov.shape == (self.Ntimes, self.Ntimes, self.Npol, self.Npol,
-                                              self.Nbls, self.Nfreqs)
+                    assert cov.shape == (self.Npol, self.Npol,
+                                         self.Nbls, self.Nfreqs, self.Ntimes, self.Ntimes)
                 elif self.cov_axis == 'freq':
-                    assert cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
-                                              self.Nbls, self.Ntimes)
+                    assert cov.shape == (self.Npol, self.Npol, self.Nbls, self.Ntimes,
+                                         self.Nfreqs, self.Nfreqs)
         for (ant1, ant2) in self.bls:
             assert (ant1 in self.ants) and (ant2 in self.ants)
 
@@ -1840,7 +1840,7 @@ class MapData(TensorData):
             Axis of covariance. If None assume cov is
             shape of data and is just variance. Otherwise
             can be ['freq', 'pixel'] and cov is shape
-            (Nax, Nax, ...)
+            (..., Nax, Nax)
         icov : tensor, optional
             Inverse covariance. Same rules apply as cov.
             Recommended to set cov and then run self.compute_icov
@@ -2102,22 +2102,22 @@ class MapData(TensorData):
             # cov is not the same shape as data
             if angs is not None or ang_inds is not None:
                 if cov_axis == 'pix':
-                    cov = cov[inds[3]][:, inds[3]]
+                    cov = cov[..., inds[3]][..., inds[3]]
                 elif cov_axis in ['freq']:
-                    cov = cov[:, :, :, inds[-1]]
+                    cov = cov[:, :, inds[-1]]
                 elif cov_axis == 'full':
                     raise NotImplementedError
             elif freqs is not None or freq_inds is not None:
                 if cov_axis == 'freq':
-                    cov = cov[inds[2]][:, inds[2]]
+                    cov = cov[..., inds[2]][..., inds[2]]
                 elif cov_axis in ['pix']:
-                    cov = cov[:, :, :, inds[2]]
+                    cov = cov[:, :, inds[2]]
                 elif cov_axis == 'full':
                     raise NotImplementedError
             elif pols is not None or pol_inds is not None:
                 # pol-pol covariance not yet implemented
                 if cov_axis in ['freq', 'pix']:
-                    cov = cov[:, :, inds[0]]
+                    cov = cov[inds[0]]
                 elif cov_axis == 'full':
                     raise NotImplementedError
             else:
@@ -2426,13 +2426,13 @@ class CalData(TensorData):
             Tensor holding data covariance. If this is
             the same shape as data, then the elements are
             the data variance. Otherwise, this is of shape
-            (Nax, Nax, ...) where Nax is the axis of the
+            (..., Nax, Nax) where Nax is the axis of the
             modeled covariance. All other axes should broadcast
             with other unmodeled axes.
             E.g. if
-                cov_axis = 'ant': (Nants, Nant, Npol, Npol, Nfreqs, Ntimes)
-                cov_axis = 'freq': (Nfreqs, Nfreqs, Npol, Npol, Nants, Ntimes)
-                cov_axis = 'time': (Ntimes, Ntimes, Npol, Npol, Nants, Nfreqs)
+                cov_axis = 'ant': (Npol, Npol, Nfreqs, Ntimes, Nant, Nant)
+                cov_axis = 'freq': (Npol, Npol, Nants, Ntimes, Nfreq, Nfreq)
+                cov_axis = 'time': (Npol, Npol, Nants, Nfreqs, Ntimes, Ntimes)
         cov_axis : str, optional
             If cov represents on and off diagonal components, this is the
             axis over which off-diagonal is modeled.
@@ -2807,32 +2807,30 @@ class CalData(TensorData):
             # cov is not the same shape as data
             if ant is not None:
                 if self.cov_axis == 'ant':
-                    cov = cov[inds[2]][:, inds[2]]
+                    cov = cov[..., inds[2]][..., inds[2]]
                 elif self.cov_axis in ['time', 'freq']:
-                    cov = cov[:, :, :, :, inds[2]]
+                    cov = cov[:, :, inds[2]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif times is not None:
                 if self.cov_axis == 'time':
-                    cov = cov[inds[3]][:, inds[3]]
+                    cov = cov[..., inds[3]][..., inds[3]]
                 elif self.cov_axis == 'ant':
-                    cov = cov[:, :, :, :, inds[3]]
+                    cov = cov[:, :, :, inds[3]]
                 elif self.cov_axis == 'freq':
-                    cov = cov[:, :, :, :, :, inds[3]]
+                    cov = cov[:, :, :, :, inds[3]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif freqs is not None:
                 if self.cov_axis == 'freq':
-                    cov = cov[inds[4]][:, inds[4]]
+                    cov = cov[..., inds[4]][..., inds[4]]
                 elif self.cov_axis in ['ant', 'time']:
-                    cov = cov[:, :, :, :, :, inds[4]]
+                    cov = cov[:, :, :, :, inds[4]]
                 elif self.cov_axis == 'full':
                     raise NotImplementedError
             elif pol is not None:
                 # pol-pol covariance not yet implemented
-                cov = cov[:, :, inds[0], inds[0]]
-            else:
-                cov = cov[:]
+                cov = cov[inds[0], inds[0]]
 
         # squeeze
         if squeeze:
@@ -3199,14 +3197,14 @@ class CalData(TensorData):
         if self.cov:
             assert self.cov_axis is not None, "full data-sized covariance not implemented"
             if self.cov_axis == 'ant':
-                assert self.cov.shape == (self.Nants, self.Nants, self.Npol, self.Npol,
-                                          self.Ntimes, self.Nfreqs)
+                assert self.cov.shape == (self.Npol, self.Npol,
+                                          self.Ntimes, self.Nfreqs, self.Nants, self.Nants)
             elif self.cov_axis == 'time':
-                assert self.cov.shape == (self.Ntimes, self.Ntimes, self.Npol, self.Npol,
-                                          self.Nants, self.Nfreqs)
+                assert self.cov.shape == (self.Npol, self.Npol,
+                                          self.Nants, self.Nfreqs, self.Ntimes, self.Ntimes)
             elif self.cov_axis == 'freq':
-                assert self.cov.shape == (self.Nfreqs, self.Nfreqs, self.Npol, self.Npol,
-                                          self.Nants, self.Ntimes)
+                assert self.cov.shape == (self.Npol, self.Npol,
+                                          self.Nants, self.Ntimes, self.Nfreqs, self.Nfreqs)
 
     def inflate_to_4pol(self):
         """
@@ -3351,6 +3349,7 @@ class RedVisAvg(utils.Module):
         dtype = isinstance(device, torch.dtype)
         if not dtype:
             self.device = device
+
 
 class RedVisInflate(utils.Module):
     """

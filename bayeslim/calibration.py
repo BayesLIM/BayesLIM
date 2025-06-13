@@ -1267,7 +1267,7 @@ class VisModel(utils.Module, IndexCache):
 class VisModelResponse(BaseResponse):
     """
     A response object for VisModel and RedVisModel, subclass of BaseResponse
-    taking params of shape (Npol, Npol, Nbls, Ntimes, Nfreqs)
+    taking params as input and reshaping into output (Npol, Npol, Nbls, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel',
                  param_type='real', device=None, time_dim=3, freq_dim=4,
