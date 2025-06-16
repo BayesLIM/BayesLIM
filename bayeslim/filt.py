@@ -547,7 +547,7 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, x2=None,
     arg = gauss_ls / np.sqrt(2) / sinc_ls
     xc = x / gauss_ls / np.sqrt(2)
     x2c = xc if x2 is None else x2 / gauss_ls / np.sqrt(2)
-    dists = (xc[:, None] - x2c[None, :])
+    dists = (x2c[:, None] - xc[None, :])
 
     # get unique dists
     ud, ui = torch.unique(dists, return_inverse=True)
