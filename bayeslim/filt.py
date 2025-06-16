@@ -509,7 +509,8 @@ def phasor_mat(x, shift, neg=True, x2=None, dtype=None, device=None):
     return cov
 
 
-def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
+def gauss_sinc_cov(x, gauss_ls, sinc_ls, x2=None,
+                   dtype=None, device=None, high_prec=False):
     """
     A Gaussian-convolved Sinc covariance model,
     or a top-hat truncated Gaussian Fourier space kernel.
@@ -525,6 +526,13 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
         Gaussian length scale
     sinc_ls : float
         Sinc length scale
+    x2 : tensor, optional
+        Second set of independent axis labels, generating
+        a non-square covariance matrix.
+    dtype : torch.dtype, optional
+        Output dtype
+    device : torch.device, optional
+        Output device
     high_prec : bool, optional
         If True use mpmath arbitrary precision
         library, otherwise use numpy.
@@ -535,29 +543,38 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, high_prec=False):
     """
     sinc_ls = sinc_ls / np.pi
 
+    # get distances
     arg = gauss_ls / np.sqrt(2) / sinc_ls
     xc = x / gauss_ls / np.sqrt(2)
-    N = len(x)
-    idx = torch.tril_indices(N, N, offset=-1)
-    dists = (xc[:, None] - xc[None, :])[idx[0], idx[1]]
+    x2c = xc if x2 is None else x2 / gauss_ls / np.sqrt(2)
+    dists = (xc[:, None] - x2c[None, :])
+
+    # get unique dists
+    ud, ui = torch.unique(dists, return_inverse=True)
 
     if high_prec:
         import mpmath
         fn = lambda z: mpmath.exp(-z**2) * (mpmath.erf(arg + 1j*z) + mpmath.erf(arg - 1j*z)).real
-        K = 0.5 * torch.as_tensor(np.asarray(np.frompyfunc(fn, 1, 1)(dists.numpy()), dtype=float))
+        K = 0.5 * torch.as_tensor(np.asarray(np.frompyfunc(fn, 1, 1)(ud.numpy()), dtype=float))
         K /= special.erf(arg)
 
     else:
-        K = (0.5 * torch.exp(-dists**2) / special.erf(arg) \
-            * (special.erf(arg + 1j*dists) + special.erf(arg - 1j*dists))).real
+        K = (0.5 * torch.exp(-ud**2) / special.erf(arg) \
+            * (special.erf(arg + 1j*ud) + special.erf(arg - 1j*ud))).real
         # replace nans with zero: in this limit, you should use high_prec
         # but this is a faster approximation
         K[torch.isnan(K)] = 0.0
 
-    cov = torch.zeros((N, N))
-    cov[idx[0], idx[1]] = K
-    cov += cov.T.clone()
-    cov[range(N), range(N)] = 1.0
+    # expand back to NxM
+    cov = K[ui]
+
+    # fill dx = 0 if needed
+    cov[torch.isclose(dists, torch.tensor(0.), atol=1e-7)] = 1.0
+
+    if dtype is not None:
+        cov = cov.to(dtype)
+    if device is not None:
+        cov = cov.to(device)
 
     return cov
 
