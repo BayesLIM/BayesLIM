@@ -653,7 +653,7 @@ def least_squares(A, y, dim=0, mode='matrix', norm='inv', pinv=True,
     else:
         Aconj = A.conj()
     xhat = torch.einsum(
-        "...{},...{}->...{}".format(A_ein, y_ein, y_ein.replace('i', 'j')),
+        "{},{}->{}".format(A_ein, y_ein, y_ein.replace('i', 'j')),
         Aconj,
         y
     )
