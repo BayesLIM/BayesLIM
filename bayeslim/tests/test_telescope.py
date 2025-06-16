@@ -83,4 +83,67 @@ def test_Array():
 	assert (1, 2) not in sim_bls  # non-uniq baseline
 
 
+def test_build_reds():
+	"""
+	      16    17    18
+
+
+	   12    13    14    15
+
+
+	07    08    09    10    11
+
+
+	   03    04    05    06
+
+
+	      00    01    02
+	"""
+	antpos = dict(zip(*ba.utils._make_hex(3)))
+	Nants = len(antpos)
+
+	# test fcluster True/False
+	red_info1 = ba.telescope_model.build_reds(antpos, fcluster=True)
+	red_info2 = ba.telescope_model.build_reds(antpos, fcluster=False)
+	Nreds = len(red_info1[0])
+	assert len(red_info1) == len(red_info2)
+	for r1, r2 in zip(red_info1[0], red_info2[0]):
+		assert red_info1[0] == red_info2[0]
+
+	# assert number of bls is correct
+	assert len(red_info1[3]) == (Nants * (Nants - 1) / 2 + Nants)
+	# assert 1-unit EW group is correct based on hex layout
+	assert all([bl[1] == bl[0]+1 for bl in red_info1[0][1]])
+	# assert bl_lens are monotically increasing
+	assert all(np.diff(red_info1[4]) >= -1e-14)
+	# assert all bls are accounted for in reds
+	assert len(ba.utils.flatten(red_info1[0])) == len(red_info1[3])
+
+	# test other options
+	red_info = ba.telescope_model.build_reds(antpos, red_bls=[(0, 1)])
+	assert len(red_info[0]) == 1
+	assert red_info[0][0] == red_info1[0][1]
+
+	red_info = ba.telescope_model.build_reds(antpos, norm_vec=True)
+	assert len(red_info[0]) == 9
+	assert red_info[0][0] == red_info1[0][0]
+	assert red_info[0][1] == sorted(ba.utils.flatten(red_info1[0][1:4]))
+
+	red_info = ba.telescope_model.build_reds(antpos, min_len=16, max_len=40)
+	assert min(red_info[4]) >= 16
+	assert min(red_info[4]) <= 40
+
+	red_info = ba.telescope_model.build_reds(antpos, min_EW_len=16)
+	assert min(red_info[1][:, 0].abs()) >= 16
+
+	red_info = ba.telescope_model.build_reds(antpos, exclude_reds=[(0, 1), (0, 2)])
+	assert ((0, 1) not in red_info[2]) and ((0, 2) not in red_info[2])
+	assert len(red_info[0]) == (Nreds - 2)
+
+	red_info = ba.telescope_model.build_reds(antpos, use_blnums=True)
+	assert isinstance(red_info[3][0], np.integer)
+	assert ba.utils.blnum2ants(red_info[3]) == red_info1[3]
+
+	red_info2 = ba.telescope_model.build_reds(antpos, red_info=red_info)
+	assert (red_info[3] == red_info2[3]).all()
 

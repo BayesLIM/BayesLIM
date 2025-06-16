@@ -692,7 +692,7 @@ def JD2LST(jd, longitude):
 
 def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
                min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False,
-               use_blnums=False, red_info=None):
+               use_blnums=False, use_2d=False, fcluster=True, red_info=None):
     """
     Build redundant groups. Note that this currently has sub-optimal
     performance and probably scales ~O(N_bl^2), which could be improved.
@@ -724,7 +724,7 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     max_len : float, optional
         Maximum baseline length cut
     min_EW_len : float, optional
-        Minimum projected East-West baseline length cut
+        Minimum projected |East-West baseline length| cut
     exclude_reds : list, optional
         A list of baseline tuple(s) whose corresponding
         redundant type will be excluded from the output.
@@ -740,6 +740,11 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     use_blnums : bool, optional
         If True output baseline numbers (e.g. 101102) instead of antpair
         tuples e.g. (1, 2)
+    use_2d : bool, optional
+        If True, only use X & Y antenna positions, instead of X, Y, Z (default)
+    fcluster : bool, optional
+        If True, use scipy.cluster hiearchical clustering algorithm (default).
+        Otherwise, build the redundancies via direct iteration.
     red_info : tuple, optional
         This holds pre-computed output of build_reds(). If passed,
         this bypasses all operations and just returns red_info().
@@ -771,7 +776,6 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     ## TODO: improve performance of rgroup enumeration, probably can be improved over current O(N^2)
     # get antenna names and vectors
     ants = list(antpos.keys())
-    antvec = [antpos[a] for a in ants]
 
     # get all baselines
     if bls is None:
@@ -782,68 +786,126 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
 
     # get excluded baseline vectors
     if exclude_reds is not None:
-        exclude_reds = [utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]]) for bl in exclude_reds]
+        exclude_reds = np.asarray([utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]]) for bl in exclude_reds])
+        if use_2d: exclude_reds = exclude_reds[:, :2]
 
-    # iterate over bls
-    reds, rvec, bl2red = [], [], {}
-    lens, angs, tags = [], [], []
-    k = 0
-    for bi, bl in enumerate(bls):
-        # get baseline vector
-        blvec = utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]])
-        bllen = np.linalg.norm(blvec)
-        if norm_vec:
-            blvec = np.array([bllen, 0., 0.])
+    # get bl_vecs
+    bl_vecs = np.asarray([utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]]) for bl in bls])
+    if use_2d:
+        bl_vecs = bl_vecs[:, :2]
+    bl_lens = np.linalg.norm(bl_vecs, axis=1)
+    if norm_vec:
+        bl_vecs[:] = 0
+        bl_vecs[:, 0] = bl_lens
 
-        # determine if we should skip this baseline
-        if min_len is not None and bllen < min_len:
-            continue
-        if max_len is not None and bllen > max_len:
-            continue
-        if min_EW_len is not None and blvec[0] < min_EW_len:
-            continue
-        if exclude_reds is not None:
-            # add and subtract to account for accidental conjugation
-            match1 = [np.linalg.norm(blv - blvec) for blv in exclude_reds]
-            match2 = [np.linalg.norm(blv + blvec) for blv in exclude_reds]
-            if np.isclose(match1, 0, atol=redtol).any() or np.isclose(match2, 0, atol=redtol).any():
-                continue
+    # down select
+    keep = np.ones(len(bls), dtype=bool)
+    if min_len is not None:
+        keep = keep & (bl_lens > min_len)
+    if max_len is not None:
+        keep = keep & (bl_lens < max_len)
+    if min_EW_len is not None:
+        keep = keep & (abs(bl_vecs[:, 0]) > min_EW_len)
+    if exclude_reds is not None:
+        # add and subtract to account for accidental conjugation
+        match1 = np.asarray([np.linalg.norm(bl_vecs - blv, axis=1) for blv in exclude_reds])
+        match1 = np.isclose(match1, 0, atol=redtol).any(axis=0)
+        match2 = np.asarray([np.linalg.norm(bl_vecs + blv, axis=1) for blv in exclude_reds])
+        match2 = np.isclose(match2, 0, atol=redtol).any(axis=0)
+        keep = keep & (~(match1 | match2))
 
-        # check if this is a unique bl
-        rgroup = None
-        if not skip_reds:
-            for i, blv in enumerate(rvec):
-                ## TODO: handle conjugated baselines
-                if np.linalg.norm(blv - blvec) < redtol:
-                    rgroup = i
-                    break
+    bl_vecs = bl_vecs[keep]
+    bl_lens = bl_lens[keep]
+    bls = [bl for bl, k in zip(bls, keep) if k]
 
-        if rgroup is None:
-            # this a unique group, append to lists
-            if use_blnums:
-                reds.append([blnums[bi]])
-            else:
-                reds.append([bl])
-            rvec.append(blvec)
+    # get redundant groups
+    if fcluster:
+        from scipy.cluster.hierarchy import fclusterdata
+        clusters = fclusterdata(bl_vecs, redtol, criterion="distance")
+        Nred = len(np.unique(clusters))
+        reds, rvec, lens, angs, tags = [], [], [], [], []
+        for i in range(1, Nred+1):
+            idx = np.where(clusters == i)[0]
+            reds.append([bls[j] for j in idx])
+            bl_vec = bl_vecs[idx[0]]
+            bl_len = bl_lens[idx[0]]
+            rvec.append(bl_vec)
+            lens.append(bl_len)
+
             # get unique baseline properties
-            bllen = np.linalg.norm(blvec)
             # get angle [deg]
-            blang = np.arctan2(*blvec[:2][::-1]) * 180 / np.pi
+            bl_ang = np.arctan2(*bl_vec[:2][::-1]) * 180 / np.pi
             # ensure angle is purely positive
-            if blvec[1] < 0: blang += 180.0
+            if bl_vec[1] < 0: bl_ang += 180.0
             # if its close to 180 deg within redtol set it to zero
-            if np.abs(blvec[1]) < redtol: blang = 0.0
-            lens.append(bllen)
-            angs.append(blang)
-            tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
-            k += 1
+            if np.abs(bl_vec[1]) < redtol: bl_ang = 0.0
+            angs.append(bl_ang)
+            tags.append("{:03.0f}_{:03.0f}".format(bl_len, bl_ang))
 
-        else:
-            # this falls into an existing redundant group
-            if use_blnums:
-                reds[rgroup].append(blnums[bi])
+    else:
+        # iterate over bls
+        reds, rvec = [], []
+        lens, angs, tags = [], [], []
+        k = 0
+        for bi, bl in enumerate(bls):
+            blvec = bl_vecs[bi]
+            bllen = bl_lens[bi]
+
+            # get baseline vector
+            blvec = utils.tensor2numpy(antpos[bl[1]] - antpos[bl[0]])
+            bllen = np.linalg.norm(blvec)
+            if norm_vec:
+                blvec = np.array([bllen, 0., 0.])
+
+            # determine if we should skip this baseline
+            if min_len is not None and bllen < min_len:
+                continue
+            if max_len is not None and bllen > max_len:
+                continue
+            if min_EW_len is not None and blvec[0] < min_EW_len:
+                continue
+            if exclude_reds is not None:
+                # add and subtract to account for accidental conjugation
+                match1 = [np.linalg.norm(blv - blvec) for blv in exclude_reds]
+                match2 = [np.linalg.norm(blv + blvec) for blv in exclude_reds]
+                if np.isclose(match1, 0, atol=redtol).any() or np.isclose(match2, 0, atol=redtol).any():
+                    continue
+
+            # check if this is a unique bl
+            rgroup = None
+            if not skip_reds:
+                for i, blv in enumerate(rvec):
+                    ## TODO: handle conjugated baselines
+                    if np.linalg.norm(blv - blvec) < redtol:
+                        rgroup = i
+                        break
+
+            if rgroup is None:
+                # this a unique group, append to lists
+                if use_blnums:
+                    reds.append([blnums[bi]])
+                else:
+                    reds.append([bl])
+                rvec.append(blvec)
+                # get unique baseline properties
+                bllen = np.linalg.norm(blvec)
+                # get angle [deg]
+                blang = np.arctan2(*blvec[:2][::-1]) * 180 / np.pi
+                # ensure angle is purely positive
+                if blvec[1] < 0: blang += 180.0
+                # if its close to 180 deg within redtol set it to zero
+                if np.abs(blvec[1]) < redtol: blang = 0.0
+                lens.append(bllen)
+                angs.append(blang)
+                tags.append("{:03.0f}_{:03.0f}".format(bllen, blang))
+                k += 1
+
             else:
-                reds[rgroup].append(bl)
+                # this falls into an existing redundant group
+                if use_blnums:
+                    reds[rgroup].append(blnums[bi])
+                else:
+                    reds[rgroup].append(bl)
 
     # re-sort by input red_bls
     if red_bls is not None:
@@ -858,23 +920,23 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
 
     # or resort by baseline length
     else:
-        s = np.argsort(lens)
+        s = np.argsort(np.array(lens) + np.array(angs) * redtol / 180)
 
     reds = [sorted(reds[i]) for i in s]
-    rvec = [rvec[i] for i in s]
+    rvec = torch.as_tensor(np.asarray([rvec[i] for i in s]))
     lens = [lens[i] for i in s]
     angs = [angs[i] for i in s]
     tags = [tags[i] for i in s]
     bls = utils.flatten(reds)
+    if use_blnums:
+        reds = [utils.ants2blnum(red) for red in reds]
+        bls = utils.ants2blnum(bls)
 
     # setup bl2red
-    _bls = blnums if use_blnums else bls
     bl2red = {}
     if not skip_reds:
-        for bl in _bls:
-            for i, rg in enumerate(reds):
-                if bl in rg:
-                    bl2red[bl] = i
-                    break
+        for i, red in enumerate(reds):
+            for bl in red:
+                bl2red[bl] = i
 
     return reds, rvec, bl2red, bls, lens, angs, tags
