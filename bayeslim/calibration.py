@@ -1545,7 +1545,7 @@ class VisCoupling(utils.Module, IndexCache):
         if add_I:
             coupling += self.I
 
-        # reshape input data along bls axis
+        # reshape input data along bls axis into Nants^2 length
         flat_data = torch.index_select(vd.data, -3, self.flat_data_idx)
 
         # for bls that don't exist in vd.data, null them out

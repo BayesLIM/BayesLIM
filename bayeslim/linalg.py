@@ -681,7 +681,6 @@ def least_squares(A, y, dim=0, mode='matrix', norm='inv', pinv=True,
                     )
                 else:
                     # Ninv is diagonal
-                    assert Ninv.ndim == 1
                     Dinv = torch.einsum(
                         "{},i,{}->{}jk".format(A_ein, A_ein2, A_ein[:-2]),
                         Aconj,

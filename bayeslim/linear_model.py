@@ -19,7 +19,8 @@ class LinearModel:
         y = Ax
     """
     def __init__(self, linear_mode, dim=0, coeff=None, diag=False, idx=None,
-                 out_dtype=None, out_reshape=None, out_shape=None, meta=None, **kwargs):
+                 out_dtype=None, out_reshape=None, out_shape=None,
+                 meta=None, **kwargs):
         """
         Parameters
         ----------
