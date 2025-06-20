@@ -152,7 +152,10 @@ class MatFilter(BaseFilter):
         if self.residual:
             y[idx] -= y_filt
         else:
-            y[idx] = y_filt
+            if self.input_idx is not None:
+                y[idx] = y_filt
+            else:
+                y = y_filt
 
         return y
 
@@ -204,7 +207,7 @@ class GPFilter(MatFilter):
     """
     def __init__(self, Cs, Cn, Cs_cross=None, Cs_pred=None, dim=-1,
                  dtype=None, device=None, residual=False, input_idx=None,
-                 inplace=False, name=None, inv='pinv', hermitian=False, rcond=1e-15, eps=None):
+                 inplace=False, name=None, inv='pinv', hermitian=True, rcond=1e-15, eps=None):
         """
         Parameters
         ----------
