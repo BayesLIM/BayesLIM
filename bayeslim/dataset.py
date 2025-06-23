@@ -1664,7 +1664,7 @@ class VisData(TensorData):
 
     def read_hdf5(self, fname, read_data=True,
                   bl=None, times=None, freqs=None, pol=None,
-                  time_inds=None, freq_inds=None,
+                  bl_inds=None, time_inds=None, freq_inds=None,
                   suppress_nonessential=False,
                   lazy_load=False):
         """
@@ -1714,22 +1714,22 @@ class VisData(TensorData):
         data, flags, cov, icov = None, None, None, None
         if read_data:
             data = self.get_data(bl=bl, times=times, freqs=freqs, pol=pol,
-                                 time_inds=time_inds, freq_inds=freq_inds,
+                                 bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds,
                                  squeeze=False, data=f['data'], try_view=True)
             data = torch.as_tensor(data, device=self.device)
             if 'flags' in f and not suppress_nonessential:
                 flags = self.get_flags(bl=bl, times=times, freqs=freqs, pol=pol,
-                                       time_inds=time_inds, freq_inds=freq_inds,
+                                       bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds,
                                        squeeze=False, flags=f['flags'], try_view=True)
                 flags = torch.as_tensor(flags, device=self.device)
             if 'cov' in f and not suppress_nonessential:
                 cov = self.get_cov(bl=bl, times=times, freqs=freqs, pol=pol,
-                                   time_inds=time_inds, freq_inds=freq_inds,
+                                   bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds,
                                    squeeze=False, cov=f['cov'], try_view=True)
                 cov = torch.as_tensor(cov, device=self.device)
             if 'icov' in f:
                 icov = self.get_icov(bl=bl, times=times, freqs=freqs, pol=pol,
-                                     time_inds=time_inds, freq_inds=freq_inds,
+                                     bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds,
                                      squeeze=False, icov=f['icov'], try_view=True)
                 icov = torch.as_tensor(icov, device=self.device)
 
@@ -1744,7 +1744,7 @@ class VisData(TensorData):
 
         # downselect metadata to selection
         self.select(bl=bl, times=times, freqs=freqs, pol=pol,
-                    time_inds=time_inds, freq_inds=freq_inds)
+                    bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds)
 
         # setup downselected metadata and data
         ants = f.attrs['ants'].tolist()
