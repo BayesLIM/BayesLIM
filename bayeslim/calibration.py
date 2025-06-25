@@ -176,6 +176,10 @@ class BaseResponse:
         # project out some component of the complex parameters
         params = self.projection(params)
 
+        # if params is still a parameter, take a view
+        if isinstance(params, torch.nn.Parameter):
+            params = params.view(params.shape)
+
         return params
 
     def params2complex(self, params):
