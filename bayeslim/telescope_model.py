@@ -692,7 +692,7 @@ def JD2LST(jd, longitude):
 
 def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len=None,
                min_EW_len=None, exclude_reds=None, skip_reds=False, norm_vec=False,
-               use_blnums=False, use_2d=False, fcluster=True, red_info=None):
+               use_blnums=False, use_2d=False, fcluster=False, red_info=None):
     """
     Build redundant groups. Note that this currently has sub-optimal
     performance and probably scales ~O(N_bl^2), which could be improved.
@@ -743,8 +743,8 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     use_2d : bool, optional
         If True, only use X & Y antenna positions, instead of X, Y, Z (default)
     fcluster : bool, optional
-        If True, use scipy.cluster hiearchical clustering algorithm (default).
-        Otherwise, build the redundancies via direct iteration.
+        If True, use scipy.cluster hiearchical clustering algorithm.
+        Otherwise, build the redundancies via direct iteration (default)
     red_info : tuple, optional
         This holds pre-computed output of build_reds(). If passed,
         this bypasses all operations and just returns red_info().
@@ -940,3 +940,31 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
                 bl2red[bl] = i
 
     return reds, rvec, bl2red, bls, lens, angs, tags
+
+
+def match_red_blvec(red_vecs, bl_vec, redtol=1.0):
+    """
+    Given a set of redundant baseline vectors and
+    a single physical baseline vector, return
+    the index in red_vecs that matches
+
+    Parameters
+    ----------
+    red_vecs : tensor
+        Redundant baseline vectors ENU [meters]
+        of shape (Nreds, 3)
+    bl_vec : tensor
+        Physical baseline vector ENU [meters]
+        of shape (3,)
+    redtol : float, optional
+        Redundancy tolerance [meters]
+
+    Returns
+    -------
+    int
+    """
+    bl_norm = (red_vecs - bl_vec).norm(dim=-1)
+    if bl_norm.min() <= redtol:
+        return bl_norm.argmin()
+    else:
+        return None
