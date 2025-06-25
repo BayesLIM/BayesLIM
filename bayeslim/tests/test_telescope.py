@@ -134,7 +134,7 @@ def test_build_reds():
 	assert min(red_info[4]) <= 40
 
 	red_info = ba.telescope_model.build_reds(antpos, min_EW_len=16)
-	assert min(red_info[1][:, 0].abs()) >= 16
+	assert min(torch.stack(red_info[1])[:, 0].abs()) >= 16
 
 	red_info = ba.telescope_model.build_reds(antpos, exclude_reds=[(0, 1), (0, 2)])
 	assert ((0, 1) not in red_info[2]) and ((0, 2) not in red_info[2])

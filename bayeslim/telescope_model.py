@@ -923,7 +923,7 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
         s = np.argsort(np.array(lens) + np.array(angs) * redtol / 180)
 
     reds = [sorted(reds[i]) for i in s]
-    rvec = torch.as_tensor(np.asarray([rvec[i] for i in s]))
+    rvec = [torch.as_tensor(rvec[i]) for i in s]
     lens = [lens[i] for i in s]
     angs = [angs[i] for i in s]
     tags = [tags[i] for i in s]
