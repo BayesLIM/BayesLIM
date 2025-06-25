@@ -1128,7 +1128,7 @@ class VisData(TensorData):
             flags = obj.get_flags(bl, bl_inds=bl_inds, squeeze=False, try_view=try_view)
             if bl_inds is not None: bl = [obj.bls[i] for i in bl_inds]
             out.setup_data(bl, obj.times, obj.freqs, pol=obj.pol, 
-                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            data=data, flags=flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
             obj = out
 
@@ -1140,7 +1140,7 @@ class VisData(TensorData):
             flags = obj.get_flags(times=times, time_inds=time_inds, squeeze=False, try_view=try_view)
             if time_inds is not None: times = obj.times[time_inds]
             out.setup_data(obj.bls, times, obj.freqs, pol=obj.pol, 
-                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            data=data, flags=flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
             obj = out
 
@@ -1152,7 +1152,7 @@ class VisData(TensorData):
             flags = obj.get_flags(freqs=freqs, freq_inds=freq_inds, squeeze=False, try_view=try_view)
             if freq_inds is not None: freqs = obj.freqs[freq_inds]
             out.setup_data(obj.bls, obj.times, freqs, pol=obj.pol, 
-                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            data=data, flags=flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
             obj = out
 
@@ -1162,7 +1162,7 @@ class VisData(TensorData):
             cov = obj.get_cov(pol=pol, try_view=try_view, squeeze=False)
             icov = obj.get_icov(pol=pol, try_view=try_view, squeeze=False)
             out.setup_data(obj.bls, obj.times, obj.freqs, pol=pol, 
-                            data=data, flags=obj.flags, cov=cov, icov=icov,
+                            data=data, flags=flags, cov=cov, icov=icov,
                             cov_axis=obj.cov_axis, history=obj.history)
 
         if not inplace:
