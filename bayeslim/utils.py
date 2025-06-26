@@ -2295,9 +2295,9 @@ def blnum2ants(blnum, separate=False):
 
         return (ant1, ant2)
 
-    elif isinstance(blnum, np.ndarray):
-        ant1 = np.floor(blnum / 1e3).astype(np.int64)
-        ant2 = blnum - ant1 * 1000
+    elif isinstance(blnum, (list, np.ndarray)):
+        ant1 = (np.floor(blnum) / 1e3).astype(np.int64)
+        ant2 = np.asarray(blnum) - ant1 * 1000
         ant1 -= 100
         ant2 -= 100
 

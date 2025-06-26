@@ -141,7 +141,7 @@ def test_build_reds():
 	assert len(red_info[0]) == (Nreds - 2)
 
 	red_info = ba.telescope_model.build_reds(antpos, use_blnums=True)
-	assert isinstance(red_info[3][0], np.integer)
+	assert isinstance(red_info[3][0], (int, np.integer))
 	assert ba.utils.blnum2ants(red_info[3]) == red_info1[3]
 
 	red_info2 = ba.telescope_model.build_reds(antpos, red_info=red_info)

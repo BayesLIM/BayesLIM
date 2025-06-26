@@ -930,7 +930,7 @@ def build_reds(antpos, bls=None, red_bls=None, redtol=1.0, min_len=None, max_len
     bls = utils.flatten(reds)
     if use_blnums:
         reds = [utils.ants2blnum(red) for red in reds]
-        bls = utils.ants2blnum(bls)
+        bls = np.asarray(utils.ants2blnum(bls))
 
     # setup bl2red
     bl2red = {}
