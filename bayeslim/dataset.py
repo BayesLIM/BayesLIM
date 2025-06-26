@@ -1314,8 +1314,8 @@ class VisData(TensorData):
         # get avg_flags
         avg_flags = None
         if self.flags is not None:
-            avg_flags = torch.zeros_like(
-                avg_data,
+            avg_flags = torch.zeros(
+                avg_data.shape[-self.flags.ndim:],
                 dtype=bool,
                 device=avg_data.device
             )
@@ -1517,8 +1517,8 @@ class VisData(TensorData):
         # get avg_flags
         avg_flags = None
         if self.flags is not None:
-            avg_flags = torch.zeros_like(
-                avg_data,
+            avg_flags = torch.zeros(
+                avg_data.shape[-self.flags.ndim:],
                 dtype=bool,
                 device=avg_data.device
             )
