@@ -156,7 +156,7 @@ class LinearModel:
         if self.out_dtype is not None:
             out = out.to(self.out_dtype)
 
-        if self.out_reshape is not None:
+        if hasattr(self, 'out_reshape') and self.out_reshape is not None:
             out = out.reshape(self.out_reshape)
 
         return out
