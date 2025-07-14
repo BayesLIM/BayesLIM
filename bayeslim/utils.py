@@ -2300,6 +2300,8 @@ def blnum2ants(blnum, separate=False):
         ant2 = np.asarray(blnum) - ant1 * 1000
         ant1 -= 100
         ant2 -= 100
+        ant1 = ant1.tolist()
+        ant2 = ant2.tolist()
 
         if separate:
             return ant1, ant2
@@ -2312,11 +2314,13 @@ def blnum2ants(blnum, separate=False):
         ant2 = blnum - ant1 * 1000
         ant1 -= 100
         ant2 -= 100
+        ant1 = ant1.tolist()
+        ant2 = ant2.tolist()
 
         if separate:
-            return ant1.numpy(), ant2.numpy()
+            return ant1, ant2
         else:
-            return list(zip(ant1.tolist(), ant2.tolist()))
+            return list(zip(ant1, ant2))
 
 
 def ants2blnum(antnums, separate=False, tensor=False):
