@@ -45,9 +45,10 @@ def test_RIME():
 	assert rime.Nbatch == np.ceil(len(times) / 2)
 
 	with torch.no_grad():
-		vis = rime.run_batches()
-	assert vis.data.shape == (1, 1, len(sim_bls), len(times), len(freqs))
-	assert (vis.times == times).all()
+		batched_vis = rime.run_batches()
+	assert batched_vis.data.shape == (1, 1, len(sim_bls), len(times), len(freqs))
+	assert (batched_vis.times == times).all()
+	assert (vis.data - batched_vis.data).abs().max() < 1e-10
 
 
 def RIME_performance():

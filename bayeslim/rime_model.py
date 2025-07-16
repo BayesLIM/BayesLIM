@@ -238,12 +238,12 @@ class RIME(utils.Module):
 
         # turn into dict if neccessary
         if not isinstance(times, dict):
-            if isinstance(times, list) or (isinstance(times, np.ndarray) and times.ndim > 1):
+            if isinstance(times, list) or (isinstance(times, (np.ndarray, torch.Tensor)) and times.ndim > 1):
                 # this is a list of time arrays
-                times = {k: _times for k, _times in enumerate(times)}
+                times = {k: np.asarray(_times) for k, _times in enumerate(times)}
             else:
                 # this is just a time array
-                times = {0: times}
+                times = {0: np.asarray(times)}
 
         self.sim_time_groups = times
         self.all_sim_times = np.asarray(utils.flatten(self.sim_time_groups.values()))
@@ -340,8 +340,9 @@ class RIME(utils.Module):
                                              elapsed_time(start))
                     log(message, verbose=self.verbose, style=1)
 
-                # create unique key for this sky_mdl/obs_time combination
-                key = (sky_comp.name, len(ra), j)
+                # create unique key for this sky_mdl/obs_time combination,
+                # want a unique key without hashing the full ra/dec tensors
+                key = (sky_comp.name, len(ra), time)
 
                 # convert sky pixels from ra/dec to zen/az
                 zen, az = self.telescope.eq2top(time, ra, dec, store=self.cache_eq2top, key=key)

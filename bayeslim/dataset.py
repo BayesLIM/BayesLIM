@@ -120,7 +120,7 @@ class TensorData:
         self.cov = cov
         self.icov = icov
         self.cov_axis = cov_axis
-        self.cov_ndim = sum(self.data.shape) if self.data is not None else None
+        self.cov_ndim = np.prod(self.data.shape) if self.data is not None else None
         self.cov_logdet = cov_logdet if cov_logdet is not None else torch.tensor(0.0)
 
     def compute_icov(self, inv='pinv', **kwargs):
