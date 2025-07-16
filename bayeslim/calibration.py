@@ -589,6 +589,10 @@ class JonesModel(utils.Module, IndexCache):
         self.clear_time_cache()
         self.clear_bl_cache()
         self.clear_ant_cache()
+        self.clear_vd_cache()
+
+    def clear_vd_cache(self):
+        self._vd = None
 
     def clear_ant_cache(self):
         self.cache_aidx = {}
@@ -691,11 +695,12 @@ class JonesModel(utils.Module, IndexCache):
         if self.refant_idx is not None:
             self.fix_refant_phs()
 
-        # push vd to self.device
-        vd.push(self.device)
-
         # setup empty VisData for output
-        vout = vd.copy()
+        if hasattr(self, "_vd") and self._vd is not None:
+            vout = self._vd
+        else:
+            vout = vd.copy()
+            self._vd = vout
 
         # add prior model for params
         if self.p0 is None:
@@ -1036,11 +1041,11 @@ class RedVisModel(utils.Module, IndexCache):
             the redundant visibility model.
         """
         # setup predicted visibility
-        vout = vd.copy(copydata=False)
-
-        # push to device
-        if not utils.check_devices(self.device, vout.data.device):
-            vout.push(self.device)
+        if hasattr(self, "_vd") and self._vd is not None:
+            vout = self._vd
+        else:
+            vout = vd.copy(copydata=False)
+            self._vd = vout
 
         # get unique visibilities
         if self.p0 is not None:
@@ -1059,18 +1064,18 @@ class RedVisModel(utils.Module, IndexCache):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=redvis)
 
         # down select on time
-        redvis = self.index_params(redvis, times=vout.times)
+        redvis = self.index_params(redvis, times=vd.times)
 
         # expand redvis to vis size if needed
-        if redvis.shape[-3] != vout.data.shape[-3]:
-            index = self.get_bl_idx(vout._blnums)
+        if redvis.shape[-3] != vd.data.shape[-3]:
+            index = self.get_bl_idx(vd._blnums)
             redvis = torch.index_select(redvis, -3, index)
 
         # apply redvis model: not inplace b/c vout is not deepcopy
         if not undo:
-            vout.data = vout.data + redvis
+            vout.data = vd.data + redvis
         else:
-            vout.data = vout.data - redvis
+            vout.data = vd.data - redvis
 
         return vout
 
@@ -1096,9 +1101,13 @@ class RedVisModel(utils.Module, IndexCache):
         """clear all caches, some come from IndexCache object"""
         self.clear_time_cache()
         self.clear_bl_cache()
+        self.clear_vd_cache()
 
     def clear_bl_cache(self):
         self.cache_bidx = {}
+
+    def clear_vd_cache(self):
+        self._vd = None
 
     def push(self, device):
         """
@@ -1187,6 +1196,15 @@ class VisModel(utils.Module, IndexCache):
         )
         self.clear_cache()
 
+    def clear_cache(self):
+        """clear all caches, some come from IndexCache object"""
+        self.clear_time_cache()
+        self.clear_bl_cache()
+        self.clear_vd_cache()
+
+    def clear_vd_cache(self):
+        self._vd = None
+
     def forward(self, vd, undo=False, prior_cache=None, **kwargs):
         """
         Forward pass vd through visibility
@@ -1213,7 +1231,11 @@ class VisModel(utils.Module, IndexCache):
             The predicted visibilities, having summed vd
             with the visibility model.
         """
-        vout = vd.copy()
+        if hasattr(self, "_vd") and self._vd is not None:
+            vout = self._vd
+        else:
+            vout = vd.copy()
+            self._vd = vout
 
         # forward model params
         if self.p0 is not None:
@@ -1240,9 +1262,9 @@ class VisModel(utils.Module, IndexCache):
         vis = self.index_params(vis, times=times, bls=bls)
 
         if not undo:
-            vout.data = vout.data + vis
+            vout.data = vd.data + vis
         else:
-            vout.data = vout.data - vis
+            vout.data = vd.data - vis
 
         return vout
 
@@ -1415,6 +1437,15 @@ class VisCoupling(utils.Module, IndexCache):
         )
         self.clear_cache()
 
+    def clear_cache(self):
+        """clear all caches, some come from IndexCache object"""
+        self.clear_time_cache()
+        self.clear_bl_cache()
+        self.clear_vd_cache()
+
+    def clear_vd_cache(self):
+        self._vd = None
+
     def setup_coupling(self, bls=None, min_dly=None):
         """
         Setup coupling forward model metadata (e.g. delay term and matrix indexing)
@@ -1513,7 +1544,11 @@ class VisCoupling(utils.Module, IndexCache):
             The predicted visibilities, having pushed input
             through coupling matrix
         """
-        vout = vd.copy()
+        if hasattr(self, '_vd') and self._vd is not None:
+            vout = self._vd
+        else:
+            vout = vd.copy()
+            self._vd = vout
 
         # forward model
         if self.p0 is not None:
