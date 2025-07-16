@@ -1631,7 +1631,9 @@ class VisCoupling(utils.Module, IndexCache):
         dtype = isinstance(device, torch.dtype)
         if not dtype and hasattr(self, "bls_idx"):
             self.flat_data_idx = self.flat_data_idx.to(device)
+            self.flat_data_null = self.flat_data_null.to(device)
             self.flat_conj_idx = self.flat_conj_idx.to(device)
+            self.flat_unconj_idx = self.flat_unconj_idx.to(device)
             self.flat_unconj_idx = self.flat_unconj_idx.to(device)
             self.bls_idx = self.bls_idx.to(device)
         if hasattr(self, 'I'):
