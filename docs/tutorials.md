@@ -10,4 +10,5 @@ for the kinds analyses one can do with the code.
 :maxdepth: 1
 
 notebooks/beam_fg_demo
+notebooks/minibatching_and_distributed_training
 ```
