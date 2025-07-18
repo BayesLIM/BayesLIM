@@ -989,6 +989,16 @@ class LogProb(utils.Module):
         # get batch data
         target, inp = self.get_batch_data(idx)
 
+        # get batch data and icov before forward pass (asynchronous load)
+        data = target.get_data()
+
+        if hasattr(target, 'icov'):
+            icov = target.get_icov()
+            cov_axis = target.cov_axis
+        else:
+            icov = None
+            cov_axis = None
+
         # if batch_idx == 0, clear prior cache
         if self.batch_idx == 0:
             self.clear_prior_cache()
@@ -1000,21 +1010,15 @@ class LogProb(utils.Module):
 
         # forward pass model
         prediction = self.model(inp, prior_cache=self.prior_cache)
+
         if isinstance(prediction, (VisData, MapData, TensorData)):
             prediction = prediction.data
+
         if not utils.check_devices(prediction.device, self.device):
             prediction = prediction.to(self.device)
 
         # compute residual
-        res = prediction - target.get_data()
-
-        # get inverse covariance
-        if hasattr(target, 'icov'):
-            icov = target.get_icov()
-            cov_axis = target.cov_axis
-        else:
-            icov = None
-            cov_axis = None
+        res = prediction - data
 
         # evaluate chi square
         chisq = apply_icov(res, icov, cov_axis)
