@@ -378,6 +378,7 @@ def test_VisModel():
 
 	# now try time minibatching
 	vd2 = vd.select(time_inds=range(3), inplace=False)
+	vis_mdl.clear_cache()
 	vout = vis_mdl(vd2)
 	assert vout.Ntimes == 3
 
@@ -388,6 +389,7 @@ def test_VisModel():
 
 	# now try bl minibatching
 	vd2 = vd.select(bl_inds=range(50), inplace=False)
+	vis_mdl.clear_cache()
 	vout = vis_mdl(vd2)
 	assert vout.Nbls == 50
 
