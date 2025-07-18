@@ -1666,7 +1666,7 @@ class VisData(TensorData):
                   bl=None, times=None, freqs=None, pol=None,
                   bl_inds=None, time_inds=None, freq_inds=None,
                   suppress_nonessential=False,
-                  lazy_load=False, non_blocking=False):
+                  lazy_load=False, device=None, non_blocking=False):
         """
         Read HDF5 VisData object
 
@@ -1686,6 +1686,8 @@ class VisData(TensorData):
             and keep the keep the HDF5 file open. Default = False.
             If True, cannot downselect on any indices during the read.
             If True, sets read_data = False.
+        device : str, optional
+            Push to device after loading
         non_blocking : str, optional
             If lazy_load, this is a HDF5Tensor kwarg.
         """
@@ -1736,13 +1738,13 @@ class VisData(TensorData):
                 icov = torch.as_tensor(icov, device=self.device)
 
         elif lazy_load:
-            data = HDF5Tensor(f['data'], device=self.device, non_blocking=non_blocking)
+            data = HDF5Tensor(f['data'], non_blocking=non_blocking)
             if 'flags' in f and not suppress_nonessential:
-                flags = HDF5Tensor(f['flags'], device=self.device, non_blocking=non_blocking)
+                flags = HDF5Tensor(f['flags'], non_blocking=non_blocking)
             if 'cov' in f and not suppress_nonessential:
-                cov = HDF5Tensor(f['cov'], device=self.device, non_blocking=non_blocking)
+                cov = HDF5Tensor(f['cov'], non_blocking=non_blocking)
             if 'icov' in f:
-                icov = HDF5Tensor(f['icov'], device=self.device, non_blocking=non_blocking)
+                icov = HDF5Tensor(f['icov'], non_blocking=non_blocking)
 
         # downselect metadata to selection
         self.select(bl=bl, times=times, freqs=freqs, pol=pol,
@@ -1761,6 +1763,9 @@ class VisData(TensorData):
 
         if not lazy_load:
             f.close()
+
+        if device is not None:
+            self.push(device)
 
     def check(self):
         """
@@ -2343,7 +2348,7 @@ class MapData(TensorData):
             self.data = utils.push(self.data, device)
         if self.flags is not None:
             if not dtype:
-                self.flags = self.flags.to(device)
+                self.flags = utils.push(self.flags, device)
         if self.cov is not None:
             self.cov = utils.push(self.cov, device)
         if self.icov is not None:
