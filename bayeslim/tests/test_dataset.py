@@ -60,7 +60,7 @@ def test_visdata_get(vd=None):
 	assert vd.data.shape == vdc.data.shape
 
 
-def test_visdata_get_lazy():
+def test_visdata_get_lazy_load():
 	# write to temp file and then lazy_load
 	with TemporaryDirectory() as tmp:
 		if isinstance(tmp, str):
@@ -68,11 +68,72 @@ def test_visdata_get_lazy():
 		else:
 			tmpfile = tmp.name + "/test.h5"
 
+		# write, lazy_load, and then do normal vd.get() testing
 		vd = setup_VisData()
 		vd.write_hdf5(tmpfile)
 		vd.read_hdf5(tmpfile, lazy_load=True)
-
 		test_visdata_get(vd)
+
+		# now test lazy_load & lazy_cat on multiple files
+		times1 = times
+		times2 = times1[-1] + np.arange(1, len(times)+1) * np.diff(times)[0]
+		times3 = times2[-1] + np.arange(1, len(times)+1) * np.diff(times)[0]
+		vds = [
+			setup_VisData(times=times1),
+			setup_VisData(times=times2),
+			setup_VisData(times=times3)
+		]
+		# perform eager concatenation
+		cat_vd = ba.dataset.concat_VisData(vds, 'time', lazy=False)
+
+		for i, vd in enumerate(vds):
+			vd.write_hdf5(tmpfile.replace('test', f'test{i}'))
+			vd.read_hdf5(tmpfile.replace('test', f'test{i}'), lazy_load=True)
+
+		# now perform lazy concatenation on top of lazy load
+		lazy_cat_vd = ba.dataset.concat_VisData(vds, 'time', lazy=True)
+		assert not isinstance(lazy_cat_vd, torch.Tensor)
+		assert lazy_cat_vd.Ntimes == len(times) * 3
+
+		# assert called data becomes concatenated
+		assert isinstance(lazy_cat_vd.data[:], torch.Tensor)
+		assert lazy_cat_vd.data[:].shape == cat_vd.data.shape
+		assert (lazy_cat_vd.get_data() - cat_vd.get_data()).abs().max() < 1e-10
+
+
+def test_visdata_get_lazy_cat():
+	# test concatenation of multiple VisData upon data call
+	times1 = times
+	times2 = times1[-1] + np.arange(1, len(times)+1) * np.diff(times)[0]
+	times3 = times2[-1] + np.arange(1, len(times)+1) * np.diff(times)[0]
+	vds = [
+		setup_VisData(times=times1),
+		setup_VisData(times=times2),
+		setup_VisData(times=times3)
+	]
+
+	# perform eager concatenation
+	cat_vd = ba.dataset.concat_VisData(vds, 'time', lazy=False)
+	assert cat_vd.Ntimes == len(times) * 3
+
+	# now perform lazy concatenation
+	lazy_cat_vd = ba.dataset.concat_VisData(vds, 'time', lazy=True)
+	assert not isinstance(lazy_cat_vd, torch.Tensor)
+	assert lazy_cat_vd.Ntimes == len(times) * 3
+
+	# assert called data becomes concatenated
+	assert isinstance(lazy_cat_vd.data[:], torch.Tensor)
+	assert lazy_cat_vd.data[:].shape == cat_vd.data.shape
+	assert (lazy_cat_vd.get_data() - cat_vd.get_data()).abs().max() < 1e-10
+
+
+def test_visdata_get_cpu2gpu():
+	# test CPU2GPUTensor functionality, but just for CPU->CPU
+	vd = setup_VisData()
+
+	# wrap with CPU2GPU
+	vd = ba.dataset.CPU2GPU_VisData(vd, 'cpu', pin_memory=False)
+	test_visdata_get(vd)
 
 
 def test_visdata_select():

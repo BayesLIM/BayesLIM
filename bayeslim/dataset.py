@@ -1666,7 +1666,7 @@ class VisData(TensorData):
                   bl=None, times=None, freqs=None, pol=None,
                   bl_inds=None, time_inds=None, freq_inds=None,
                   suppress_nonessential=False,
-                  lazy_load=False):
+                  lazy_load=False, non_blocking=False):
         """
         Read HDF5 VisData object
 
@@ -1686,6 +1686,8 @@ class VisData(TensorData):
             and keep the keep the HDF5 file open. Default = False.
             If True, cannot downselect on any indices during the read.
             If True, sets read_data = False.
+        non_blocking : str, optional
+            If lazy_load, this is a HDF5Tensor kwarg.
         """
         from bayeslim import telescope_model
         f = h5py.File(fname, mode='r')  # safe to keep file open in mode='r'
@@ -1734,13 +1736,13 @@ class VisData(TensorData):
                 icov = torch.as_tensor(icov, device=self.device)
 
         elif lazy_load:
-            data = HDF5tensor(f['data'], device=self.device)
+            data = HDF5Tensor(f['data'], device=self.device, non_blocking=non_blocking)
             if 'flags' in f and not suppress_nonessential:
-                flags = HDF5tensor(f['flags'], device=self.device)
+                flags = HDF5Tensor(f['flags'], device=self.device, non_blocking=non_blocking)
             if 'cov' in f and not suppress_nonessential:
-                cov = HDF5tensor(f['cov'], device=self.device)
+                cov = HDF5Tensor(f['cov'], device=self.device, non_blocking=non_blocking)
             if 'icov' in f:
-                icov = HDF5tensor(f['icov'], device=self.device)
+                icov = HDF5Tensor(f['icov'], device=self.device, non_blocking=non_blocking)
 
         # downselect metadata to selection
         self.select(bl=bl, times=times, freqs=freqs, pol=pol,
@@ -1768,10 +1770,8 @@ class VisData(TensorData):
         if self.telescope is not None:
             assert isinstance(self.telescope, telescope_model.TelescopeModel)
         if self.data is not None:
-            if self._file is None: assert isinstance(self.data, torch.Tensor)
             assert self.data.shape[-3:] == (self.Nbls, self.Ntimes, self.Nfreqs)
         if self.flags is not None:
-            if self._file is None: assert isinstance(self.flags, torch.Tensor)
             assert self.flags.shape == self.data.shape
         for arr in ['cov', 'icov']:
             cov = getattr(self, arr)
@@ -3214,18 +3214,32 @@ class CalData(TensorData):
         raise NotImplementedError
 
 
-class HDF5tensor:
-    def __init__(self, hdf5_dataset, dtype=None, device=None):
+class HDF5Tensor:
+    """
+    A shallow wrapper for accessing data on-disk via
+    an HDF5 handle as if it were a typical pytorch Tensor
+    """
+    def __init__(self, hdf5_dataset, dtype=None, device=None, non_blocking=False):
+        """
+        Parameters
+        ----------
+        hdf5_dataset : h5py Dataset handle
+        dtype : str
+        device : str
+        """
         self.hdf5_dataset = hdf5_dataset
         self.out_dtype = dtype
         self.device = device
+        self.non_blocking = non_blocking
 
     def __getitem__(self, idx):
         # slice into hdf5 handle to get numpy array
         data = self.hdf5_dataset[idx]
 
         # convert to tensor on self.device
-        data = torch.as_tensor(data, device=self.device)
+        data = torch.as_tensor(data)
+        if self.device is not None:
+            data = data.to(self.device, non_blocking=self.non_blocking)
 
         # change dtype if needed
         if self.out_dtype is not None:
@@ -3243,7 +3257,6 @@ class HDF5tensor:
     def shape(self):
         return self.hdf5_dataset.shape
 
-    @property
     def size(self):
         return self.hdf5_dataset.size
 
@@ -3260,6 +3273,117 @@ class HDF5tensor:
             self.device = device
         else:
             self.out_dtype = device
+
+
+class CPU2GPUTensor:
+    """
+    Copy and move pytorch Tensor from CPU to GPU upon call.
+    """
+    def __init__(self, data, device, pin_memory=True, non_blocking=False):
+        self.data = data
+        self.device = device
+        self.pin_memory = pin_memory
+        self.non_blocking = non_blocking
+        if pin_memory:
+            self.data = self.data.pin_memory()
+
+    def __getitem__(self, idx):
+        # transfer data to device and return
+        return self.data[idx].to(self.device, non_blocking=self.non_blocking)
+
+    def __repr__(self):
+        return self.data.__repr__()
+
+    def __str__(self):
+        return self.data.__str__()
+
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def size(self):
+        return self.data.size
+
+    @property
+    def dtype(self):
+        return self.data.dtype
+
+    def __len__(self):
+        return len(self.data)
+
+    def push(self, device):
+        dtype = isinstance(device, torch.dtype)
+        if not dtype:
+            self.device = device
+        else:
+            self.data = self.data.to(device)
+
+
+class CatTensor:
+    """
+    Concatenate multiple tensors along a dimension
+    upon call.
+    """
+    def __init__(self, tensor_list, dim, device=None, non_blocking=False):
+        """
+        Parameters
+        ----------
+        tensor_list : list of tensor_list
+            List of tensors to concat
+        dim : int
+            Concatenation dimension
+        device : str
+        non_blocking : bool
+        """
+        self.tensor_list = tensor_list
+        self.dim = dim
+        self._device = device
+        self.non_blocking = non_blocking
+
+    def __getitem__(self, idx):
+        # slice into tensors and concat along dim
+        data = torch.cat([aten[idx] for aten in self.tensor_list], dim=self.dim)
+        if self.device is not None:
+            data = data.to(self.device, non_blocking=self.non_blocking)
+
+        return data        
+
+    def __repr__(self):
+        return self.tensor_list.__repr__()
+
+    def __str__(self):
+        return self.tensor_list.__str__()
+
+    @property
+    def shape(self):
+        _shape = list(self.tensor_list[0].shape)
+        _shape[self.dim] = sum([aten.shape[self.dim] for aten in self.tensor_list])
+        return tuple(_shape)
+
+    def size(self):
+        return self.shape
+
+    @property
+    def dtype(self):
+        return self.tensor_list[0].dtype
+
+    @property
+    def device(self):
+        if self._device is not None:
+            return self._device
+        else:
+            return self.tensor_list[0].device
+
+    @device.setter
+    def device(self, val):
+        self._device = val
+
+    def __len__(self):
+        return self.shape[0]
+
+    def push(self, device):
+        self.device = None
+        self.tensor_list = [utils.push(aten, device) for aten in self.tensor_list]
 
 
 class Dataset(TorchDataset):
@@ -3390,7 +3514,8 @@ class RedVisInflate(utils.Module):
             self.device = device
 
 
-def concat_VisData(vds, axis, run_check=True, interleave=False):
+def concat_VisData(vds, axis, run_check=True, interleave=False,
+                   lazy=False, device=None, non_blocking=False):
     """
     Concatenate VisData objects together
 
@@ -3405,7 +3530,17 @@ def concat_VisData(vds, axis, run_check=True, interleave=False):
         the desired axis. Note this is probably
         slow so its not recommended for repeated
         forward passes.
+    lazy : bool, optional
+        If True, only perform concatenation upon
+        call to data. Replaces vd.data (and other tensors)
+        with CatTensor(vds). Doesn't support interleave.
+    device : str, optional
+        Move to device after concat
+    non_blocking : bool, optional
+        non_blocking kwarg on aten.to(device, ...)
     """
+    if lazy:
+        assert not interleave, "lazy = True doesn't support interleave = True"
     if isinstance(vds, VisData):
         return vds
     Nvd = len(vds)
@@ -3444,22 +3579,45 @@ def concat_VisData(vds, axis, run_check=True, interleave=False):
         freqs = utils._tensor_concat([torch.as_tensor(o.freqs) for o in vds], interleave=interleave)
 
     # stack data and flags
-    data = utils._tensor_concat([o.data for o in vds], dim=dim, interleave=interleave)
+    if lazy:
+        data = CatTensor([o.data for o in vds], dim=dim, device=device, non_blocking=non_blocking)
+    else:
+        data = utils._tensor_concat([o.data for o in vds], dim=dim, interleave=interleave)
+        if device is not None:
+            data = data.to(device, non_blocking=non_blocking)
+
     if vd.flags is not None:
-        flags = utils._tensor_concat([o.flags for o in vds], dim=dim, interleave=interleave)
+        if lazy:
+            flags = CatTensor([o.flags for o in vds], dim=dim, device=device, non_blocking=non_blocking)
+        else:
+            flags = utils._tensor_concat([o.flags for o in vds], dim=dim, interleave=interleave)
+            if device is not None:
+                flags = flags.to(device, non_blocking=non_blocking)
 
     # stack cov and icov
     if vd.cov_axis is not None:
         raise NotImplementedError
     if vd.cov is not None:
-        cov = utils._tensor_concat([o.cov for o in vds], dim=dim, interleave=interleave)
+        if lazy:
+            cov = CatTensor([o.cov for o in vds], dim=dim, device=device, non_blocking=non_blocking)
+        else:
+            cov = utils._tensor_concat([o.cov for o in vds], dim=dim, interleave=interleave)
+            if device is not None:
+                cov = cov.to(device, non_blocking=non_blocking)
+
     if vd.icov is not None:
-        icov = utils._tensor_concat([o.icov for o in vds], dim=dim, interleave=interleave)
+        if lazy:
+            icov = CatTensor([o.icov for o in vds], dim=dim, device=device, non_blocking=non_blocking)
+        else:
+            icov = utils._tensor_concat([o.icov for o in vds], dim=dim, interleave=interleave)
+            if device is not None:
+                icov = icov.to(device, non_blocking=non_blocking)
 
     out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
                    data=data, flags=flags, cov=cov, icov=icov,
-                   cov_axis=vd.cov_axis, history=vd.history)
+                   cov_axis=vd.cov_axis, history=vd.history,
+                   file=getattr(vds[0], '_file', None))
 
     if run_check:
         out.check()
@@ -3479,6 +3637,44 @@ def concat_CalData(cds, axis, run_check=True):
     Concatenate CalData bojects
     """
     raise NotImplementedError
+
+
+def CPU2GPU_VisData(vd, device, pin_memory=True, non_blocking=False):
+    """
+    Convert data tensors on a vd object
+    to CPU2GPUTensor objects. Operates inplace.
+
+    Parameters
+    ----------
+    vd : VisData
+    device : str
+        Device to push data to upon call.
+    pin_memory : bool, optional
+        If True, pin data tensors
+    non_blocking : bool, optional
+        Kwarg in aten.to(device, ...)
+
+    Returns
+    -------
+    VisData
+    """
+    vd.data = CPU2GPUTensor(
+        vd.data, device, pin_memory=pin_memory, non_blocking=non_blocking
+    )
+    if vd.flags is not None:
+        vd.flags = CPU2GPUTensor(
+            vd.flags, device, pin_memory=pin_memory, non_blocking=non_blocking
+        )
+    if vd.cov is not None:
+        vd.cov = CPU2GPUTensor(
+            vd.cov, device, pin_memory=pin_memory, non_blocking=non_blocking
+        )
+    if vd.icov is not None:
+        vd.icov = CPU2GPUTensor(
+            vd.icov, device, pin_memory=pin_memory, non_blocking=non_blocking
+        )
+
+    return vd
 
 
 def average_TensorData(objs, wgts=None):
