@@ -18,7 +18,6 @@ class TensorData:
     """
     def __init__(self):
         # init empty object
-        self.device = None
         self.setup_data()
 
     def setup_data(self, data=None, flags=None, cov=None,
@@ -54,7 +53,6 @@ class TensorData:
         Push data, flags, cov and icov to device
         """
         dtype = isinstance(device, torch.dtype)
-        if not dtype: self.device = device
         if self.data is not None:
             self.data = utils.push(self.data, device)
         if self.flags is not None:
@@ -278,6 +276,13 @@ class TensorData:
             else:
                 td1.flags += td2.flags
 
+    @property
+    def device(self):
+        if hasattr(self, "data") and isinstance(self.data, torch.Tensor):
+            return self.data.device
+        else:
+            return None
+
 
 class VisData(TensorData):
     """
@@ -287,7 +292,6 @@ class VisData(TensorData):
     def __init__(self):
         # init empty object
         self.data = None
-        self.device = None
         self.atol = 1e-10
         self._file = None
         self.setup_meta()
@@ -403,10 +407,6 @@ class VisData(TensorData):
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
         self._file = file
-
-        if isinstance(data, torch.Tensor):
-            if not utils.check_devices(data.device, self.device):
-                self.push(data.device)
 
     def _set_bls(self, bls):
         """
@@ -3260,7 +3260,6 @@ class HDF5tensor:
             self.device = device
         else:
             self.out_dtype = device
-
 
 
 class Dataset(TorchDataset):
