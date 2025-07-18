@@ -57,7 +57,7 @@ class TensorData:
             self.data = utils.push(self.data, device)
         if self.flags is not None:
             if not dtype:
-                self.flags = self.flags.to(device)
+                self.flags = utils.push(self.flags, device)
         if self.cov is not None:
             self.cov = utils.push(self.cov, device)
         if self.icov is not None:
