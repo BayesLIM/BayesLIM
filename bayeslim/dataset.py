@@ -62,6 +62,8 @@ class TensorData:
             self.cov = utils.push(self.cov, device)
         if self.icov is not None:
             self.icov = utils.push(self.icov, device)
+        self.cov_ndim = utils.push(self.cov_ndim, device)
+        self.cov_logdet = utils.push(self.cov_logdet, device)
         if return_obj:
             return self
 
