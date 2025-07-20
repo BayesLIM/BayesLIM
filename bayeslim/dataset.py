@@ -1828,7 +1828,7 @@ class VisData(TensorData):
         """
         if isinstance(fname, (list, tuple, np.ndarray)):
             # multiple files
-            vd = [self.from_hdf5(f, **kwargs) for f in fname]
+            vd = [cls.from_hdf5(f, **kwargs) for f in fname]
             if axis is not None:
                 vd = concat_VisData(
                     vd,
