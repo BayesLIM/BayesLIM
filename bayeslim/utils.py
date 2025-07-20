@@ -2178,16 +2178,22 @@ def _tensor_concat(tensors, dim=0, interleave=False):
     possibly different length along dim, concatenate them
     with optional interleaving
     """
-    if interleave:
-        shape = list(tensors[0].shape)
-        shape[dim] = sum(t.shape[dim] for t in tensors)
-        N = shape[dim]
-        out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
-        indices = [torch.arange(i, N, len(tensors), device=tensors[0].device) for i in range(len(tensors))]
-        for ten, idx in zip(tensors, indices):
-            out.index_add_(dim, idx, ten)
-    else:
-        out = torch.cat(tensors, dim=dim)
+    try:
+        if interleave:
+            shape = list(tensors[0].shape)
+            shape[dim] = sum(t.shape[dim] for t in tensors)
+            N = shape[dim]
+            out = torch.zeros(shape, dtype=tensors[0].dtype, device=tensors[0].device)
+            indices = [torch.arange(i, N, len(tensors), device=tensors[0].device) for i in range(len(tensors))]
+            for ten, idx in zip(tensors, indices):
+                out.index_add_(dim, idx, ten)
+        else:
+            out = torch.cat(tensors, dim=dim)
+    except TypeError:
+        # this happens if one entry in tensors is None
+        # which is possible if we are concat tensors with
+        # read_data = False
+        out = None
 
     return out
 
