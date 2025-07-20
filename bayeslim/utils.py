@@ -2193,7 +2193,7 @@ def _tensor_concat(tensors, dim=0, interleave=False):
         # this happens if one entry in tensors is not a Tensor
         # which is possible if we are concat tensors with
         # read_data = False, or lazy_load=True
-        if out[0] is None:
+        if tensors[0] is None:
             out = None
         else:
             raise err
