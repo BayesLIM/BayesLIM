@@ -65,7 +65,13 @@ class VisMapper:
 		## TODO: add on-the-fly vis loading
 		self.vis = vis
 		self.telescope = vis.telescope
-		self.array = telescope_model.ArrayModel(vis.antpos, vis.freqs, device=vis.data.device, **kwargs)
+		self.array = telescope_model.ArrayModel(
+			vis.antpos,
+			vis.freqs,
+			device=vis.data.device,
+			skip_reds=True,
+			**kwargs
+		)
 		self.ra = ra
 		self.dec = dec
 		self.Npix = len(ra)
