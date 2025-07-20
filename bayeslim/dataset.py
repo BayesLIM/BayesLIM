@@ -280,7 +280,7 @@ class TensorData:
 
     @property
     def device(self):
-        if hasattr(self, "data") and isinstance(self.data, torch.Tensor):
+        if self.data is not None:
             return self.data.device
         else:
             return None
@@ -313,7 +313,7 @@ class VisData(TensorData):
             self.telescope.push(device)
         self.freqs = utils.push(self.freqs, device)
         if not dtype:
-            self._blnums = self._blnums.to(device)
+            self._blnums = utils.push(self._blnums, device)
             if hasattr(self._blnums, '_arr_hash'):
                 del self._blnums._arr_hash
         if return_obj:
