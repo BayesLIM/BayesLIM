@@ -2189,11 +2189,14 @@ def _tensor_concat(tensors, dim=0, interleave=False):
                 out.index_add_(dim, idx, ten)
         else:
             out = torch.cat(tensors, dim=dim)
-    except TypeError:
-        # this happens if one entry in tensors is None
+    except TypeError as err:
+        # this happens if one entry in tensors is not a Tensor
         # which is possible if we are concat tensors with
-        # read_data = False
-        out = None
+        # read_data = False, or lazy_load=True
+        if out[0] is None:
+            out = None
+        else:
+            raise err
 
     return out
 
