@@ -1798,6 +1798,52 @@ class VisData(TensorData):
         for (ant1, ant2) in self.bls:
             assert (ant1 in self.ants) and (ant2 in self.ants)
 
+    @classmethod
+    def from_hdf5(cls, fname, axis=None, lazy_cat=False,
+                  interleave=False, **kwargs):
+        """
+        Create a VisData object from one or multiple hdf5 files.
+
+        Parameters
+        ----------
+        fname : str or list
+            Filepath to VisData HDF5, or lists of such
+            to lead and optionally concat.
+        axis : str, optional
+            If multiple filepaths provided, this determines
+            the axis along which to concatenate. See
+            concat_VisData for details. Default (None)
+            is to return a list of unconcatenated VisData.
+        lazy_cat : bool, optional
+            If True, use lazy concatenation
+            in dataset.concat_VisData(..., lazy=True).
+        interleave : bool, optional
+            Interleave kwarg in concat_VisData()
+        kwargs : dict
+            Optional kwargs in VisData.read_hdf5()
+
+        Returns
+        -------
+        VisData or list
+        """
+        if isinstance(fname, (list, tuple, np.ndarray)):
+            # multiple files
+            vd = [self.from_hdf5(f, **kwargs) for f in fname]
+            if axis is not None:
+                vd = concat_VisData(
+                    vd,
+                    axis,
+                    run_check=False,
+                    interleave=interleave,
+                    lazy=lazy_cat,
+                )
+
+        else:
+            vd = cls()
+            vd.read_hdf5(fname, **kwargs)
+
+        return vd
+
 
 class MapData(TensorData):
     """
