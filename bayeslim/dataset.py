@@ -3666,11 +3666,15 @@ def concat_VisData(vds, axis, run_check=True, interleave=False,
             if device is not None:
                 icov = icov.to(device, non_blocking=non_blocking)
 
+    file = [getattr(_vd, '_file', None) for _vd in vds]
+    if all([f is None for f in file]):
+        file = None
+
     out.setup_meta(vd.telescope, vd.antpos)
     out.setup_data(bls, times, freqs, pol=pol,
                    data=data, flags=flags, cov=cov, icov=icov,
                    cov_axis=vd.cov_axis, history=vd.history,
-                   file=getattr(vds[0], '_file', None))
+                   file=file)
 
     if run_check:
         out.check()
