@@ -598,7 +598,7 @@ def lbfgs_approx_cov(prob, Nsteps=5,
         prob.set_main_params([(main_names[param], idx, param)])
 
         # create LBFGS
-        opt = LBFGS((prob.main_params,), update_Hdiag=True, **kwargs)
+        opt = LBFGS((prob.main_params,), update_Hdiag=True, max_iter=max_iter, **kwargs)
 
         # iterate
         for i in range(Nsteps):
