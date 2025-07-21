@@ -1447,13 +1447,13 @@ class DistributedLogProb(utils.Module):
     def devices(self):
         return [prob.device for prob in self.probs]
 
-    def set_main_params(self, **kwargs):
+    def set_main_params(self, *args, **kwargs):
         """
         Set main_params on sub-prob objects
         and set main_params on this object on self.device
         """
         for prob in self.probs:
-            prob.set_main_params(**kwargs)
+            prob.set_main_params(*args, **kwargs)
 
         self.collect_main_params()
 
@@ -1465,6 +1465,7 @@ class DistributedLogProb(utils.Module):
         self.main_params = None
         self._main_indices = None
         self._main_index = None
+        self._main_names = None
         for prob in self.probs:
             prob.sort_main_params(new_main_indices, incomplete=incomplete)
 
@@ -1480,6 +1481,7 @@ class DistributedLogProb(utils.Module):
             prob.collect_main_params()
         self._main_indices = copy.deepcopy(self.probs[0]._main_indices)
         self._main_index = self.probs[0]._main_index
+        self._main_names = self.probs[0]._main_names
         if self.probs[0].main_params is not None:
             self.main_params = torch.nn.Parameter(self.probs[0].main_params.data.to(self.device))
             
