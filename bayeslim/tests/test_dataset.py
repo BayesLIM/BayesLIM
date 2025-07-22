@@ -16,7 +16,7 @@ freqs = torch.linspace(120e6, 130e6, 10)
 times = torch.linspace(2458168.1, 2458168.3, 5)
 
 
-def setup_VisData(N=3, times=times, freqs=freqs):
+def setup_VisData(N=3, times=times, freqs=freqs, seed=0):
 	# setup HERA-like array and some random data
 
 	vd = ba.VisData()
@@ -29,7 +29,8 @@ def setup_VisData(N=3, times=times, freqs=freqs):
 
 	vd.setup_meta(antpos=antpos, telescope=telescope)
 
-	torch.manual_seed(0)
+	if seed is not None:
+		torch.manual_seed(seed)
 	data = torch.randn(1, 1, len(bls), len(times), len(freqs), dtype=ba._cfloat())
 	cov = torch.ones(1, 1, len(bls), len(times), len(freqs))
 
@@ -222,44 +223,51 @@ def test_visdata_bl_average():
 
 
 def test_visdata_time_average():
-	## test uniform average and propagated covariance
 	Ntimes = 10
+	Ntest = 30
 	times = torch.linspace(2458168.1, 2458168.3, Ntimes)
+
+	## test uniform average and propagated covariance
 	torch.manual_seed(0)
 	vd = setup_VisData(times=times)
-	Ntest = 30
-	vds = [setup_VisData(times=times) for i in range(Ntest)]
-	for _vd in vds: _vd.time_average(inplace=True)
+	vds = [setup_VisData(times=times, seed=None) for i in range(Ntest)]
+	vdas = [_vd.time_average(inplace=False) for _vd in vds]
 	# check averaged shape
-	assert vds[0].data.shape == vd.data.shape[:3] + (1,) + vd.data.shape[-1:]
+	assert vdas[0].data.shape == vd.data.shape[:3] + (1,) + vd.data.shape[-1:]
 	# get variance
-	var = torch.stack([vd.data.var()for vd in vds]).mean(0)
+	var = torch.stack([_vd.data.var() for _vd in vdas]).mean(0)
 	# check it matches with 1/Navgs to within 2sigma of Ntest
 	assert ((var - 1 / Ntimes).abs() < (1/Ntest * 2)).all()
 	# assert propagated covariance is correct
-	assert torch.isclose(1/vds[0].cov, torch.tensor(float(Ntimes)), atol=1e-5).all()
+	assert torch.isclose(1/vdas[0].cov, torch.tensor(float(Ntimes)), atol=1e-5).all()
 
-	## test multi-bin average with missing chunks, out of place
+	# now test average with different cov levels wrt time
+	torch.manual_seed(1)
+	tcov = torch.randn(Ntimes).abs()
+	vds, vdas = [], []
+	for i in range(Ntest):
+		vd = setup_VisData(times=times, seed=None)
+		vd.data *= tcov.sqrt()[:, None]
+		vd.cov *= tcov[:, None]
+		vds.append(vd)
+		vdas.append(vd.time_average(inplace=False))
+
+	# get variance
+	var = torch.stack([_vd.data.var() for _vd in vdas]).mean(0)
+	# assert it matches propagated covariance
+	assert torch.isclose(var, vdas[0].cov.flatten()[0], atol=1/(vdas[0].data.numel()+Ntest))
+
+	## test multi-bin average, not inplace
 	vd = setup_VisData(times=times)
 	time_inds = [range(0, 3), range(3, 6), range(6, 9)]
-	vda = vd.time_average(time_inds=time_inds, inplace=False)
-	# assert shape is correct
-	assert vda.data.shape == vd.data.shape[:3] + (3,) + vd.data.shape[-1:]
-	# assert covariance is correct
-	assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
-	# assert avg_times are correct
-	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
-
-	## test rephasing
-	vd = setup_VisData(times=times)
-	time_inds = [range(0, 3), range(3, 6), range(6, 9)]
-	vda = vd.time_average(time_inds, rephase=True, inplace=False)
-	# assert shape is correct
-	assert vda.data.shape == vd.data.shape[:3] + (3,) + vd.data.shape[-1:]
-	# assert covariance is correct
-	assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
-	# assert avg_times are correct
-	assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
+	for rephase in [False, True]:
+		vda = vd.time_average(time_inds=time_inds, inplace=False, rephase=rephase)
+		# assert shape is correct
+		assert vda.data.shape == vd.data.shape[:3] + (3,) + vd.data.shape[-1:]
+		# assert covariance is correct
+		assert torch.isclose(1/vda.cov, torch.tensor(3.), atol=1e-5).all()
+		# assert avg_times are correct
+		assert torch.isclose(vda.times, vd.times[1::3], atol=1e-10, rtol=1e-13).all()
 
 
 def test_vis_rephase():
