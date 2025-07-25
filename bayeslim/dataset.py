@@ -1327,7 +1327,7 @@ class VisData(TensorData):
             avg_flags.index_add_(-3, index, ~self.flags)
             avg_flags = ~avg_flags
             if truncate:
-                avg_flags[..., :-1, :, :]
+                avg_flags = avg_flags[..., :-1, :, :]
 
         # get avg_icov
         avg_icov = None
