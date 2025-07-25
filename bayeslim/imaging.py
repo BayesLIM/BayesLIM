@@ -622,6 +622,7 @@ class VisMapper:
 		self.array.push(device)
 		self.vis.push(device)
 		self.telescope.push(device)
+		self.blvecs = utils.push(self.blvecs, device)
 
 
 def make_map(v, w, A):
