@@ -427,7 +427,7 @@ class VisMapper:
 			elif self.method == 'Aw':
 				Aw[..., cut] += (w[:, :, None] * A.abs()).sum(0)
 			elif self.method == 'A2w':
-				Aw[..., cut] += (w[:, :, None] * A.abs().pow(2)).sum(0)
+				Aw[..., cut] += (w[:, :, None] * A.pow(2).real).sum(0)
 
 			maps[..., cut] += m
 

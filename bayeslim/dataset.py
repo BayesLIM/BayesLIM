@@ -3277,7 +3277,7 @@ class HDF5Tensor:
     A shallow wrapper for accessing data on-disk via
     an HDF5 handle as if it were a typical pytorch Tensor
     """
-    def __init__(self, hdf5_dataset, dtype=None, device=None, non_blocking=False):
+    def __init__(self, hdf5_dataset, dtype=None, device=None, non_blocking=True):
         """
         Parameters
         ----------
@@ -3337,7 +3337,7 @@ class CPU2GPUTensor:
     """
     Copy and move pytorch Tensor from CPU to GPU upon call.
     """
-    def __init__(self, data, device, pin_memory=True, non_blocking=False):
+    def __init__(self, data, device, pin_memory=True, non_blocking=True):
         self.data = data
         self.device = device
         self.pin_memory = pin_memory
@@ -3382,7 +3382,7 @@ class CatTensor:
     Concatenate multiple tensors along a dimension
     upon call.
     """
-    def __init__(self, tensor_list, dim, device=None, non_blocking=False):
+    def __init__(self, tensor_list, dim, device=None, non_blocking=True):
         """
         Parameters
         ----------
@@ -3573,7 +3573,7 @@ class RedVisInflate(utils.Module):
 
 
 def concat_VisData(vds, axis, run_check=True, interleave=False,
-                   lazy=False, device=None, non_blocking=False):
+                   lazy=False, device=None, non_blocking=True):
     """
     Concatenate VisData objects together
 
