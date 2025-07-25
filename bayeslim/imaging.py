@@ -368,7 +368,7 @@ class VisMapper:
 
 		return w
 
-	def make_map(self, vis=None):
+	def make_map(self, vis=None, return_P=True, diag=True):
 		"""
 		Make maps for each time integration, sum them, and normalize them.
 
@@ -379,11 +379,18 @@ class VisMapper:
 			Must match self.vis shape and metadata.
 			Can also pass a list of VisData to image (but
 			with identical weights)
+		return_P : bool, optional
+			If True, compute and return PSF matrix.
+		diag : bool, optional
+			If return_P, only compute the diagonal
+			component.
 
 		Returns
 		-------
 		maps : tensor
 			Dirty maps of shape (..., Nfreqs, Npix)
+		P : PSF matrix
+			Only if compute_P = True, otherwise None
 		"""
 		assert self.method is not None, "First run set_normalization()"
 		vis = self.vis if vis is None else vis
@@ -404,6 +411,14 @@ class VisMapper:
 		elif self.method in ['Aw', 'A2w']:
 			Aw = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 
+		# init the P matrix
+		P = None
+		if return_P:
+			if diag:
+				P = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
+			else:
+				P = torch.zeros(self.Nfreqs, self.Npix, self.Npix, device=self.device)
+
 		# iterate over times
 		for i, time in enumerate(self.times):
 			# build A
@@ -421,6 +436,16 @@ class VisMapper:
 			# make map
 			m = make_map(v, w, A)
 
+			if return_P:
+				# get P for this patch of sky
+				_P = compute_P(A, w, diag=diag)
+
+				# insert into P
+				if diag:
+					P[:, cut] += _P
+				else:
+					P[:, cut[:, None], cut[None, :]] += _P
+
 			# sum with tensors
 			if self.method == 'w':
 				Aw += w.sum(0)[:, None]
@@ -437,7 +462,17 @@ class VisMapper:
 		# apply normalization
 		maps *= self.D
 
-		return maps
+		if return_P:
+			# apply normalization
+			if diag:
+				# (Nfreqs, Npix) * (Nfreqs, Npix)
+				P *= D
+
+			else:
+				# (Nfreqs, Npix, Npix) * (Nfreqs, Npix, 1)
+				P *= D[:, :, None]
+
+		return maps, P
 
 	def compute_Pm(self, maps, D=None):
 		"""
