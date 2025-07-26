@@ -3722,7 +3722,7 @@ def CPU2GPU_VisData(vd, device, pin_memory=True, non_blocking=False):
     -------
     VisData
     """
-    if utils.check_device('cpu', device):
+    if utils.check_devices('cpu', device):
         if isinstance(vd.data, CPU2GPUTensor):
             vd.data = vd.data.data
         if isinstance(vd.flags, CPU2GPUTensor):
