@@ -466,11 +466,11 @@ class VisMapper:
 			# apply normalization
 			if diag:
 				# (Nfreqs, Npix) * (Nfreqs, Npix)
-				P *= D
+				P *= self.D
 
 			else:
 				# (Nfreqs, Npix, Npix) * (Nfreqs, Npix, 1)
-				P *= D[:, :, None]
+				P *= self.D[:, :, None]
 
 		return maps, P
 
