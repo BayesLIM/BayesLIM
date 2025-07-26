@@ -3711,6 +3711,8 @@ def CPU2GPU_VisData(vd, device, pin_memory=True, non_blocking=False):
     vd : VisData
     device : str
         Device to push data to upon call.
+        If device is 'cpu', undo this operation
+        and revert the tensors back to torch.Tensor.
     pin_memory : bool, optional
         If True, pin data tensors
     non_blocking : bool, optional
@@ -3720,21 +3722,32 @@ def CPU2GPU_VisData(vd, device, pin_memory=True, non_blocking=False):
     -------
     VisData
     """
-    vd.data = CPU2GPUTensor(
-        vd.data, device, pin_memory=pin_memory, non_blocking=non_blocking
-    )
-    if vd.flags is not None:
-        vd.flags = CPU2GPUTensor(
-            vd.flags, device, pin_memory=pin_memory, non_blocking=non_blocking
+    if utils.check_device('cpu', device):
+        if isinstance(vd.data, CPU2GPUTensor):
+            vd.data = vd.data.data
+        if isinstance(vd.flags, CPU2GPUTensor):
+            vd.flags = vd.flags.data
+        if isinstance(vd.cov, CPU2GPUTensor):
+            vd.cov = vd.cov.data
+        if isinstance(vd.icov, CPU2GPUTensor):
+            vd.icov = vd.icov.data
+
+    else:
+        vd.data = CPU2GPUTensor(
+            vd.data, device, pin_memory=pin_memory, non_blocking=non_blocking
         )
-    if vd.cov is not None:
-        vd.cov = CPU2GPUTensor(
-            vd.cov, device, pin_memory=pin_memory, non_blocking=non_blocking
-        )
-    if vd.icov is not None:
-        vd.icov = CPU2GPUTensor(
-            vd.icov, device, pin_memory=pin_memory, non_blocking=non_blocking
-        )
+        if vd.flags is not None:
+            vd.flags = CPU2GPUTensor(
+                vd.flags, device, pin_memory=pin_memory, non_blocking=non_blocking
+            )
+        if vd.cov is not None:
+            vd.cov = CPU2GPUTensor(
+                vd.cov, device, pin_memory=pin_memory, non_blocking=non_blocking
+            )
+        if vd.icov is not None:
+            vd.icov = CPU2GPUTensor(
+                vd.icov, device, pin_memory=pin_memory, non_blocking=non_blocking
+            )
 
     return vd
 
