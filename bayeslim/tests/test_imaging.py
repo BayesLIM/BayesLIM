@@ -41,7 +41,7 @@ def test_imaging():
 	VM.set_normalization('A2w', clip=1e-8)
 
 	# create maps (build cache)
-	maps = VM.make_map()
+	maps, _ = VM.make_map()
 	assert maps.shape == (vd.Nfreqs, VM.Npix)
 
 	# assert cache is full
@@ -98,14 +98,14 @@ def test_imaging_lazy():
 		# setup mapper with in-memory data
 		VM = setup_VisMapper(vd, cache_A=False)
 		VM.set_normalization('A2w', clip=1e-8)
-		maps1 = VM.make_map()
+		maps1, _ = VM.make_map()
 
 		# setup mapper with out-of-memory data
 		vd2 = ba.VisData()
 		vd2.read_hdf5(tmpfile, lazy_load=True)
 		VM2 = setup_VisMapper(vd2, cache_A=False)
 		VM2.set_normalization('A2w', clip=1e-8)
-		maps2 = VM2.make_map()
+		maps2, _ = VM2.make_map()
 
 		assert torch.isclose(maps1, maps2, atol=1e-8, rtol=1e-8).all()
 
@@ -117,8 +117,8 @@ def test_imaging_lazy():
 		VM2.set_time_inds(time_inds=range(0,20,2))
 		VM2.set_bl_inds(bl_inds=range(0,100))
 
-		maps3 = VM.make_map()
-		maps4 = VM2.make_map()
+		maps3, _ = VM.make_map()
+		maps4, _ = VM2.make_map()
 
 		assert maps3.shape == (1, VM.Npix)
 		assert torch.isclose(maps3, maps4, atol=1e-8, rtol=1e-8).all()
@@ -126,7 +126,7 @@ def test_imaging_lazy():
 		# now test different time indices
 		# and make sure they aren't the same maps
 		VM.set_time_inds(time_inds=range(0,10))
-		maps5 = VM.make_map()
+		maps5, _ = VM.make_map()
 		assert maps5.shape == (1, VM.Npix)
 		assert not torch.isclose(maps3, maps5, atol=1e-8, rtol=1e-8).any()
 
