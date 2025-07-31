@@ -714,7 +714,7 @@ def write_Ylm(fname, Ylm, angs, l, m, norm=None, D=None, Dinv=None,
 def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
              colat_min=None, colat_max=None, az_min=None, az_max=None,
              device=None, discard_sectoral=False, discard_mono=False,
-             read_data=True, to_real=False):
+             decimate_m=None, read_data=True, to_real=False):
     """
     Load an hdf5 file with Ylm tensors and metadata
 
@@ -750,6 +750,9 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         If True, discard all modes where m == l (except for l == 0)
     discard_mono : bool, optional
         If True, discard monopole (i.e. l == m == 0)
+    decimate_m : int, optional
+        If True, only keep modes where m % decimate_m == 0.
+        This is used when truncating a portion of azimuth angles.
     read_data : bool, optional
         If True, read and return Ylm
         else return None for Ylm
@@ -800,6 +803,8 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
             keep = keep & ~((l == m) & (l > 0))
         if discard_mono:
             keep = keep & ~((l == 0) & (m == 0))
+        if decimate_m is not None:
+            keep = keep & ((m.astype(int) % decimate_m) == 0)
 
         # refactor keep as slicing if possible
         keep = np.where(keep)[0]
@@ -851,11 +856,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         colat, az = angs
         keep = colat >= colat_min
         colat = colat[keep]
-        az = az[keep]
+        if not isinstance(Ylm, tuple):
+            az = az[keep]
         angs = colat, az
         if read_data:
             if isinstance(Ylm, tuple):
-                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+                Ylm = (Ylm[0][:, keep], Ylm[1])
             else:
                 Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
@@ -864,11 +870,12 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
         colat, az = angs
         keep = colat <= colat_max
         colat = colat[keep]
-        az = az[keep]
+        if not isinstance(Ylm, tuple):
+            az = az[keep]
         angs = colat, az
         if read_data:
             if isinstance(Ylm, tuple):
-                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+                Ylm = (Ylm[0][:, keep], Ylm[1])
             else:
                 Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
@@ -876,12 +883,13 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     if az_min is not None:
         colat, az = angs
         keep = az >= az_min
-        colat = colat[keep]
         az = az[keep]
+        if not isinstance(Ylm, tuple):
+            colat = colat[keep]
         angs = colat, az
         if read_data:
             if isinstance(Ylm, tuple):
-                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+                Ylm = (Ylm[0], Ylm[1][:, keep])
             else:
                 Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
@@ -889,12 +897,13 @@ def load_Ylm(fname, lmin=None, lmax=None, discard=None, cast=None,
     if az_max is not None:
         colat, az = angs
         keep = az <= az_max
-        colat = colat[keep]
         az = az[keep]
+        if not isinstance(Ylm, tuple):
+            colat = colat[keep]
         angs = colat, az
         if read_data:
             if isinstance(Ylm, tuple):
-                Ylm = (Ylm[0][:, keep], Ylm[1][:, keep])
+                Ylm = (Ylm[0], Ylm[1][:, keep])
             else:
                 Ylm = Ylm[:, keep]
             if pxarea is not None and not isinstance(pxarea, (int, float)):
