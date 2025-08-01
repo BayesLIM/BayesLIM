@@ -694,7 +694,7 @@ class VisData(TensorData):
 
         return bl, pol
 
-    def _time2ind(self, time):
+    def _time2ind(self, time, atol=None):
         """
         Time(s) to index
 
@@ -702,6 +702,8 @@ class VisData(TensorData):
         ----------
         time : float or list of floats
             Julian date times to index
+        atol : float, optional
+            tolerance when matching times.
         """
         iterable = False
         if isinstance(time, (list, np.ndarray)):
@@ -712,9 +714,10 @@ class VisData(TensorData):
         if iterable:
             return np.concatenate([self._time2ind(t) for t in time]).tolist()
         # rtol=1e-13 allows for 0.03 sec discrimination on JD values
-        return np.where(np.isclose(self.times, time, atol=self.atol, rtol=1e-13))[0].tolist()
+        atol = atol if atol is not None else self.atol
+        return np.where(np.isclose(self.times, time, atol=atol, rtol=1e-13))[0].tolist()
 
-    def _freq2ind(self, freq):
+    def _freq2ind(self, freq, atol=None):
         """
         Freq(s) to index
 
@@ -722,6 +725,9 @@ class VisData(TensorData):
         ----------
         freq : float or list of floats
             frequencies [Hz] to index
+        atol : float, optional
+            Tolerance to use when matching freqs.
+            Default is to use self.atol
         """
         iterable = False
         if isinstance(freq, (list, np.ndarray)):
@@ -731,7 +737,8 @@ class VisData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
-        return np.where(np.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
+        atol = atol if atol is not None else self.atol
+        return np.where(np.isclose(self.freqs, freq, atol=atol))[0].tolist()
 
     def _pol2ind(self, pol, data=None):
         """
@@ -766,7 +773,8 @@ class VisData(TensorData):
             raise ValueError("cannot index cross-pols")
 
     def get_inds(self, bl=None, times=None, freqs=None, pol=None,
-                 bl_inds=None, time_inds=None, freq_inds=None, data=None):
+                 bl_inds=None, time_inds=None, freq_inds=None, data=None,
+                 atol=None):
         """
         Given data selections, return data indexing list
 
@@ -801,6 +809,8 @@ class VisData(TensorData):
             Default is self.data. Only use this
             when reading from an HDF5 and passing
             the dataset handle.
+        atol : float, optional
+            Tolerance when matching on floats.
 
         Returns
         -------
@@ -824,7 +834,7 @@ class VisData(TensorData):
 
         if times is not None:
             assert time_inds is None
-            time_inds = self._time2ind(times)
+            time_inds = self._time2ind(times, atol=atol)
         elif time_inds is not None:
             pass
         else:
@@ -832,7 +842,7 @@ class VisData(TensorData):
 
         if freqs is not None:
             assert freq_inds is None
-            freq_inds = self._freq2ind(freqs)
+            freq_inds = self._freq2ind(freqs, atol=atol)
         elif freq_inds is not None:
             pass
         else:
@@ -885,7 +895,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds, data=data)
+                             freq_inds=freq_inds, data=data, **kwargs)
         data = data[inds]
         if not try_view and all([isinstance(ind, slice) for ind in inds]):
             data = data.clone()
@@ -931,7 +941,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds, data=flags)
+                             freq_inds=freq_inds, data=flags, **kwargs)
         flags = flags[inds]
         if not try_view and all([isinstance(ind, slice) for ind in inds]):
             flags = flags.clone()
@@ -944,7 +954,7 @@ class VisData(TensorData):
 
     def get_cov(self, bl=None, times=None, freqs=None, pol=None,
                 bl_inds=None, time_inds=None, freq_inds=None,
-                squeeze=True, cov=None, try_view=False, **kwargs):
+                squeeze=True, cov=None, try_view=False, atol=None, **kwargs):
         """
         Slice into cov tensor and return values.
         Only one axis can be specified at a time.
@@ -978,7 +988,7 @@ class VisData(TensorData):
         # get indexing
         inds = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
                              bl_inds=bl_inds, time_inds=time_inds,
-                             freq_inds=freq_inds, data=cov)
+                             freq_inds=freq_inds, data=cov, **kwargs)
 
         if self.cov_axis is None:
             # cov is same shape as data
