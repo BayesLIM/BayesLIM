@@ -234,7 +234,7 @@ def vis_wedge(vd, ravg_kwgs=None, **kwargs):
     return vd, FT
 
 
-def gen_window(window, N, alpha=None, **kwargs):
+def gen_window(window, N, alpha=None, edgecut=None, **kwargs):
     """
     Generate a window function of len N
 
@@ -253,6 +253,9 @@ def gen_window(window, N, alpha=None, **kwargs):
     tensor
         window function
     """
+    if edgecut is not None:
+        M = N
+        N = N - sum(edgecut)
     if window in ['none', None, 'None', 'boxcar', 'tophat']:
         w = windows.boxcar(N)
     elif window in ['blackmanharris', 'blackman-harris', 'bh', 'bh4']:
@@ -286,6 +289,9 @@ def gen_window(window, N, alpha=None, **kwargs):
             w  = getattr(windows, window)(N, **kwargs)
         except AttributeError:
             raise ValueError("Didn't recognize window {}".format(window))
+
+    if edgecut is not None:
+        w = np.concatenate([np.zeros(edgecut[0]), w, np.zeros(edgecut[1])])
 
     w = torch.as_tensor(w, dtype=utils._float())
 
