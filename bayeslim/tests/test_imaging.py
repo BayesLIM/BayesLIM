@@ -82,6 +82,31 @@ def test_imaging():
 	# test w/ icov...
 
 
+def test_Am():
+	# setup vd
+	times = torch.as_tensor(np.linspace(2459861.41509122, 2459861.62089175, 20, endpoint=True))
+	vd = setup_VisData(N=3, times=times, freqs=freqs)
+
+	# setup VM
+	VM = setup_VisMapper(vd)
+	VM.set_normalization('w', clip=1e-8)
+
+	# test make_map(compute_Am) and Pm() are the same
+	torch.manual_seed(0)
+	maps = torch.randn(3, VM.Nfreqs, VM.Npix)
+	v = VM.compute_Am(maps)
+	# reshape to (Nvis, Npol, 1, Nbls, Ntimes, Nfreqs)
+	v = v[:, None, None]
+
+	# now image them
+	_maps, Pdiag = VM.make_map(v)
+
+	# now compare to compute_Pm
+	_maps2 = VM.compute_Pm(maps)
+
+	assert ((_maps - _maps2).abs() < 1e-10).all()
+
+
 def test_imaging_lazy():
 	# write to temp file and then lazy_load
 	with TemporaryDirectory() as tmp:

@@ -313,26 +313,16 @@ class VisMapper:
 		"""
 		vis = self.vis if vis is None else vis
 		time_ind = self.time_inds[time_ind]
-		if isinstance(vis, list):
-			# (Nvis, Nbls, Nfreqs)
-			v = torch.stack([
-			_vis.get_data(
-				bl_inds=self.bl_inds,
-				time_inds=time_ind,
-				freq_inds=self.freq_inds,
-				squeeze=False,
-				try_view=True
-			)[0, 0, :, 0] for _vis in vis
-			])
-		else:
-			# (Nbls, Nfreqs)
-			v = vis.get_data(
-				bl_inds=self.bl_inds,
-				time_inds=time_ind,
-				freq_inds=self.freq_inds,
-				squeeze=False,
-				try_view=True
-			)[0, 0, :, 0]
+		time_ind = slice(time_ind, time_ind+1)
+		# (Nvis, Nbls, Nfreqs) or (Nbls, Nfreqs)
+		v = get_visdata(
+			vis,
+			bl_inds=self.bl_inds,
+			time_inds=time_ind,
+			freq_inds=self.freq_inds,
+			squeeze=False,
+			try_view=True
+			)[..., 0, 0, :, 0, :]
 
 		return v
 
@@ -397,6 +387,8 @@ class VisMapper:
 		Nmaps = 1
 		if isinstance(vis, list):
 			# feeding list of visdata for multiple maps
+			Nmaps = len(vis)
+		elif isinstance(vis, torch.Tensor) and vis.ndim > 5:
 			Nmaps = len(vis)
 
 		# init maps
@@ -474,6 +466,65 @@ class VisMapper:
 
 		return maps, P
 
+	def compute_Am(self, maps):
+		"""
+		Compute the matrix vector product
+		of the imaging A matrix and a set of maps.
+		This is equivalent to the RIME forward pass.
+
+		Parameters
+		----------
+		maps : tensor, list
+			Set of maps to compute the A @ maps
+			product of shape (..., Nfreqs, Npix)
+
+		Returns
+		-------
+		v : tensor
+			Visibility tensor, A @ maps
+			of shape (Nbls, Ntimes, Nfreqs)
+		"""
+		# get map data
+		map2ten = lambda m: m.get_data() if isinstance(m, MapData) else m
+		if isinstance(maps, list):
+			Nmaps = len(maps)
+			maps = [map2ten(_m) for _m in maps]
+		elif isinstance(maps, MapData):
+			Nmaps = 1
+			maps = map2ten(maps)
+		else:
+			if maps.ndim > 2:
+				Nmaps = len(maps)
+			else:
+				Nmaps = 1
+
+		# setup output tensor
+		v = torch.zeros(
+			Nmaps,
+			self.Nbls,
+			self.Ntimes,
+			self.Nfreqs,
+			dtype=_cfloat(),
+			device=self.device
+		)
+
+		# iterate over times and compute A @ maps
+		for i, time in enumerate(self.times):
+			# build A
+			if i in self.A:
+				A, cut = self.A[i]
+			else:
+				A, cut = self.build_A(time)
+				if self.cache_A:
+					self.A[i] = (A, cut)	                	
+
+			v[..., i, :] = compute_Am(A, maps[..., cut].to(A.dtype))
+
+		if Nmaps == 1:
+			v = v[0]
+
+		return v
+
 	def compute_Pm(self, maps, D=None):
 		"""
 		Compute the matrix vector product of the
@@ -481,9 +532,10 @@ class VisMapper:
 
 		Parameters
 		----------
-		maps : tensor, VisData, list
-			If provided compute the matrix-vector product P @ maps
-			instead of the full P matrix.
+		maps : tensor, MapData, list
+			Compute the matrix-vector product P @ maps
+			instead of the full P matrix, of shape
+			(..., Nfreqs, Npix).
 		D : tensor, optional
 			Pre-computed diagonal normalization tensor
 			of shape (Nfreqs, Npix).
@@ -698,6 +750,28 @@ def deconvolve_map(m, P, pinv=True, rcond=1e-15, hermitian=True):
 	return dm
 
 
+def compute_Am(A, m):
+	"""
+	Compute the matrix vector product A^* @ m
+	where A is the imaging matrix and m
+	are the set of maps. This is also
+	the RIME forward transform.
+
+	Parameters
+	----------
+	A : tensor
+		Imaging matrix of shape (Nbls, Nfreqs, Npix)
+	m : tensor
+		Map of shape (..., Nfreqs, Npix)
+
+	Returns
+	-------
+	v : tensor
+		Visibility of shape (..., Nbls, Nfreqs)
+	"""
+	return torch.einsum("vfp,...fp->...vf", A.conj(), m)
+
+
 def compute_Pm(A, w, m, D=None):
 	"""
 	Compute the matrix vector product P @ m
@@ -727,10 +801,10 @@ def compute_Pm(A, w, m, D=None):
 	# compute w * (A @ m): (Nmaps, Nbls, Nfreqs)
 	if m.dtype != A.dtype:
 		m = m.to(A.dtype)
-	wAm = w * torch.einsum("vfp,...fp->...vf", A, m)
+	wAm = w * compute_Am(A, m)
 
 	# multiply by A^T: (Nmaps, Nfreqs, Npix)
-	Pm = torch.einsum("vfp,...vf->...fp", A.conj(), wAm).real
+	Pm = torch.einsum("vfp,...vf->...fp", A, wAm).real
 
 	# normalize: (Nmaps, Nfreqs, Npix)
 	if D is not None:
@@ -770,7 +844,7 @@ def compute_P(A, w, D=None, diag=True):
 
 	else:
 		# compute full matrix
-		P = torch.einsum("vfp,vfq->fpq", A.conj(), w[..., None] * A).real
+		P = torch.einsum("vfp,vfq->fpq", A, w[..., None] * A.conj()).real
 
 	# normalize it
 	if D is not None:
@@ -849,3 +923,45 @@ def VisData2MapData(vd, data=None, angs=None, cov=None, icov=None,
 	)
 
 	return md
+
+
+def get_visdata(
+	vd,
+	bl_inds=None,
+	time_inds=None,
+	freq_inds=None,
+	squeeze=False,
+	**kwargs
+	):
+	"""
+	Get tensor from VisData
+	"""
+	if isinstance(vd, torch.Tensor):
+		bl_inds = slice(None) if bl_inds is None else bl_inds
+		time_inds = slice(None) if time_inds is None else time_inds
+		freq_inds = slice(None) if freq_inds is None else freq_inds
+		data = vd[..., bl_inds, time_inds, freq_inds]
+		if squeeze:
+			data = data.squeeze()
+	elif isinstance(vd, VisData):
+		data = vd.get_data(
+			bl_inds=bl_inds,
+			time_inds=time_inds,
+			freq_inds=freq_inds,
+			squeeze=squeeze,
+			**kwargs
+		)
+	elif isinstance(vd, list):
+		data = torch.stack(
+			[get_visdata(
+				v,
+				bl_inds=bl_inds,
+				time_inds=time_inds,
+				freq_inds=freq_inds,
+				squeeze=squeeze,
+				**kwargs
+			) for v in vd]
+		)
+
+	return data
+
