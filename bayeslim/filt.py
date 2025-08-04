@@ -396,6 +396,10 @@ class WedgeFilter:
 
         return vout
 
+    def push(self, device):
+        for filt in self.filters:
+            filt.push(device)
+
 
 def rbf_cov(x, ls, amp=1, x2=None, dtype=None, device=None):
     """
