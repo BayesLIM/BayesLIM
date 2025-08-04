@@ -736,9 +736,9 @@ class VisData(TensorData):
             if freq.ndim == 1:
                 iterable = True
         if iterable:
-            return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
+            return torch.cat([self._freq2ind(f) for f in freq]).tolist()
         atol = atol if atol is not None else self.atol
-        return np.where(np.isclose(self.freqs, freq, atol=atol))[0].tolist()
+        return torch.where(torch.isclose(self.freqs, freq, atol=atol))[0].tolist()
 
     def _pol2ind(self, pol, data=None):
         """
@@ -3325,12 +3325,19 @@ class HDF5Tensor:
     def shape(self):
         return self.hdf5_dataset.shape
 
-    def size(self):
-        return self.hdf5_dataset.size
-
     @property
     def dtype(self):
         return self.hdf5_dataset.dtype
+
+    @property
+    def ndim(self):
+        return self.hdf5_dataset.ndim
+
+    def clone(self):
+        return self[:]
+
+    def size(self):
+        return self.hdf5_dataset.size
 
     def __len__(self):
         return len(self.hdf5_dataset)
@@ -3369,12 +3376,19 @@ class CPU2GPUTensor:
     def shape(self):
         return self.data.shape
 
-    def size(self):
-        return self.data.size
-
     @property
     def dtype(self):
         return self.data.dtype
+
+    @property
+    def ndim(self):
+        return self.data.ndim
+
+    def clone(self):
+        return self[:]
+
+    def size(self):
+        return self.data.size
 
     def __len__(self):
         return len(self.data)
@@ -3428,9 +3442,6 @@ class CatTensor:
         _shape[self.dim] = sum([aten.shape[self.dim] for aten in self.tensor_list])
         return tuple(_shape)
 
-    def size(self):
-        return self.shape
-
     @property
     def dtype(self):
         return self.tensor_list[0].dtype
@@ -3445,6 +3456,16 @@ class CatTensor:
     @device.setter
     def device(self, val):
         self._device = val
+
+    @property
+    def ndim(self):
+        return self.tensor_list[0].ndim
+
+    def clone(self):
+        return self[:]
+
+    def size(self):
+        return self.shape
 
     def __len__(self):
         return self.shape[0]
