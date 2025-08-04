@@ -374,7 +374,7 @@ class WedgeFilter:
         self.filters = filters
         self.filt2bls = filt2bls
         self.inplace = inplace
-        self._bls2idx = None
+        self._bls2idx = {}
         if bls is not None:
             for i, _bls in filt2bls.items():
                 self._bls2idx[i] = [bls.index(bl) for bl in _bls]
