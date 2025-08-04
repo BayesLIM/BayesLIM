@@ -374,11 +374,10 @@ class WedgeFilter:
         self.filters = filters
         self.filt2bls = filt2bls
         self.inplace = inplace
-        self.bls = bls
         self._bls2idx = None
         if bls is not None:
-            for i, bls in filt2bls.items():
-                self._bls2idx[i] = [bls.index(bl) for bl in bls]
+            for i, _bls in filt2bls.items():
+                self._bls2idx[i] = [bls.index(bl) for bl in _bls]
 
     def __call__(self, vd):
         is_VD = isinstance(vd, dataset.VisData)
