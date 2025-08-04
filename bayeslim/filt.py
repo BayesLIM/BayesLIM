@@ -354,7 +354,7 @@ class WedgeFilter:
     A baseline-dependent frequency filter
     (i.e. a wedge filter).
     """
-    def __init__(self, filters, filt2bls, inplace=False):
+    def __init__(self, filters, filt2bls, bls=None, inplace=False):
         """
         Parameters
         ----------
@@ -363,15 +363,22 @@ class WedgeFilter:
         filt2bls : dict
             Dictionary mapping int index in self.filters
             to all the baselines in the input VisData that
-            it will filter. If input is a tensor, the values
-            should be the indices of the input tensor
-            along the Nbls axis that it will filter.
+            it will filter.
+        bls : list, optional
+            List of bls of the input VisData object upon
+            taking a forward pass. Only needed if 
+            input is a tensor and not a VisData.
         inplace : bool, optional
             If True, edit input data inplace.
         """
         self.filters = filters
         self.filt2bls = filt2bls
         self.inplace = inplace
+        self.bls = bls
+        self._bls2idx = None
+        if bls is not None:
+            for i, bls in filt2bls.items():
+                self._bls2idx[i] = [bls.index(bl) for bl in bls]
 
     def __call__(self, vd):
         is_VD = isinstance(vd, dataset.VisData)
@@ -385,7 +392,8 @@ class WedgeFilter:
                 filt = self.filters[i](vout.get_data(bl=bls, squeeze=False))
                 vout.set(bls, filt, arr='data')
             else:
-                vout[:, :, bls] = self.filters[i](vout[:, :, bls])
+                idx = self._bls2idx[i]
+                vout[..., idx, :, :] = self.filters[i](vout[..., idx, :, :])
 
         return vout
 
