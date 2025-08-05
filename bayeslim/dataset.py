@@ -736,7 +736,7 @@ class VisData(TensorData):
             if freq.ndim == 1:
                 iterable = True
         if iterable:
-            return torch.cat([self._freq2ind(f) for f in freq]).tolist()
+            return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
         atol = atol if atol is not None else self.atol
         return torch.where(torch.isclose(self.freqs, freq, atol=atol))[0].tolist()
 
