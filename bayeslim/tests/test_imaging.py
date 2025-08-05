@@ -48,10 +48,10 @@ def test_imaging():
 	assert len(VM.A) == len(VM.times)
 
 	# compute full P
-	P = VM.compute_P(diag=False)
+	Pfull = VM.compute_P(contract=None)
 
 	# assert that P is diagonally normalized
-	assert torch.isclose(P.diagonal(dim1=1, dim2=2), torch.tensor(1.0), atol=1e-5, rtol=1e-5).all()
+	assert torch.isclose(Pfull.diagonal(dim1=1, dim2=2), torch.tensor(1.0), atol=1e-5, rtol=1e-5).all()
 
 	# make maps into a point source
 	idx = torch.argmin((VM.ra-40)**2 + (VM.dec--30.72)**2).item()
@@ -63,23 +63,26 @@ def test_imaging():
 	assert torch.isclose(Pm[:, idx], maps[:, idx], atol=1e-5, rtol=1e-5).all()
 
 	# get P@m
-	Pam = torch.einsum('ijk,ik->ij', P, maps)
+	Pam = torch.einsum('ijk,ik->ij', Pfull, maps)
 
 	# assert Pm and Pam are the same
 	assert torch.isclose(Pm, Pam, atol=1e-5, rtol=1e-5).all()
 
 	# test Pdiag vs P.diag()
-	Pdiag = VM.compute_P(diag=True)
-	assert torch.isclose(P.diagonal(dim1=1, dim2=2), Pdiag, atol=1e-5, rtol=1e-5).all()
+	Pdiag = VM.compute_P(contract='diag')
+	assert torch.isclose(Pfull.diagonal(dim1=1, dim2=2), Pdiag, atol=1e-5, rtol=1e-5).all()
+
+	# now test rowsum normalization
+	Prow = VM.compute_P(contract='rowsum')
+	assert torch.isclose(Pfull.sum(-1), Prow, atol=1e-5, rtol=1e-5).all()
 
 	# test with a different normalization scheme
 	VM.set_normalization('Aw', clip=1e-8)
 
 	# get Pdiag and test against pre-computed expectation
-	Pdiag = VM.compute_P(diag=True)
+	Pdiag = VM.compute_P(contract='diag')
 	assert torch.isclose(Pdiag.max(dim=1).values, torch.tensor(0.8), atol=1e-1).all()
 
-	# test w/ icov...
 
 
 def test_Am():

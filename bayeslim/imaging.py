@@ -358,7 +358,7 @@ class VisMapper:
 
 		return w
 
-	def make_map(self, vis=None, return_P=True, diag=True):
+	def make_map(self, vis=None, return_P=True, contract='diag'):
 		"""
 		Make maps for each time integration, sum them, and normalize them.
 
@@ -371,9 +371,10 @@ class VisMapper:
 			with identical weights)
 		return_P : bool, optional
 			If True, compute and return PSF matrix.
-		diag : bool, optional
-			If return_P, only compute the diagonal
-			component.
+		contract : str, optional
+			If return_P, default ('diag') is to return (Npix,) PSF matrix diag.
+			If specified ['diag', 'rowsum'], return (Npix,)
+			matrix of P.diag() or P.sum(1). None yields (Npix, Npix) matrix.
 
 		Returns
 		-------
@@ -406,7 +407,7 @@ class VisMapper:
 		# init the P matrix
 		P = None
 		if return_P:
-			if diag:
+			if contract is not None:
 				P = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 			else:
 				P = torch.zeros(self.Nfreqs, self.Npix, self.Npix, device=self.device)
@@ -430,10 +431,10 @@ class VisMapper:
 
 			if return_P:
 				# get P for this patch of sky
-				_P = compute_P(A, w, diag=diag)
+				_P = compute_P(A, w, contract=contract)
 
 				# insert into P
-				if diag:
+				if contract is not None:
 					P[:, cut] += _P
 				else:
 					P[:, cut[:, None], cut[None, :]] += _P
@@ -456,7 +457,7 @@ class VisMapper:
 
 		if return_P:
 			# apply normalization
-			if diag:
+			if contract is not None:
 				# (Nfreqs, Npix) * (Nfreqs, Npix)
 				P *= self.D
 
@@ -610,7 +611,7 @@ class VisMapper:
 
 		return Pm
 
-	def compute_P(self, D=None, diag=True):
+	def compute_P(self, D=None, contract='diag'):
 		"""
 		Compute the full P matrix across all sky pixels, iterating
 		over time integrations and summing patch P matrices.
@@ -620,8 +621,10 @@ class VisMapper:
 		D : tensor, optional
 			Pre-computed diagonal normalization tensor
 			of shape (Nfreqs, Npix).
-		diag : bool, optional
-			If True, only compute the diagonal of P.
+		contract : str, optional
+			Default (None) is to return (Npix, Npix) PSF matrix.
+			If specified ['diag', 'rowsum'], return (Npix,)
+			matrix of P.diag() or P.sum(1)
 
 		Returns
 		-------
@@ -629,11 +632,11 @@ class VisMapper:
 			PSF matrix of shape (Nfreqs, Npix, [Npix]) 
 		"""
 		# init the P matrix
-		if diag:
+		if contract is not None:
 			P = torch.zeros(self.Nfreqs, self.Npix, device=self.device)
 		else:
 			P = torch.zeros(self.Nfreqs, self.Npix, self.Npix, device=self.device)
-		
+
 		# init summed weights
 		if D is None:
 			# init weights
@@ -656,10 +659,10 @@ class VisMapper:
 			w = self.build_w(i)
 
 			# get P for this patch of sky
-			_P = compute_P(A, w, diag=diag)
+			_P = compute_P(A, w, contract=contract)
 
 			# insert into P
-			if diag:
+			if contract is not None:
 				P[:, cut] += _P
 			else:
 				P[:, cut[:, None], cut[None, :]] += _P
@@ -678,7 +681,7 @@ class VisMapper:
 			D = 1 / Aw.clip(self.clip)
 
 		# apply normalization
-		if diag:
+		if contract is not None:
 			# (Nfreqs, Npix) * (Nfreqs, Npix)
 			P *= D
 
@@ -752,7 +755,7 @@ def deconvolve_map(m, P, pinv=True, rcond=1e-15, hermitian=True):
 
 def compute_Am(A, m):
 	"""
-	Compute the matrix vector product A^* @ m
+	Compute the matrix vector product A.conj @ m
 	where A is the imaging matrix and m
 	are the set of maps. This is also
 	the RIME forward transform.
@@ -777,7 +780,7 @@ def compute_Pm(A, w, m, D=None):
 	Compute the matrix vector product P @ m
 	where P is the PSF matrix and m are set of maps.
 
-		P m = D A^T w (A m)
+		P m = D A^T w (A.conj m)
 
 	where D is a diagonal matrix.
 
@@ -813,12 +816,12 @@ def compute_Pm(A, w, m, D=None):
 	return Pm.real
 
 
-def compute_P(A, w, D=None, diag=True):
+def compute_P(A, w, D=None, contract=None):
 	"""
 	Compute the PSF matrix given the A matrix,
 	a weights vector and a pre-computed normalization.
 
-		P = D A^T w A
+		P = D A^T w A.conj
 
 	Warning: this tensor can get REALLY BIG.
 
@@ -830,28 +833,31 @@ def compute_P(A, w, D=None, diag=True):
 		Visibility weight vector of shape (Nbls, Nfreqs)
 	D : tensor, optional
 		Normalization tensor of shape (Nfreqs, Npix)
-	diag : bool, optional
-		If True, only compute the diagonal of P.
+	contract : str, optional
+		Default (None) is to return (Npix, Npix) PSF matrix.
+		If specified ['diag', 'rowsum'], return (Npix,)
+		matrix of P.diag() or P.sum(1)
 
 	Returns
 	-------
 	P : tensor
 		The PSF matrix of shape (Nfreqs, Npix, [Npix]),
 	"""
-	if diag:
+	if contract is None:
+		# full outer product
+		P = torch.einsum("vfp,vfq->fpq", A, w[..., None] * A.conj()).real
+	elif contract == 'diag':
 		# compute diagonal
 		P = (w[..., None] * A.abs().pow(2)).sum(0).real
-
-	else:
-		# compute full matrix
-		P = torch.einsum("vfp,vfq->fpq", A, w[..., None] * A.conj()).real
+	elif contract == 'rowsum':
+		P = torch.einsum("vfp,vf,vfq->fp", A, w, A.conj()).real
 
 	# normalize it
 	if D is not None:
-		if diag:
-			P *= D
-		else:
+		if contract is None:
 			P *= D[:, :, None]
+		else:
+			P *= D
 
 	return P.real
 
