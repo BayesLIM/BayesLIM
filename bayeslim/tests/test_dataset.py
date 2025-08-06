@@ -53,8 +53,8 @@ def test_visdata_get(vd=None):
 	data = vd.get_data(squeeze=False)
 	assert data.shape == vd.data.shape
 
-	data = vd.get_data(time_inds=range(3), freq_inds=range(4))
-	assert data.shape == (vd.Nbls, 3, 4)
+	data = vd.get_data(time_inds=range(2), freq_inds=range(3))
+	assert data.shape == (vd.Nbls, 2, 3)
 
 	# copy
 	vdc = vd.copy()
@@ -101,6 +101,11 @@ def test_visdata_get_lazy_load():
 		assert lazy_cat_vd.data[:].shape == cat_vd.data.shape
 		assert (lazy_cat_vd.get_data() - cat_vd.get_data()).abs().max() < 1e-10
 
+		### now try SelectedHDF5Tensor
+		vd.read_hdf5(tmpfile, time_inds=range(0, 3), freq_inds=range(2, 10, 2), lazy_load=True)
+		assert vd.data[:].shape == (1, 1, vd.Nbls, 3, 4)
+		test_visdata_get(vd)
+
 
 def test_visdata_get_lazy_cat():
 	# test concatenation of multiple VisData upon data call
@@ -133,7 +138,7 @@ def test_visdata_get_cpu2gpu():
 	vd = setup_VisData()
 
 	# wrap with CPU2GPU
-	vd = ba.dataset.CPU2GPU_VisData(vd, 'cpu', pin_memory=False)
+	vd.data = ba.dataset.CPU2GPUTensor(vd.data, 'cpu', pin_memory=False)
 	test_visdata_get(vd)
 
 

@@ -2201,6 +2201,82 @@ def _tensor_concat(tensors, dim=0, interleave=False):
     return out
 
 
+def index2index(old_idx, new_idx):
+    """
+    Take a pre-existing indexing, and index
+    on top of it.
+
+    Parameters
+    ----------
+    old_idx : slice, list, Tensor
+    new_idx : slice, list, Tensor
+
+    Returns
+    -------
+    out_idx : slice, list Tensor
+
+    Notes
+    -----
+    old_idx = slice(10, 20)
+    new_idx = slice(0, 3)
+    out_idx -> slice(10, 13)
+    """
+    if isinstance(old_idx, slice):
+        if old_idx.start is None:
+            # empty slice
+            out_idx = new_idx
+
+        else:
+            step = old_idx.step if old_idx.step is not None else 1
+            old_idx = range(old_idx.start, old_idx.stop, step)
+
+            if isinstance(new_idx, slice):
+                out_idx = old_idx[new_idx]
+                out_idx = slice(out_idx.start, out_idx.stop, out_idx.step)
+
+            else:
+                out_idx = np.asarray(old_idx)[new_idx].tolist()
+
+    elif isinstance(old_idx, list):
+        if isinstance(new_idx, slice):
+            out_idx = old_idx[new_idx]
+
+        else:
+            out_idx = np.asarray(old_idx)[new_idx].tolist()
+
+    else:
+        out_idx = old_idx[new_idx]
+
+    return out_idx
+
+
+def index2len(idx, size):
+    """
+    Given a tensor index, return the length
+    of the indexed tensor. If index is
+    slice(None), return size
+
+    Parameters
+    ----------
+    idx : slice, list, Tensor
+        tensor indexing array
+    size : int
+        Size of unsliced tensor
+
+    Returns
+    -------
+    int
+    """
+    if isinstance(idx, slice):
+        if idx.start is None:
+            return size
+        step = idx.step if idx.step is not None else 1
+        return (idx.stop - idx.start) // step
+
+    else:
+        return len(idx)
+
+
 class AntposDict:
     """
     A dictionary for antenna positions

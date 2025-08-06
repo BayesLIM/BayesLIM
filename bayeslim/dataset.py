@@ -582,6 +582,7 @@ class VisData(TensorData):
             if isinstance(data, torch.Tensor):
                 if data.requires_grad and detach:
                     data = data.detach()
+            if data is not None:
                 data = data.clone()
 
         if copymeta:
@@ -1712,7 +1713,6 @@ class VisData(TensorData):
         f = h5py.File(fname, mode='r')  # safe to keep file open in mode='r'
         if lazy_load:
             file = f
-            assert bl == times == freqs == pol == time_inds == freq_inds == None
             read_data = False
         else:
             file = None
@@ -1755,13 +1755,17 @@ class VisData(TensorData):
                 icov = torch.as_tensor(icov, device=self.device)
 
         elif lazy_load:
-            data = HDF5Tensor(f['data'], non_blocking=non_blocking)
+            # get indexing
+            idx = self.get_inds(bl=bl, times=times, freqs=freqs, pol=pol,
+                                bl_inds=bl_inds, time_inds=time_inds, freq_inds=freq_inds)
+            # get data arrays
+            data = make_HDF5Tensor(f['data'], idx=idx, non_blocking=non_blocking)
             if 'flags' in f and not suppress_nonessential:
-                flags = HDF5Tensor(f['flags'], non_blocking=non_blocking)
+                flags = make_HDF5Tensor(f['flags'], idx=idx, non_blocking=non_blocking)
             if 'cov' in f and not suppress_nonessential:
-                cov = HDF5Tensor(f['cov'], non_blocking=non_blocking)
+                cov = make_HDF5Tensor(f['cov'], idx=idx, non_blocking=non_blocking)
             if 'icov' in f:
-                icov = HDF5Tensor(f['icov'], non_blocking=non_blocking)
+                icov = make_HDF5Tensor(f['icov'], idx=idx, non_blocking=non_blocking)
 
         # downselect metadata to selection
         self.select(bl=bl, times=times, freqs=freqs, pol=pol,
@@ -2338,7 +2342,7 @@ class MapData(TensorData):
 
     def read_hdf5(self, fname, read_data=True, suppress_nonessential=False, **kwargs):
         """
-        Read HDF5 VisData object
+        Read HDF5 MapData object
 
         Parameters
         ----------
@@ -3323,7 +3327,7 @@ class HDF5Tensor:
 
     @property
     def shape(self):
-        return self.hdf5_dataset.shape
+        return torch.Size(self.hdf5_dataset.shape)
 
     @property
     def dtype(self):
@@ -3334,10 +3338,18 @@ class HDF5Tensor:
         return self.hdf5_dataset.ndim
 
     def clone(self):
-        return self[:]
+        return HDF5Tensor(
+            self.hdf5_dataset,
+            dtype=self.out_dtype,
+            device=self.device,
+            non_blocking=self.non_blocking
+        )
 
     def size(self):
-        return self.hdf5_dataset.size
+        return self.shape
+
+    def numel(self):
+        return self.shape.numel()
 
     def __len__(self):
         return len(self.hdf5_dataset)
@@ -3350,21 +3362,92 @@ class HDF5Tensor:
             self.out_dtype = device
 
 
+class SelectedHDF5Tensor(HDF5Tensor):
+    """
+    A down-selected HDF5Tensor
+    """
+    def __init__(self, idx, *args, **kwargs):
+        """
+        Parameters
+        ----------
+        idx : list
+            List of tensor indexing for all
+            dimensions in self.data
+        """
+        super().__init__(*args, **kwargs)
+        self._idx = idx
+        self._shape = torch.Size(
+            [utils.index2len(i, s) for i, s in zip(idx, super().shape)]
+        )
+
+    def __getitem__(self, idx):
+        # index the index
+        if idx == slice(None):
+            idx = self._idx
+        else:
+            idx = tuple(utils.index2index(_i, i) for _i, i in zip(self._idx, idx))
+        return super().__getitem__(idx)
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def __len__(self):
+        return self.shape[0]
+
+    def clone(self):
+        return SelectedHDF5Tensor(
+            self._idx,
+            self.hdf5_dataset,
+            dtype=self.out_dtype,
+            device=self.device,
+            non_blocking=self.non_blocking
+        )
+
+
+def make_HDF5Tensor(*args, idx=None, **kwargs):
+    """
+    Create an HDF5Tensor or SelectedHDF5Tensor,
+    see their docstring for details.
+
+    Parameters
+    ----------
+    idx : list
+        If provided, return SelectedHDF5Tensor,
+        otherwise return HDF5Tensor
+    """
+    selected = False
+    if idx is not None:
+        # check if idx full of empty slices
+        # which is the same as passing None
+        selected = not all([i == slice(None) for i in idx])
+        
+    if selected:
+        return SelectedHDF5Tensor(idx, *args, **kwargs)
+    else:
+        return HDF5Tensor(*args, **kwargs)
+
+
 class CPU2GPUTensor:
     """
     Copy and move pytorch Tensor from CPU to GPU upon call.
     """
-    def __init__(self, data, device, pin_memory=True, non_blocking=True):
+    def __init__(self, data, device, pin_memory=False, non_blocking=True):
+        if isinstance(data, CPU2GPUTensor):
+            data = data.data
         self.data = data
         self.device = device
         self.pin_memory = pin_memory
         self.non_blocking = non_blocking
-        if pin_memory:
+        if pin_memory and not data.is_pinned():
             self.data = self.data.pin_memory()
 
     def __getitem__(self, idx):
         # transfer data to device and return
         return self.data[idx].to(self.device, non_blocking=self.non_blocking)
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
 
     def __repr__(self):
         return self.data.__repr__()
@@ -3385,10 +3468,18 @@ class CPU2GPUTensor:
         return self.data.ndim
 
     def clone(self):
-        return self[:]
+        return CPU2GPUTensor(
+            self.data.clone(),
+            self.device,
+            pin_memory=self.pin_memory,
+            non_blocking=self.non_blocking
+        )
 
     def size(self):
         return self.data.size
+
+    def numel(self):
+        return self.data.numel()
 
     def __len__(self):
         return len(self.data)
@@ -3440,7 +3531,7 @@ class CatTensor:
     def shape(self):
         _shape = list(self.tensor_list[0].shape)
         _shape[self.dim] = sum([aten.shape[self.dim] for aten in self.tensor_list])
-        return tuple(_shape)
+        return torch.Size(tuple(_shape))
 
     @property
     def dtype(self):
@@ -3462,10 +3553,18 @@ class CatTensor:
         return self.tensor_list[0].ndim
 
     def clone(self):
-        return self[:]
+        return CatTensor(
+            elf.tensor_list,
+            self.dim,
+            device=self.device,
+            non_blocking=self.non_blocking,
+        )
 
     def size(self):
         return self.shape
+
+    def numel(self):
+        return self.shape.numel()
 
     def __len__(self):
         return self.shape[0]
