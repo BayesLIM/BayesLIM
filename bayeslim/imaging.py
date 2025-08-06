@@ -38,11 +38,11 @@ class VisMapper:
 	-----
 	- Currently only supports single-pol imaging
 	"""
-	def __init__(self, vis, ra, dec, beam=None, fov=180, dtype=None, cache_A=False, **kwargs):
+	def __init__(self, vd, ra, dec, beam=None, fov=180, dtype=None, cache_A=False, **kwargs):
 		"""
 		Parameters
 		----------
-		vis : VisData object
+		vd : VisData object
 			Contains metadata for self.build_A(), and visibility
 			data for self.build_v()
 		ra : array
@@ -62,13 +62,12 @@ class VisMapper:
 			If True, save the A matrices in self.A
 		kwargs : additional kwargs for ArrayModel()
 		"""
-		## TODO: add on-the-fly vis loading
-		self.vis = vis
-		self.telescope = vis.telescope
+		self.vd = vd.copy(copydata=False, copymeta=True)
+		self.telescope = self.vd.telescope
 		self.array = telescope_model.ArrayModel(
-			vis.antpos,
-			vis.freqs,
-			device=vis.data.device,
+			self.vd.antpos,
+			self.vd.freqs,
+			device=self.vd.data.device,
 			skip_reds=True,
 			**kwargs
 		)
@@ -76,22 +75,22 @@ class VisMapper:
 		self.dec = dec
 		self.Npix = len(ra)
 
-		self.device = vis.data.device
+		self.device = self.vd.data.device
 		self.dtype = dtype
 
 		self.beam = beam
 		self.fov = beam.fov if beam is not None else fov
 
 		# set freq indices
-		self._freqs = vis.freqs
+		self._freqs = self.vd.freqs
 		self.set_freq_inds()
 
 		# set time indices
-		self._times = np.asarray(vis.times.cpu())  # this must be numpy array for caching purposes
+		self._times = np.asarray(self.vd.times.cpu())  # this must be numpy array for caching purposes
 		self.set_time_inds()
 
 		# set bl indices
-		self._blnums = vis.blnums
+		self._blnums = self.vd.blnums
 		self.set_bl_inds()
 
 		self.cache_A = cache_A
@@ -143,10 +142,10 @@ class VisMapper:
 		Set times indexing. This works slightly different
 		than freq_inds or bl_inds, b/c there are two sets
 		of time_inds. self.time_inds tracks the indices
-		of self.vis.times that we want to image. Whereas
+		of self.vd.times that we want to image. Whereas
 		the "time_ind" in self.build_A() and self.build_v()
 		and in the cache self.A tracks the indices of
-		self.vis.times[self.time_inds].
+		self.vd.times[self.time_inds].
 
 		Parameters
 		----------
@@ -239,8 +238,8 @@ class VisMapper:
 				'A2w' : D = 1 / w @ |A|^2]
 			Default ('A2w') is standard least squares.
 		icov : tensor, optional
-			Visibility weights to use instead of self.vis.icov,
-			must match self.vis.icov shape.
+			Visibility weights to use instead of self.vd.icov,
+			must match self.vd.icov shape.
 		"""
 		assert method in ['w', 'Aw', 'A2w']
 		self.method = method
@@ -297,26 +296,26 @@ class VisMapper:
 		return A, cut
 
 	@torch.no_grad()
-	def build_v(self, time_ind, vis=None):
+	def build_v(self, time_ind, vd=None):
 		"""
 		Parameters
 		----------
 		time_ind : int
 			Index of self.times to build visibility vector
-		vis : VisData or list
-			VisData to use instead of self.vis
+		vd : VisData or list
+			VisData to use instead of self.vd
 
 		Returns
 		-------
 		v : tensor
 			Visibility vector of shape (..., Nbls, Nfreqs)
 		"""
-		vis = self.vis if vis is None else vis
+		vd = self.vd if vd is None else vd
 		time_ind = self.time_inds[time_ind]
 		time_ind = slice(time_ind, time_ind+1)
 		# (Nvis, Nbls, Nfreqs) or (Nbls, Nfreqs)
 		v = get_visdata(
-			vis,
+			vd,
 			bl_inds=self.bl_inds,
 			time_inds=time_ind,
 			freq_inds=self.freq_inds,
@@ -329,7 +328,7 @@ class VisMapper:
 	def build_w(self, time_ind):
 		"""
 		Build weight tensor. First check self.icov,
-		if None check self.vis.icov, if None use 1.
+		if None check self.vd.icov, if None use 1.
 
 		Parameters
 		----------
@@ -341,12 +340,12 @@ class VisMapper:
 		w : tensor
 			Visibility weights of shape (Nbls, Nfreqs)
 		"""
-		icov = self.icov if self.icov is not None else self.vis.icov
+		icov = self.icov if self.icov is not None else self.vd.icov
 		time_ind = self.time_inds[time_ind]
 
 		# get weights
 		if icov is not None:
-			w = self.vis.get_icov(
+			w = self.vd.get_icov(
 				bl_inds=self.bl_inds,
 				time_inds=time_ind,
 				icov=icov,
@@ -358,15 +357,15 @@ class VisMapper:
 
 		return w
 
-	def make_map(self, vis=None, return_P=True, contract='diag'):
+	def make_map(self, vd=None, return_P=True, contract='diag'):
 		"""
 		Make maps for each time integration, sum them, and normalize them.
 
 		Parameters
 		----------
-		vis : VisData or list
-			Visibility data to image instead of self.vis.
-			Must match self.vis shape and metadata.
+		vd : VisData or list
+			Visibility data to image instead of self.vd.
+			Must match self.vd shape and metadata.
 			Can also pass a list of VisData to image (but
 			with identical weights)
 		return_P : bool, optional
@@ -384,17 +383,17 @@ class VisMapper:
 			Only if compute_P = True, otherwise None
 		"""
 		assert self.method is not None, "First run set_normalization()"
-		vis = self.vis if vis is None else vis
+		vd = self.vd if vd is None else vd
 		Nmaps = 1
-		if isinstance(vis, list):
+		if isinstance(vd, list):
 			# feeding list of visdata for multiple maps
-			Nmaps = len(vis)
-		elif isinstance(vis, torch.Tensor) and vis.ndim > 5:
-			Nmaps = len(vis)
+			Nmaps = len(vd)
+		elif isinstance(vd, torch.Tensor) and vd.ndim > 5:
+			Nmaps = len(vd)
 
 		# init maps
 		maps = torch.zeros(Nmaps, self.Nfreqs, self.Npix, device=self.device)
-		if isinstance(vis, VisData):
+		if isinstance(vd, VisData):
 			# get rid of Nmaps dim
 			maps = maps[0]
 
@@ -423,7 +422,7 @@ class VisMapper:
 					self.A[i] = (A, cut)
 
 			# build v, w
-			v = self.build_v(i, vis=vis)
+			v = self.build_v(i, vd=vd)
 			w = self.build_w(i)
 
 			# make map
@@ -710,7 +709,7 @@ class VisMapper:
 		if self.beam is not None:
 			self.beam.push(device)
 		self.array.push(device)
-		self.vis.push(device)
+		self.vd.push(device)
 		self.telescope.push(device)
 		self.blvecs = utils.push(self.blvecs, device)
 
