@@ -2025,7 +2025,7 @@ class SFBModel:
             g = self.gln[_l]
             idx = self.alm_idx[_l]
             fit, D = linalg.least_squares(g, y[..., idx], dim=-2, pretran=True, **kwargs)
-            params[..., self.params_idx[_l]] = fit.ravel()
+            params[..., self.params_idx[_l]] = fit.reshape(-1, fit.shape[-2:].numel())
 
         return params
 
