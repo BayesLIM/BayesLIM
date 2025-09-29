@@ -40,17 +40,20 @@ For installation, see <https://bayeslim.readthedocs.io/en/latest/install.html>.
 ```
 @ARTICLE{Kern2025,
        author = {{Kern}, Nicholas},
-        title = "{A Differentiable, End-to-End Forward Model for 21 cm Cosmology: Estimating the Foreground, Instrument, and Signal Joint Posterior}",
-      journal = {arXiv e-prints},
-     keywords = {Astrophysics - Cosmology and Nongalactic Astrophysics, Astrophysics - Instrumentation and Methods for Astrophysics},
+        title = "{A differentiable, end-to-end forward model for 21 cm cosmology: estimating the foreground, instrument, and signal joint posterior}",
+      journal = {\mnras},
+     keywords = {methods: data analysis, techniques: interferometric, (cosmology:) dark ages, reionization, first stars, Cosmology and Nongalactic Astrophysics, Instrumentation and Methods for Astrophysics},
          year = 2025,
-        month = apr,
-          eid = {arXiv:2504.07090},
-        pages = {arXiv:2504.07090},
-          doi = {10.48550/arXiv.2504.07090},
+        month = aug,
+       volume = {541},
+       number = {2},
+        pages = {687-713},
+          doi = {10.1093/mnras/staf1007},
 archivePrefix = {arXiv},
        eprint = {2504.07090},
  primaryClass = {astro-ph.CO},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025MNRAS.541..687K},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
 }
 ```
 
