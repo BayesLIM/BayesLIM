@@ -544,7 +544,7 @@ class PixelSkyResponse:
     def __init__(self, freqs, comp_params=False, spatial_mode='pixel',
                  freq_mode='channel', device=None, transform_order=0,
                  cosmo=None, spatial_kwargs={}, freq_kwargs={}, log=False,
-                 real_output=True, abs_output=True, LM=None, sky0=None):
+                 real_output=True, abs_output=False, LM=None, sky0=None):
         """
         Parameters
         ----------
@@ -583,6 +583,8 @@ class PixelSkyResponse:
             'linear' : 
                 kwargs to LinearModel()
         freq_kwargs : dict, optional
+            'LM': LinearModel object
+            or
             Kwargs used to generate freq transform matrix
             for 'linear' freq_mode, see linear_model.gen_linear_A()
             gln : dict, dictionary of gln modes for bessel mode
@@ -639,12 +641,18 @@ class PixelSkyResponse:
             self.f0 = freq_kwargs['f0']
 
         elif self.freq_mode == 'linear':
-            fkwgs = copy.deepcopy(freq_kwargs)
-            assert 'linear_mode' in fkwgs, "must specify linear_mode"
-            linear_mode = fkwgs.pop('linear_mode')
-            fkwgs['x'] = self.freqs
-            fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
-            self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device, **fkwgs)
+            # check for pre-built LM
+            if 'LM' in freq_kwargs:
+                self.freq_LM = freq_kwargs['LM']
+
+            # otherwise build it now
+            else:
+                fkwgs = copy.deepcopy(freq_kwargs)
+                assert 'linear_mode' in fkwgs, "must specify linear_mode"
+                linear_mode = fkwgs.pop('linear_mode')
+                fkwgs['x'] = self.freqs
+                fkwgs['dtype'] = utils._cfloat() if self.comp_params else utils._float()
+                self.freq_LM = linear_model.LinearModel(linear_mode, dim=-2, device=self.device, **fkwgs)
 
         elif self.freq_mode == 'bessel':
             assert self.spatial_transform == 'alm'
