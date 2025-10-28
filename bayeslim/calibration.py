@@ -2252,6 +2252,130 @@ class CouplingInflate:
         self.zeros = utils.push(self.zeros, device)
 
 
+class PartialRedVisInflate(utils.Module):
+    """
+    Mirror of RedVisInflate but with
+    partial non-redundancies.
+
+    Example of 2 redundant types, with
+    3 physical baselines per type, and 2
+    redundant models per type.
+
+       d    =       A             m
+
+    | 1,2 |   | x, x, 0, 0 |
+    | 2,3 |   | x, x, 0, 0 |   | V_a |
+    | 3,4 |   | x, x, 0, 0 |   | V_b |
+    | 4,7 | = | 0, 0, x, x | * | V_c |
+    | 5,8 |   | 0, 0, x, x |   | V_d |
+    | 6,9 |   | 0, 0, x, x |
+
+    The params tensor here are the non-zero components of A.
+    """
+    def __init__(self, bl2red, new_bls, params=None, p0=None, R=None, parameter=True):
+        """
+        Parameters
+        ----------
+        bl2red : dict
+            Dictionary with (1, 2): [0, 1, 2] key: value
+            structure, where key is a baseline tuple in new_bls
+            and value is the indices of the input redundant
+            visibility tensor along its Nredbls axis that sum
+            to form the baseline in the output visibility.
+        new_bls : list
+            new baseline tuples of inflated data.
+        params : tensor, optional
+            Coefficients mapping redvis to non-redvis,
+            of shape (Nredbls * Nbls,). Default is 1.
+        p0 : tensor
+            Starting initialization of params.
+        R : callable
+            Response function.
+        """
+        super().__init__()
+
+        # setup indexing of params
+        idx = [[], []]
+        Nred = []
+        for i, bl in enumerate(new_bls):
+            red = bl2red[bl]
+            if isinstance(red, int):
+                red = [red]
+            idx[0].extend(np.ones(len(red), dtype=int) * i)
+            idx[1].extend(red)
+            Nred.extend([len(red)] * len(red))
+        self.idx = torch.as_tensor(idx)
+        self.Nred = torch.as_tensor(Nred)
+        self.Ashape = (len(new_bls), self.idx[1].max().item() + 1)
+
+        if params is None:
+            params = torch.ones(self.idx.shape[1]) / self.Nred
+        if R is None:
+            R = lambda x: x
+        self.R = R
+        self.new_bls = new_bls
+        self.device = None
+
+        self.params = params
+        self.p0 = p0
+        if parameter:
+            self.params = torch.nn.Parameter(self.params)
+
+        # TODO: params should be a sparse_csr_tensor
+        # but its currently beta in torch v2.2.1
+        # and still returns a dense grad
+
+    def _buildA(self, params, device=None, dtype=None):
+        # fill sparse A matrix
+        A = torch.zeros(self.Ashape, dtype=dtype, device=device)
+        A[*self.idx] = params.to(A.dtype)
+
+        return A
+
+    def forward(self, vd, prior_cache=None, **kwargs):
+        """
+        Forward a partial redundant visibility
+        basis into an inflated basis, multiplied
+        by a mixing matrix
+        """
+        # get mixing matrix
+        if self.p0 is not None:
+            params = self.params + self.p0
+        else:
+            params = self.params
+        params = self.R(params)
+
+        # evaluate priors
+        self.eval_prior(prior_cache, inp_params=self.params, out_params=params)
+
+        # fill sparse A matrix
+        A = self._buildA(params, device=params.device, dtype=vd.data.dtype)
+
+        # dot mixing matrix into redvis
+        data = torch.einsum("...btf,pb->...ptf", vd.data, A)
+
+        # setup new object
+        new_vis = dataset.VisData()
+        new_vis.setup_meta(telescope=vd.telescope, antpos=vd.antpos)
+        new_vis.setup_data(self.new_bls, vd.times, vd.freqs, pol=vd.pol,
+                           data=data, history=vd.history)
+
+        return new_vis
+
+    def push(self, device):
+        """
+        Push to device
+        """
+        dtype = isinstance(device, torch.dtype)
+        self.params = utils.push(self.params, device)
+        self.p0 = utils.push(self.p0, device)
+        if not dtype:
+            self.idx = utils.push(self.idx, device)
+            self.Nred = utils.push(self.Nred, device)
+            self.device = device
+
+
+
 def apply_cal(vis, bls, gains, ants, cal_2pol=False, cov=None,
               vis_type='com', undo=False, inplace=False):
     """

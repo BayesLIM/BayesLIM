@@ -398,3 +398,50 @@ def test_VisModel():
 	assert vd2._blnums._arr_hash in vis_mdl.cache_bidx
 
 
+def test_PartialRedVisInflate():
+	# setup data
+	vd = setup_VisData()
+	red_info = ba.telescope_model.build_reds(vd.antpos, bls=vd.bls)
+	vd_red = vd.bl_average(red_info[0], inplace=False)
+	vd = vd_red.inflate_by_redundancy() # make sure the data are actually redundant
+
+	## create purely redundant mapping
+	model = ba.calibration.PartialRedVisInflate(red_info[2], vd.bls, parameter=False)
+	A = model._buildA(model.params)
+	vd_inf = model(vd_red)
+
+	assert A.sum(1).isclose(torch.tensor(1.0)).all()
+	assert vd.bls == vd_inf.bls
+	assert vd.data.shape == vd_inf.data.shape
+	assert (vd.data - vd_inf.data).abs().max() < 1e-10
+
+	## create partial redundant mapping (2 red bls per red group)
+	vd = setup_VisData()
+	vd_red = vd.bl_average(red_info[0], inplace=False)
+	vd = vd_red.inflate_by_redundancy() # make sure the data are actually redundant
+
+	# built new bl2red mapping
+	bl2red = {}
+	k = 0
+	reds = []
+	for i, red in enumerate(red_info[0]):
+		reds.append([red[0]])
+		if len(red) > 1:
+			reds.append([red[1]])
+		for bl in red:
+			bl2red[bl] = np.arange(k, k+len(red[:2]))
+		k += len(red[:2])
+
+	# get red data and its inflated data
+	vd_red = vd.bl_average(reds, inplace=False)
+	vd = vd_red.inflate_by_redundancy()
+
+	model = ba.calibration.PartialRedVisInflate(bl2red, vd.bls, parameter=False)
+	A = model._buildA(model.params)
+	vd_inf = model(vd_red)
+
+	assert A.sum(1).isclose(torch.tensor(1.0)).all()
+	assert vd.bls == vd_inf.bls
+	assert vd.data.shape == vd_inf.data.shape
+	assert (vd.data - vd_inf.data).abs().max() < 1e-10
+
