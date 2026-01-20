@@ -26,7 +26,7 @@ BayesLIM seeks to unlock the statistical power of next-generation LIM cosmology 
 
 ## Installation
 
-See the [installation instructions](install.md) to get running.
+See the [installation instructions](install.md) to get running. The codebase can be found on [github](https://github.com/BayesLIM/BayesLIM).
 
 
 ## Table of Contents
@@ -47,7 +47,7 @@ Nicholas Kern
 
 ## Citation
 
-[Kern 2025, MNRAS 541 687K](https://arxiv.org/abs/2504.07090)
+[Kern 2025, MNRAS 541 687K (arxiv:2504.07090)](https://arxiv.org/abs/2504.07090)
 ```
 @ARTICLE{Kern2025,
        author = {{Kern}, Nicholas},
