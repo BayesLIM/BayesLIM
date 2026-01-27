@@ -2415,6 +2415,9 @@ class PartialRedVisInflate(utils.Module):
         if not dtype:
             self.idx = utils.push(self.idx, device)
             self.Nred = utils.push(self.Nred, device)
+            if self.use_csr:
+                self._crow_indices = utils.push(self._crow_indices, device)
+                self._col_indices = utils.push(self._col_indices, device)
             self.device = device
 
 
