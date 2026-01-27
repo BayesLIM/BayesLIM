@@ -2255,7 +2255,8 @@ class CouplingInflate:
 class PartialRedVisInflate(utils.Module):
     """
     Mirror of RedVisInflate but with
-    partial non-redundancies.
+    partial non-redundancies and learnable
+    coefficients.
 
     Example of 2 redundant types, with
     3 physical baselines per type, and 2
@@ -2272,7 +2273,7 @@ class PartialRedVisInflate(utils.Module):
 
     The params tensor here are the non-zero components of A.
     """
-    def __init__(self, bl2red, new_bls, params=None, p0=None, R=None, parameter=True):
+    def __init__(self, bl2red, new_bls, params=None, p0=None, R=None, parameter=True, use_csr=True):
         """
         Parameters
         ----------
@@ -2291,6 +2292,11 @@ class PartialRedVisInflate(utils.Module):
             Starting initialization of params.
         R : callable
             Response function.
+        parameter : bool
+            Make self.params a learnable parameter
+        use_csr : bool
+            If True (default) use sparse CSR matmul,
+            otherwise use dense einsum matmul.
         """
         super().__init__()
 
@@ -2325,10 +2331,29 @@ class PartialRedVisInflate(utils.Module):
         # but its currently beta in torch v2.2.1
         # and still returns a dense grad
 
+        self.use_csr = use_csr
+        if use_csr:
+            # use CSR format
+            device, dtype = self.params.device, self.params.dtype
+            A = self._buildA(self.params, device=device, dtype=dtype).to_sparse_csr()
+            self._crow_indices = A.crow_indices()
+            self._col_indices = A.col_indices()
+            self._size = A.size() 
+
     def _buildA(self, params, device=None, dtype=None):
-        # fill sparse A matrix
-        A = torch.zeros(self.Ashape, dtype=dtype, device=device)
-        A[*self.idx] = params.to(A.dtype)
+        if self.use_csr:
+            A = torch.sparse_csr_tensor(
+                self._crow_indices,
+                self._col_indices,
+                params,
+                size=size,
+                requires_grad=params.requires_grad,
+            )
+
+        else:
+            # fill sparse A matrix
+            A = torch.zeros(self.Ashape, dtype=dtype, device=device)
+            A[*self.idx] = params.to(dtype)
 
         return A
 
@@ -2348,11 +2373,29 @@ class PartialRedVisInflate(utils.Module):
         # evaluate priors
         self.eval_prior(prior_cache, inp_params=self.params, out_params=params)
 
-        # fill sparse A matrix
+        # fill (sparse) A matrix
         A = self._buildA(params, device=params.device, dtype=vd.data.dtype)
 
-        # dot mixing matrix into redvis
-        data = torch.einsum("...btf,pb->...ptf", vd.data, A)
+        if self.use_csr:
+            # reshape input data to (M, -1)
+            data = vd.data.moveaxis(2, 0)
+            shape = data.shape
+            data = data.reshape(shape[0], -1)
+
+            # perform sparse @ dense matmul on real / imag separately
+            # b/c torch v2.7 doesn't support sparse autodiff on complex128
+            data = torch.complex(
+                torch.sparse.mm(A, data.real),
+                torch.sparse.mm(A, data.imag)
+            )
+            data = data.reshape(A.shape[0], *shape[1:]).moveaxis(0, 2)
+
+            # may need clone this for downstream indexing (to get a copy not a view)
+            # data = data.clone()
+
+        else:
+            # dot mixing matrix into redvis
+            data = torch.einsum("pb,...btf->...ptf", A, vd.data)
 
         # setup new object
         new_vis = dataset.VisData()
