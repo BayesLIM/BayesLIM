@@ -2346,7 +2346,7 @@ class PartialRedVisInflate(utils.Module):
                 self._crow_indices,
                 self._col_indices,
                 params,
-                size=size,
+                size=self._size,
                 requires_grad=params.requires_grad,
             )
 
