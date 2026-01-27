@@ -2389,14 +2389,9 @@ class PartialRedVisInflate(utils.Module):
 
             # perform sparse @ dense matmul on real / imag separately
             # b/c torch v2.7 doesn't support sparse autodiff on complex128
-            data = torch.complex(
-                torch.sparse.mm(A, data.real),
-                torch.sparse.mm(A, data.imag)
-            )
-            data = data.reshape(A.shape[0], *shape[1:]).moveaxis(0, 2)
-
-            # may need clone this for downstream indexing (to get a copy not a view)
-            # data = data.clone()
+            _real = torch.sparse.mm(A, data.real).reshape(A.shape[0], *shape[1:]).moveaxis(0, 2)
+            _imag = torch.sparse.mm(A, data.imag).reshape(A.shape[0], *shape[1:]).moveaxis(0, 2)
+            data = torch.complex(_real, _imag)
 
         else:
             # dot mixing matrix into redvis
