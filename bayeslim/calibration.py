@@ -2340,8 +2340,8 @@ class PartialRedVisInflate(utils.Module):
             self._col_indices = A.col_indices()
             self._size = A.size() 
 
-    def _buildA(self, params, device=None, dtype=None):
-        if self.use_csr:
+    def _buildA(self, params, device=None, dtype=None, use_csr=False):
+        if use_csr:
             A = torch.sparse_csr_tensor(
                 self._crow_indices,
                 self._col_indices,
@@ -2374,7 +2374,12 @@ class PartialRedVisInflate(utils.Module):
         self.eval_prior(prior_cache, inp_params=self.params, out_params=params)
 
         # fill (sparse) A matrix
-        A = self._buildA(params, device=params.device, dtype=vd.data.dtype)
+        A = self._buildA(
+            params,
+            device=params.device,
+            dtype=vd.data.dtype,
+            use_csr=self.use_csr,
+        )
 
         if self.use_csr:
             # reshape input data to (M, -1)
