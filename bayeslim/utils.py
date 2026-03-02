@@ -2343,6 +2343,11 @@ class AntposDict:
     def push(self, device):
         self.antvecs = push(self.antvecs, device)
 
+    def select(self, new_ants):
+        new_antvecs = self.antvecs[[self.ants.index(a) for a in new_ants]]
+        return AntposDict(new_ants, new_antvecs)
+
+
 
 def blnum2ants(blnum, separate=False):
     """
