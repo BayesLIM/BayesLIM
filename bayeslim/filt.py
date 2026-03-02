@@ -587,8 +587,8 @@ def gauss_sinc_cov(x, gauss_ls, sinc_ls, x2=None,
         K /= special.erf(arg)
 
     else:
-        K = (0.5 * torch.exp(-ud**2) / special.erf(arg) \
-            * (special.erf(arg + 1j*ud) + special.erf(arg - 1j*ud))).real
+        K = (0.5 * torch.exp(-ud**2) / torch.special.erf(arg) \
+            * (torch.special.erf(arg + 1j*ud) + torch.special.erf(arg - 1j*ud))).real
         # replace nans with zero: in this limit, you should use high_prec
         # but this is a faster approximation
         K[torch.isnan(K)] = 0.0
