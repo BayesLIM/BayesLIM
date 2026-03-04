@@ -626,10 +626,10 @@ class JonesModel(utils.Module, IndexCache):
 
         # setup empty VisData for output
         if hasattr(self, "_vd") and self._vd is not None:
-            vout = self._vd
+            vout = self._vd.copy(copydata=False, copymeta=False)
         else:
-            vout = vd.copy()
-            self._vd = vout
+            self._vd = vd.copy(copydata=True, copymeta=True)
+            vout = self._vd.copy(copydata=False, copymeta=False)
 
         # add prior model for params
         if self.p0 is None:
