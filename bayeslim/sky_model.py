@@ -1035,6 +1035,42 @@ class CompositeModel(utils.Module):
                                      utils.push(v[1], device))
 
 
+class InterpSky(utils.Module):
+    """
+    A wrapper around a SkyBase model to automatically
+    interpolate its output.
+    """
+    def __init__(self, sky, freq_interp=None, new_freqs=None):
+        super().__init__()
+        self.sky = sky
+        self.freq_interp = freq_interp
+        self.new_freqs = new_freqs
+
+    def forward(self, *args, prior_cache=None, **kwargs):
+        """
+        Evaluate self.sky and (optionally) interpolate
+        """
+        # get mapdata
+        skymap = self.sky(prior_cache=prior_cache)
+
+        # freq interpolate
+        if self.freq_interp is not None:
+            if not utils.check_devices(skymap.device, self.freq_interp.device):
+                skymap.push(self.freq_interp.device)
+            skymap = self.freq_interp(skymap)
+            skymap.freqs = self.new_freqs
+            skymap.Nfreqs = len(self.new_freqs)
+
+        return skymap
+
+    def push(self, device):
+        self.freq_interp.push(device)
+        self.new_freqs = utils.push(self.new_freqs, device)
+
+    def __repr__(self):
+        return "InterpSky[{}]".format(self.sky)
+
+
 def ang_index(theta, phi, theta_min=None, theta_max=None, phi_min=None, phi_max=None):
     """
     Given two theta (co-lat) and phi (azimuth) arrays and possible cuts in theta and phi,
