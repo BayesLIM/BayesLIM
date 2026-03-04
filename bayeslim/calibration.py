@@ -16,8 +16,8 @@ class BaseResponse:
     of shape (Npol, Npol, Nbl, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
-                 device=None, freq_kwargs={}, time_kwargs={}, LM=None,
-                 time_dim=3, freq_dim=4, projection_kwargs={}, base0=None):
+                 device=None, freq_LM=None, time_LM=None, freqs=None, times=None,
+                 LM=None, projection_kwargs={}, base0=None):
         """
         Parameters
         ----------
@@ -34,18 +34,17 @@ class BaseResponse:
             (amp, phs) respectively.
         device : str, optional
             Device to place class attributes if needed
-        freq_kwargs : dict, optional
-            Keyword arguments for setup_freqs(). Note, must pass
-            freqs [Hz] for dly param_type
-        time_kwargs : dict, optional
-            Keyword arguments for setup_times().
+        freq_LM : dict, optional
+            LinearModel object for frequency axis if freq_mode='linear'
+        time_LM : dict, optional
+            LinearModel object for time axis if time_mode='linear'
+        freqs : tensor, optional
+            Frequency bins [Hz]
+        times : tensor, optional
+            Time bins [JD]
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
-            object before passing through the response function.
-        time_dim : int, optional
-            Dimension of time axis
-        freq_dim : int, optional
-            Dimension of frequency axis
+            object before passing through the other response functions.
         projection_kwargs : dict, optional
             If passed, this creates an operation on the
             fully complex parameters after passing through
@@ -59,12 +58,10 @@ class BaseResponse:
         self.time_mode = time_mode
         self.param_type = param_type
         self.device = device
-        self.freq_kwargs = freq_kwargs
-        self.time_kwargs = time_kwargs
-        self.time_dim = time_dim
-        self.freq_dim = freq_dim
-        self.setup_freqs(**freq_kwargs)
-        self.setup_times(**time_kwargs)
+        self.freq_LM = freq_LM
+        self.time_LM = time_LM
+        self.freqs = freqs
+        self.times = times
         self.setup_projection(**projection_kwargs)
         self.LM = LM
         self.base0 = base0
@@ -72,74 +69,6 @@ class BaseResponse:
         # construct _args for str repr
         self._args = dict(freq_mode=self.freq_mode, time_mode=self.time_mode,
                           param_type=self.param_type)
-
-    def setup_times(self, times=None, **kwargs):
-        """
-        Setup time parameterization. See required and optional
-        params given time_mode.
-
-        channel :
-            None
-        linear :
-            linear_mode : str
-            For more kwargs see linear_model.LinearModel()
-            dim is hard-coded according to expected params shape
-        """
-        self.times = times
-        if self.time_mode == 'channel':
-            self.Ntime_params = None if times is None else len(times)
-
-        elif self.time_mode == 'linear':
-            # get linear A mapping wrt time
-            kwgs = copy.deepcopy(kwargs)
-            if 'LM' in kwgs:
-                self.time_LM = kwgs['LM']
-                self.time_LM.push(self.device)
-            else:
-                linear_mode = kwgs.pop('linear_mode')
-                if times is not None:
-                    kwgs['x'] = times
-                kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-                self.time_LM = linear_model.LinearModel(linear_mode, dim=self.time_dim,
-                                                        device=self.device, **kwgs)
-            self.Ntime_params = self.time_LM.A.shape[1]
-
-        else:
-            raise ValueError("{} not recognized".format(self.time_mode))
-
-    def setup_freqs(self, freqs=None, **kwargs):
-        """
-        Setup frequency parameterization. See required and optional
-        params given freq_mode
-
-        channel :
-            None
-        linear :
-            linear_mode : str
-            For more kwargs see linear_model.LinearModel()
-            dim is hard-coded according to expected params shape
-        """
-        self.freqs = freqs
-        if self.freq_mode == 'channel':
-            self.Nfreq_params = None if freqs is None else len(freqs)
-
-        elif self.freq_mode == 'linear':
-            # get linear A mapping wrt freq
-            kwgs = copy.deepcopy(kwargs)
-            if 'LM' in kwgs:
-                self.freq_LM = kwgs['LM']
-                self.freq_LM.push(self.device)
-            else:
-                linear_mode = kwgs.pop('linear_mode')
-                kwgs['dtype'] = utils._cfloat() if self.param_type == 'com' else utils._float()
-                if freqs is not None:
-                    kwgs['x'] = freqs
-                self.freq_LM = linear_model.LinearModel(linear_mode, dim=self.freq_dim,
-                                                        device=self.device, **kwgs)
-            self.Nfreq_params = self.freq_LM.A.shape[1]
-
-        else:
-            raise ValueError("{} not recognized".format(self.freq_mode))
 
     def forward(self, params, **kwargs):
         """
@@ -758,13 +687,17 @@ class JonesModel(utils.Module, IndexCache):
                 if pr is not None:
                     pr.push(device)
 
-    def to_CalData(self, pol=None, flags=None, cov=None, cov_axis=None,
+    def to_CalData(self, freqs, times, pol=None, flags=None, cov=None, cov_axis=None,
                    telescope=None, antpos=None, history='', **kwargs):
         """
         Export gains as CalData object
 
         Parameters
         ----------
+        freqs : tensor
+            Frequency bins [Hz]
+        times : tensor
+            Time bins [JD]
         pol : str, optional
             If 1pol mode, this is the feed pol string ('Jee' or 'Jnn').
         flags : tensor, optional
@@ -799,22 +732,6 @@ class JonesModel(utils.Module, IndexCache):
                 p = self.params.detach()
             gains = self.R(p).cpu().clone()
 
-            # try to get time and freq metadata
-            if 'freqs' in self.R.freq_kwargs:
-                freqs = self.R.freq_kwargs['freqs']
-            else:
-                try:
-                    freqs = kwargs['freqs']
-                except KeyError:
-                    raise ValueError("freqs not found in self.R.freq_kwargs, must pass as kwarg")
-            if 'times' in self.R.time_kwargs:
-                times = self.R.time_kwargs['times']
-            else:
-                try:
-                    times = kwargs['times']
-                except KeyError:
-                    raise ValueError("times not found in self.R.time_kwargs, must pass as kwarg")
-
             # setup object
             cd.setup_data(ants=self.ants, times=times,
                           freqs=freqs, pol=pol,
@@ -836,7 +753,7 @@ class JonesResponse(BaseResponse):
     """
     def __init__(self, freq_mode='channel', time_mode='channel', param_type='com',
                  vis_type='com', antpos=None, device=None,
-                 freq_kwargs={}, time_kwargs={}, LM=None, base0=None):
+                 freq_LM=None, time_LM=None, freqs=None, times=None, LM=None, base0=None):
         """
         Parameters
         ----------
@@ -859,11 +776,12 @@ class JonesResponse(BaseResponse):
             Keys as antenna integers, values as 3-vector in ENU frame
         device : str, optional
             Device to place class attributes if needed
-        freq_kwargs : dict, optional
-            Keyword arguments for setup_freqs(). Note, must pass
-            freqs [Hz] for dly param_type
-        time_kwargs : dict, optional
-            Keyword arguments for setup_times().
+        freqs : tensor, optional
+            Frequency array [Hz], needed for 'dly' param_type
+        freq_LM : dict, optional
+            LinearModel object for frequency axis if freq_mode='linear'
+        time_LM : dict, optional
+            LinearModel object for time axis if time_mode='linear'
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
@@ -876,8 +794,8 @@ class JonesResponse(BaseResponse):
         """
         super().__init__(freq_mode=freq_mode, time_mode=time_mode,
                          param_type=param_type, device=device,
-                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs,
-                         LM=LM, base0=base0)
+                         freq_LM=freq_LM, time_LM=time_LM,
+                         LM=LM, base0=base0, freqs=freqs, times=times)
         self.vis_type = vis_type
         self.antpos = antpos
 
@@ -889,6 +807,7 @@ class JonesResponse(BaseResponse):
             NS = torch.as_tensor([antpos[a][1] for a in antpos], device=self.device)
             self.antpos_NS = NS[None, None, :, None, None]
         elif 'dly' in self.param_type:
+            self.freqs = freqs
             assert self.freqs is not None, 'need frequencies for delay gain type'
 
         assert self.param_type in ['com', 'amp', 'phs', 'dly', 'real',
@@ -1296,8 +1215,8 @@ class VisModelResponse(BaseResponse):
     taking params as input and reshaping into output (Npol, Npol, Nbls, Ntimes, Nfreqs)
     """
     def __init__(self, freq_mode='channel', time_mode='channel',
-                 param_type='real', device=None, time_dim=3, freq_dim=4,
-                 freq_kwargs={}, time_kwargs={}, LM=None, base0=None):
+                 param_type='real', device=None, freqs=None, times=None,
+                 freq_LM=None, time_LM=None, LM=None, base0=None):
         """
         Parameters
         ----------
@@ -1313,14 +1232,18 @@ class VisModelResponse(BaseResponse):
                 where the last dim is [real, imag]
             amp_phs : visibility represented as amplitude and phase
                 params, where the last dim of params is [amp, phs]
+        freq_LM : dict, optional
+            LinearModel object for frequency axis if freq_mode='linear'
+        time_LM : dict, optional
+            LinearModel object for time axis if time_mode='linear'
         LM : LinearModel object, optional
             Pass the input params through this LinearModel
             object before passing through the response function.
         """
-        super().__init__(freq_mode=freq_mode, time_mode=time_mode, time_dim=time_dim,
-                         freq_dim=freq_dim, param_type=param_type, device=device,
-                         freq_kwargs=freq_kwargs, time_kwargs=time_kwargs, LM=LM,
-                         base0=base0)
+        super().__init__(freq_mode=freq_mode, time_mode=time_mode,
+                         param_type=param_type, device=device,
+                         freq_LM=freq_LM, time_LM=time_LM, LM=LM,
+                         base0=base0, freqs=freqs, times=times)
 
     def forward(self, params, bls=None, times=None, **kwargs):
         """
@@ -1427,7 +1350,7 @@ class VisCoupling(utils.Module, IndexCache):
 
         if R is None:
             # default response is per freq channel and time bin
-            R = VisModelResponse(time_dim=4, freq_dim=5)
+            R = VisModelResponse()
         self.R = R
 
         # IndexCache.__init__
@@ -1756,7 +1679,7 @@ class RedVisCoupling(utils.Module, IndexCache):
 
         if R is None:
             # default response is per freq channel and time bin
-            R = VisModelResponse(time_dim=3, freq_dim=4)
+            R = VisModelResponse()
         self.R = R
 
         # IndexCache.__init__
@@ -2993,7 +2916,7 @@ def redcal_degen_vis(abs_amp=None, phs_slope=None, vd=None, bls=None, antpos=Non
 
 
 def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
-                   freq_kwargs=None, time_kwargs=None, refant=None, single_ant=False):
+                   freqs=None, freq_LM=None, time_LM=None, refant=None, single_ant=False):
     """
     Create a vanilla JonesModel object from
     a VisData object
@@ -3007,13 +2930,9 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
     -------
     JonesModel
     """
-    time_kwargs = {} if time_kwargs is None else time_kwargs
-    freq_kwargs = {} if freq_kwargs is None else freq_kwargs
-    time_kwargs['times'] = vis.times
-    freq_kwargs['freqs'] = vis.freqs
     R = JonesResponse(param_type=param_type, antpos=vis.antpos,
-                      freq_mode=freq_mode, freq_kwargs=freq_kwargs,
-                      time_mode=time_mode, time_kwargs=time_kwargs)
+                      freq_mode=freq_mode, freq_LM=freq_LM, freqs=freqs,
+                      time_mode=time_mode, time_LM=time_LM)
     ants = sorted(np.unique(utils.flatten(vis.bls)))
     polmode = '1pol' if vis.Npol == 1 else '4pol'
     Nants = len(ants)
@@ -3036,7 +2955,7 @@ def vis2JonesModel(vis, param_type='com', freq_mode='channel', time_mode='channe
 
 
 def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='channel',
-                    time_kwargs=None, freq_kwargs=None, redtol=1.0):
+                    freqs=None, freq_LM=None, time_LM=None, redtol=1.0):
     """
     Create a vanilla RedVisModel object
     from a VisData object
@@ -3054,13 +2973,9 @@ def vis2RedVisModel(vis, param_type='com', freq_mode='channel', time_mode='chann
     reds, rvecs, bl2red, bls, rl, ra, rt = telescope_model.build_reds(vis.antpos,
                                                                       bls=vis.bls,
                                                                       redtol=redtol)
-    time_kwargs = {} if time_kwargs is None else time_kwargs
-    freq_kwargs = {} if freq_kwargs is None else freq_kwargs
-    time_kwargs['times'] = vis.times
-    freq_kwargs['freqs'] = vis.freqs
     R = VisModelResponse(param_type=param_type,
-                         freq_mode=freq_mode, freq_kwargs=freq_kwargs,
-                         time_mode=time_mode, time_kwargs=time_kwargs)
+                         freq_mode=freq_mode, freqs=freqs, freq_LM=freq_LM,
+                         time_mode=time_mode, time_LM=time_LM)
     params = torch.zeros(vis.Npol, vis.Npol, len(reds), R.Ntime_params, R.Nfreq_params,
                          dtype=utils._cfloat())
     if param_type == 'com':

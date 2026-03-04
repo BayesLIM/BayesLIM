@@ -620,7 +620,7 @@ class PixelResponse(utils.PixInterp):
     """
     def __init__(self, freqs, pixtype, beam0=None, comp_params=False, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
-                 freq_mode='channel', nside=None, device=None, log=False, freq_kwargs=None,
+                 freq_mode='channel', freq_LM=None, nside=None, device=None, log=False,
                  powerbeam=True, realbeam=True, Rchi=None,
                  interp_cache_depth=None, taper_kwargs=None, LM=None, norm_pix=None):
         """
@@ -665,9 +665,8 @@ class PixelResponse(utils.PixInterp):
         log : bool, optional
             If True, assume params is logged and take
             exp before returning.
-        freq_kwargs : dict, optional
-            Kwargs for frequency parameterization.
-            'linear' : pass kwargs to linear_model.LinearModel
+        freq_LM : dict, optional
+            LinearModel object if freq_mode = 'linear'
         powerbeam : bool, optional
             If True treat beam as non-negative and real-valued.
         realbeam : bool, optional
@@ -711,9 +710,7 @@ class PixelResponse(utils.PixInterp):
         self.taper_kwargs = taper_kwargs
         self.LM = LM
         self.norm_pix = norm_pix
-
-        freq_kwargs = freq_kwargs if freq_kwargs is not None else {}
-        self._setup(**freq_kwargs)
+        self.freq_LM = freq_LM
 
         # construct _args for str repr
         self._args = dict(interp_mode=interp_mode, freq_mode=freq_mode)
@@ -1050,7 +1047,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
                  mode='interpolate', device=None, interp_mode='nearest',
                  theta=None, phi=None, theta_grid=None, phi_grid=None,
                  nside=None, powerbeam=True, realbeam=True, log=False, freq_mode='channel',
-                 freq_kwargs=None, Ylm_kwargs=None, Rchi=None,
+                 freq_LM=None, Ylm_kwargs=None, Rchi=None,
                  separable=False, interp_cache_depth=None, taper_kwargs=None,
                  LM=None, norm_pix=None):
         """
@@ -1109,8 +1106,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             If True assume params is logged and take exp(params) before returning.
         freq_mode : str, optional
             Frequency parameterization ['channel', 'linear']
-        freq_kwargs : dict, optional
-            Kwargs for generating linear modes, see linear_model.gen_linear_A()
+        freq_LM : dict, optional
+            LineModel object for frequency axis if freq_mode = 'linear'
         Ylm_kwargs : dict, optional
             Kwargs for generating Ylm modes
         Rchi : tensor, optional
@@ -1140,7 +1137,7 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
         super(YlmResponse, self).__init__(freqs, pixtype, nside=nside, beam0=beam0,
                                           interp_mode=interp_mode, theta=theta, phi=phi,
                                           freq_mode=freq_mode, comp_params=comp_params,
-                                          freq_kwargs=freq_kwargs, Rchi=Rchi,
+                                          freq_LM=freq_LM, Rchi=Rchi,
                                           theta_grid=theta_grid, phi_grid=phi_grid,
                                           norm_pix=norm_pix,
                                           interp_cache_depth=interp_cache_depth,

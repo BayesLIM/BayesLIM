@@ -32,10 +32,6 @@ def setup_Coupling(freqs=freqs, times=times):
 
 	# setup RedVisCoupling object
 	R = ba.calibration.VisModelResponse(
-	    freq_kwargs={'freqs': freqs},
-	    time_kwargs={'times': times},
-	    time_dim=-2,
-	    freq_dim=-1
 	)
 	coupling_terms, coupling_idx = ba.calibration.gen_coupling_terms(
 		antpos,
@@ -365,10 +361,7 @@ def test_VisModel():
 	blnums = ba.utils.ants2blnum(bls, tensor=True)
 
 	params = torch.randn(1, 1, len(bls), len(times), len(freqs), dtype=ba._cfloat())
-	R = ba.calibration.VisModelResponse(
-		freq_kwargs=dict(freqs=freqs),
-		time_kwargs=dict(times=times)
-	)
+	R = ba.calibration.VisModelResponse(times=vd.times)
 
 	vis_mdl = ba.calibration.VisModel(params, R=R, parameter=False, blnums=blnums)
 
