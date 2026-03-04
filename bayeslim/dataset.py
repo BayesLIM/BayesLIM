@@ -1935,17 +1935,50 @@ class MapData(TensorData):
         self.set_cov(cov, cov_axis, icov=icov)
         self.history = history
 
-    def copy(self, detach=True):
+    def copy(self, copydata=False, copymeta=False, detach=True):
         """
-        Copy and return self. This is equivalent
-        to a detach and clone. Detach is optional
+        Copy and return self.
+
+        Parameters
+        ----------
+        copydata : bool, optional
+            If True make a clone of the data.
+            Default is False.
+        copymeta : bool, optional
+            If True make a new instantiation of metadata like
+            telescope, antpos, times, freqs, flags, etc.
+            Note that this drops things like telescope cache.
+        detach : bool, optional
+            If True (default) detach self.data for new object
+            if copydata == True.
         """
         md = MapData()
-        md.setup_meta(name=self.name)
-        data = self.data.detach() if detach else self.data
-        md.setup_data(self.freqs, df=self.df, pols=self.pols, data=data.clone(), norm=self.norm,
-                      angs=self.angs, flags=self.flags, cov=self.cov,
-                      icov=self.icov, cov_axis=self.cov_axis, history=self.history)
+        name = self.name
+
+        freqs, angs = self.freqs, self.angs
+        flags, cov, icov, norm = self.flags, self.cov, self.icov, self.norm
+
+        # clone data
+        data = self.data
+        if copydata:
+            if isinstance(data, torch.Tensor):
+                if data.requires_grad and detach:
+                    data = data.detach()
+            if data is not None:
+                data = data.clone()
+
+        if copymeta:
+            freqs = copy.deepcopy(freqs)
+            angs = copy.deepcopy(angs)
+            if isinstance(flags, torch.Tensor): flags = flags.clone()
+            if isinstance(cov, torch.Tensor): cov = cov.clone()
+            if isinstance(icov, torch.Tensor): icov = icov.clone()
+
+        md.setup_meta(name=name)
+        md.setup_data(freqs, df=self.df, pols=self.pols, data=data, norm=norm,
+                      angs=angs, flags=flags, cov=cov,
+                      icov=icov, cov_axis=self.cov_axis, history=self.history)
+
         return md
 
     def get_inds(self, angs=None, freqs=None, pols=None,
@@ -2051,7 +2084,7 @@ class MapData(TensorData):
         if iterable:
             return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
 
-        return np.where(np.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
+        return torch.where(torch.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
 
     def _pol2ind(self, pol):
         iterable = False
@@ -2677,7 +2710,8 @@ class CalData(TensorData):
                 iterable = True
         if iterable:
             return np.concatenate([self._freq2ind(f) for f in freq]).tolist()
-        return np.where(np.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
+
+        return torch.where(torch.isclose(self.freqs, freq, atol=self.atol))[0].tolist()
 
     def _pol2ind(self, pol):
         """
