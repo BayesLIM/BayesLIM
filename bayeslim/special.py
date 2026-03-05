@@ -685,3 +685,49 @@ def _Qmm_legacy(m, z, epsrel=1.49e-8):
 
     return Q
 
+
+class Softplus:
+    """
+    A softplus function with a threshold and inverse
+
+        f(x) = ln(1 + exp(x))
+        f^-1(y) = log(exp(y) - 1)
+
+    with a threshold where f(x) = x for x > threshold
+    for numerical stability
+    """
+    def __init__(self, threshold=100.0, inverted=False):
+        """
+        threshold : float
+            For x > threshold, f(x) = x
+        inverted : bool
+            If True, call the inverse() method upon __call__()
+        """
+        self.threshold = threshold
+        self.set_inverted(inverted)
+        self._softplus = torch.nn.Softplus(threshold=threshold, beta=1.0)
+
+    def set_inverted(self, inverted):
+        self.inverted = inverted
+
+    def forward(self, x):
+        """
+        The forward softplus function
+        """
+        return self._softplus(x)
+
+    def inverse(self, x):
+        """
+        The inverse softplus function
+        """
+        return x + (-torch.expm1(-x)).log()
+
+    def __call__(self, x):
+        if self.inverted:
+            return self.inverse(x)
+        else:
+            return self.forward(x)
+
+    def __repr__(self):
+        return "Softplus[inverted={}](threshold={:.1f})".format(self.inverted, self.threshold)
+
