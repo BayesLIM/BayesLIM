@@ -76,18 +76,22 @@ class FFT(utils.Module):
         elif edgecut is None:
             edgecut = (0, 0)
         self.edgecut = edgecut
+        self.window = window
         self.win = None
         if window is not None:
-            assert N is not None
-            assert ndim is not None
-            Nwin = N - self.edgecut[0] - self.edgecut[1]
-            win = gen_window(window, Nwin, **kwargs)
-            win = torch.cat([torch.zeros(self.edgecut[0]),
-                             win,
-                             torch.zeros(self.edgecut[1])])
-            shape = [1 for i in range(ndim)]
-            shape[dim] = N
-            self.win = win.reshape(*shape)
+            if isinstance(window, torch.Tensor):
+                self.win = window
+            else:
+                assert N is not None
+                assert ndim is not None
+                Nwin = N - self.edgecut[0] - self.edgecut[1]
+                win = gen_window(window, Nwin, **kwargs)
+                win = torch.cat([torch.zeros(self.edgecut[0]),
+                                 win,
+                                 torch.zeros(self.edgecut[1])])
+                shape = [1 for i in range(ndim)]
+                shape[dim] = N
+                self.win = win.reshape(*shape)
 
         if device is not None:
             self.push(device)
