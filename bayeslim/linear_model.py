@@ -19,8 +19,8 @@ class LinearModel:
         y = Ax
     """
     def __init__(self, linear_mode, dim=0, coeff=None, diag=False, idx=None,
-                 out_dtype=None, out_reshape=None, out_shape=None,
-                 meta=None, **kwargs):
+                 out_dtype=None, out_reshape=None, out_shape=None, out_real=False,
+                 meta=None, cache_D=False, **kwargs):
         """
         Parameters
         ----------
@@ -48,6 +48,8 @@ class LinearModel:
             of the output before doing out.reshape(out_reshape).
             This is needed for doing self.least_squares(), bc we
             need to undo the reshape before doing least squares.
+        out_real : bool, optional
+            If True, strictly enforce that output is real-valued.
         meta : dict, optional
             Additional metadata to attach to self as self.meta
         kwargs : dict
@@ -60,6 +62,8 @@ class LinearModel:
         self.out_dtype = out_dtype
         self.out_reshape = out_reshape
         self.out_shape = out_shape
+        self.out_real = out_real
+        self._D = None  # used in least_squares()
         self.meta = meta if meta is not None else {}
 
         if self.linear_mode in ['poly']:
@@ -156,6 +160,9 @@ class LinearModel:
         if self.out_dtype is not None:
             out = out.to(self.out_dtype)
 
+        if self.out_real:
+            out = out.real
+
         if hasattr(self, 'out_reshape') and self.out_reshape is not None:
             out = out.reshape(self.out_reshape)
 
@@ -164,7 +171,7 @@ class LinearModel:
     def __call__(self, params, A=None):
         return self.forward(params, A=A)
 
-    def least_squares(self, y, out_shape=None, Ninv=None, **kwargs):
+    def least_squares(self, y, out_shape=None, Ninv=None, cache_D=False, **kwargs):
         """
         Estimate a params tensor from the data vector
 
@@ -173,6 +180,9 @@ class LinearModel:
         y : tensor
             Data vector to use in estimating a
             new params tensor
+        cache_D : bool, optional
+            If True, store the normalization "D" matrix as self._D
+            when performing least_squares
         kwargs : dict
             keyword arguments for linalg.least_squares()
 
@@ -196,7 +206,12 @@ class LinearModel:
                     Ninv = Ninv.reshape(out_shape)
             y = y.reshape(out_shape)
 
-        return linalg.least_squares(A, y, dim=self.dim, Ninv=Ninv, **kwargs)
+        params, D = linalg.least_squares(A, y, dim=self.dim, Ninv=Ninv, D=self._D, **kwargs)
+
+        if cache_D:
+            self._D = D
+
+        return params
 
     def generate_A(self, x, **interp1d_kwargs):
         """
