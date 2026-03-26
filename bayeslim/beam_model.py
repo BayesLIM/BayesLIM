@@ -774,6 +774,10 @@ class PixelResponse(utils.PixInterp):
         if self.log:
             p = torch.exp(p)
 
+        elif self.powerbeam:
+            ## TODO: replace abs with non-neg prior on beam?
+            p = torch.abs(p)
+
         # sum with starting beam if necessary
         if self.beam0 is not None:
             p += self.beam0
@@ -785,10 +789,6 @@ class PixelResponse(utils.PixInterp):
         # normalize beam by a pixel if necessary
         if self.norm_pix is not None:
             p /= p[..., self.norm_pix:self.norm_pix+1].detach().abs()
-
-        if self.powerbeam:
-            ## TODO: replace abs with non-neg prior on beam?
-            p = torch.abs(p)
 
         return p
 
@@ -1211,6 +1211,10 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
 
         if self.log:
             beam = torch.exp(beam)
+
+        elif self.powerbeam:
+            ## TODO: replace abs with non-neg prior on beam?
+            beam = torch.abs(beam)
 
         # sum with beam0 if necessary
         if self.beam0 is not None:
