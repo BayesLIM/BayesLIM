@@ -816,6 +816,8 @@ class PixelResponse(utils.PixInterp):
         # forward params and set beam cache
         self.beam_cache = self.forward(params)
 
+        return self.beam_cache
+
     def apply_Rchi(self, beam):
         """
         Apply DD polarization rotation matrix to
@@ -1261,6 +1263,8 @@ class YlmResponse(PixelResponse, sph_harm.AlmModel):
             self.beam_cache = self.forward(params, self.theta_grid, self.phi_grid)
         else:
             self.beam_cache = self.forward(params, self.theta, self.phi)
+
+        return self.beam_cache
 
     def push(self, device):
         """push attrs to device"""
