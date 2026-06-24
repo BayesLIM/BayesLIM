@@ -5,7 +5,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'BayesLIM'
-copyright = '2025, Nicholas Kern'
+copyright = '2026, Nicholas Kern'
 author = 'Nicholas Kern'
 
 # -- General configuration ---------------------------------------------------
